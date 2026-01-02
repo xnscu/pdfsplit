@@ -3,6 +3,13 @@ import * as pdfjsLib from 'pdfjs-dist';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
 
+export interface CropSettings {
+  cropPadding: number;
+  canvasPaddingLeft: number;
+  canvasPaddingRight: number;
+  canvasPaddingY: number;
+}
+
 export const renderPageToImage = async (page: any, scale: number = 3): Promise<{ dataUrl: string, width: number, height: number }> => {
   const viewport = page.getViewport({ scale });
   const canvas = document.createElement('canvas');
@@ -144,6 +151,7 @@ export const cropAndStitchImage = (
   boxes: [number, number, number, number][], // Array of [ymin, xmin, ymax, xmax] 0-1000
   originalWidth: number, 
   originalHeight: number,
+  settings: CropSettings,
   onStatus?: (msg: string) => void
 ): Promise<{ final: string, original?: string }> => {
   return new Promise((resolve) => {
@@ -178,13 +186,13 @@ export const cropAndStitchImage = (
 
     const img = new Image();
     img.onload = () => {
-      // 3. Define padding parameters
+      // 3. Define padding parameters from Settings
       // We grab EXTRA CROP_PADDING to ensure we capture the full question. 
       // The intelligent `getTrimmedBounds` will peel off the neighbors ONLY if they are artifacts.
-      const CROP_PADDING = 10; 
-      const CANVAS_PADDING_LEFT = 10;
-      const CANVAS_PADDING_RIGHT = 10;
-      const CANVAS_PADDING_Y = 10;
+      const CROP_PADDING = settings.cropPadding; 
+      const CANVAS_PADDING_LEFT = settings.canvasPaddingLeft;
+      const CANVAS_PADDING_RIGHT = settings.canvasPaddingRight;
+      const CANVAS_PADDING_Y = settings.canvasPaddingY;
 
       // 4. Extract and Trim each fragment
       const processedFragments = finalBoxes.map((box, idx) => {
@@ -230,8 +238,13 @@ export const cropAndStitchImage = (
       const maxFragmentWidth = Math.max(...processedFragments.map(f => f.trim.w));
       const finalWidth = maxFragmentWidth + CANVAS_PADDING_LEFT + CANVAS_PADDING_RIGHT;
       
-      const gap = 10; // Vertical gap between parts
-      const totalContentHeight = processedFragments.reduce((acc, f) => acc + f.trim.h, 0) + (gap * (Math.max(0, processedFragments.length - 1)));
+      const gap = settings.canvasPaddingY; // Use Y Padding as gap as well for consistency? Or keep fixed? Let's use it as gap too or fixed. 
+      // Let's keep gap somewhat related to Y padding or fixed. For now, let's use a fixed gap of 10 or make it adjustable? 
+      // User asked for "CANVAS_PADDING_Y" to be adjustable. Let's assume it affects top/bottom margins.
+      // We'll use a fixed gap of 10 for between fragments to avoid confusion, or use Y padding.
+      const fragmentGap = 10; 
+
+      const totalContentHeight = processedFragments.reduce((acc, f) => acc + f.trim.h, 0) + (fragmentGap * (Math.max(0, processedFragments.length - 1)));
       const finalHeight = totalContentHeight + (CANVAS_PADDING_Y * 2);
 
       const canvas = document.createElement('canvas');
@@ -257,7 +270,7 @@ export const cropAndStitchImage = (
           f.trim.x, f.trim.y, f.trim.w, f.trim.h, // Source
           offsetX, currentY, f.trim.w, f.trim.h   // Destination
         );
-        currentY += f.trim.h + gap;
+        currentY += f.trim.h + fragmentGap;
       });
 
       const finalDataUrl = canvas.toDataURL('image/jpeg', 0.95);
@@ -273,7 +286,7 @@ export const cropAndStitchImage = (
       if (wasTrimmed) {
          const maxRawWidth = Math.max(...processedFragments.map(f => f.sourceCanvas.width));
          const finalRawWidth = maxRawWidth + CANVAS_PADDING_LEFT + CANVAS_PADDING_RIGHT;
-         const totalRawHeight = processedFragments.reduce((acc, f) => acc + f.sourceCanvas.height, 0) + (gap * (Math.max(0, processedFragments.length - 1)));
+         const totalRawHeight = processedFragments.reduce((acc, f) => acc + f.sourceCanvas.height, 0) + (fragmentGap * (Math.max(0, processedFragments.length - 1)));
          const finalRawHeight = totalRawHeight + (CANVAS_PADDING_Y * 2);
 
          const rawCanvas = document.createElement('canvas');
@@ -291,7 +304,7 @@ export const cropAndStitchImage = (
                  const offsetX = CANVAS_PADDING_LEFT + centerOffset;
                  // Draw full source without trim coordinates
                  rawCtx.drawImage(f.sourceCanvas, offsetX, currentRawY);
-                 currentRawY += f.sourceCanvas.height + gap;
+                 currentRawY += f.sourceCanvas.height + fragmentGap;
              });
              originalDataUrl = rawCanvas.toDataURL('image/jpeg', 0.95);
          }
