@@ -35,6 +35,108 @@ export const renderPageToImage = async (page: any, scale: number = 3): Promise<{
 };
 
 /**
+ * Renders multiple PDF pages and stitches them into a single long vertical image.
+ */
+export const mergePdfPagesToSingleImage = async (
+  pdf: any, 
+  totalPages: number, 
+  scale: number = 2.5, // Slightly lower scale for giant images to save memory
+  onProgress?: (current: number, total: number) => void
+): Promise<{ dataUrl: string, width: number, height: number }> => {
+  
+  const pageImages: { img: HTMLImageElement, width: number, height: number }[] = [];
+  let totalHeight = 0;
+  let maxWidth = 0;
+
+  // 1. Render all pages individually first
+  for (let i = 1; i <= totalPages; i++) {
+    if (onProgress) onProgress(i, totalPages);
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale });
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    
+    if (ctx) {
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const img = new Image();
+      img.src = canvas.toDataURL('image/jpeg', 0.85);
+      await new Promise(r => img.onload = r);
+      
+      pageImages.push({ img, width: viewport.width, height: viewport.height });
+      totalHeight += viewport.height;
+      maxWidth = Math.max(maxWidth, viewport.width);
+    }
+  }
+
+  // 2. Create giant canvas
+  const canvas = document.createElement('canvas');
+  canvas.width = maxWidth;
+  canvas.height = totalHeight;
+  const ctx = canvas.getContext('2d');
+  
+  if (!ctx) throw new Error("Failed to create giant canvas");
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // 3. Draw them stacked
+  let currentY = 0;
+  for (const p of pageImages) {
+    // Center smaller pages if any
+    const x = (maxWidth - p.width) / 2;
+    ctx.drawImage(p.img, x, currentY);
+    currentY += p.height;
+  }
+
+  return {
+    dataUrl: canvas.toDataURL('image/jpeg', 0.85),
+    width: canvas.width,
+    height: canvas.height
+  };
+};
+
+/**
+ * Stitches two Base64 images vertically.
+ * Used for merging a "continuation" fragment to the previous question.
+ */
+export const mergeBase64Images = async (topBase64: string, bottomBase64: string): Promise<string> => {
+  const loadImg = (src: string): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  };
+
+  const [imgTop, imgBottom] = await Promise.all([loadImg(topBase64), loadImg(bottomBase64)]);
+
+  const width = Math.max(imgTop.width, imgBottom.width);
+  const height = imgTop.height + imgBottom.height;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  if (!ctx) return topBase64;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+
+  // Draw Top (Centered)
+  ctx.drawImage(imgTop, (width - imgTop.width) / 2, 0);
+  
+  // Draw Bottom (Centered)
+  ctx.drawImage(imgBottom, (width - imgBottom.width) / 2, imgTop.height);
+
+  return canvas.toDataURL('image/jpeg', 0.95);
+};
+
+/**
  * Crops multiple segments from the source, trims black artifacts, and stitches them vertically.
  * Handles deduplication of nested boxes.
  * 

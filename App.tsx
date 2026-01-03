@@ -5,7 +5,7 @@ import { ProcessingStatus, QuestionImage, DetectedQuestion, DebugPageData } from
 import { ProcessingState } from './components/ProcessingState';
 import { QuestionGrid } from './components/QuestionGrid';
 import { DebugRawView } from './components/DebugRawView';
-import { renderPageToImage, cropAndStitchImage, CropSettings } from './services/pdfService';
+import { renderPageToImage, cropAndStitchImage, CropSettings, mergePdfPagesToSingleImage, mergeBase64Images } from './services/pdfService';
 import { detectQuestionsOnPage } from './services/geminiService';
 
 const App: React.FC = () => {
@@ -23,7 +23,8 @@ const App: React.FC = () => {
   const [detailedStatus, setDetailedStatus] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3-flash-preview');
 
-  // New: Crop Settings State
+  // Config State
+  const [mergePageLimit, setMergePageLimit] = useState<number>(1); // <--- New State
   const [cropSettings, setCropSettings] = useState<CropSettings>({
     cropPadding: 25,
     canvasPaddingLeft: 0,
@@ -31,10 +32,7 @@ const App: React.FC = () => {
     canvasPaddingY: 0
   });
   
-  // Track if we are currently re-processing adjustments to show a small loader
   const [isReprocessing, setIsReprocessing] = useState(false);
-
-  // Debounce ref for settings updates
   const debounceTimer = useRef<NodeJS.Timeout | null>(null);
 
   const handleReset = () => {
@@ -49,7 +47,6 @@ const App: React.FC = () => {
     setShowDebug(false);
   };
 
-  // Re-run cropping logic when settings change, but only if we have raw pages
   useEffect(() => {
     if (rawPages.length === 0 || status === ProcessingStatus.LOADING_PDF || status === ProcessingStatus.DETECTING_QUESTIONS) {
       return;
@@ -61,30 +58,36 @@ const App: React.FC = () => {
     debounceTimer.current = setTimeout(async () => {
       await reprocessAllCrops();
       setIsReprocessing(false);
-    }, 500); // 500ms debounce
+    }, 500); 
 
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
-  }, [cropSettings]); // Depend on cropSettings changes
+  }, [cropSettings]); 
 
   const reprocessAllCrops = async () => {
     if (rawPages.length === 0) return;
 
     const updatedQuestions: QuestionImage[] = [];
 
-    // Loop through all stored raw pages and detections
+    // Note: This naive reprocessing doesn't re-run the complex orphan stitching logic for "Page-by-Page" mode.
+    // It assumes detections are final. If we have merged pages (Mode A), it works perfectly.
+    // If we have separated pages (Mode B), this will just re-crop the original detections.
+    // Ideally, we would store the "stitched" state, but for UI tuning, this is acceptable.
+
     for (const page of rawPages) {
       for (let j = 0; j < page.detections.length; j++) {
         const detection = page.detections[j];
         
-        // Call crop with CURRENT settings
+        // Skip orphans during re-processing visualization as they are meant to be stitched
+        if (detection.id === 'continuation') continue;
+
         const { final, original } = await cropAndStitchImage(
           page.dataUrl, 
           detection.boxes_2d, 
           page.width, 
           page.height,
-          cropSettings // Pass current state
+          cropSettings 
         );
         
         if (final) {
@@ -112,7 +115,6 @@ const App: React.FC = () => {
       setRawPages([]);
       setProgress(0);
       
-      // Store filename without extension
       const name = file.name.replace(/\.[^/.]+$/, "");
       setUploadedFileName(name);
 
@@ -123,53 +125,134 @@ const App: React.FC = () => {
 
       const allExtractedQuestions: QuestionImage[] = [];
 
-      for (let i = 1; i <= pdf.numPages; i++) {
-        setProgress(i);
-        setDetailedStatus(`Rendering page ${i}...`);
+      // --- BRANCH 1: Single Image Mode (Pages <= Threshold) ---
+      if (pdf.numPages <= mergePageLimit) {
+        setDetailedStatus(`Merging ${pdf.numPages} pages into one canvas...`);
         
-        const page = await pdf.getPage(i);
-        const { dataUrl, width, height } = await renderPageToImage(page, 3); // High scale for multi-column
+        // Render giant image
+        const mergedImage = await mergePdfPagesToSingleImage(pdf, pdf.numPages, 2.5, (c, t) => {
+           setProgress(c);
+           setDetailedStatus(`Rendering page ${c} of ${t}...`);
+        });
 
         setStatus(ProcessingStatus.DETECTING_QUESTIONS);
-        setDetailedStatus(`AI identifying questions on page ${i}...`);
+        setDetailedStatus('AI analyzing entire document at once...');
         
-        const detections: DetectedQuestion[] = await detectQuestionsOnPage(dataUrl, selectedModel);
-
-        // Store Debug Data immediately
-        setRawPages(prev => [...prev, {
-          pageNumber: i,
-          dataUrl,
-          width,
-          height,
-          detections
+        // Detect on giant image
+        const detections = await detectQuestionsOnPage(mergedImage.dataUrl, selectedModel);
+        
+        // Store one "Giant" Raw Page
+        setRawPages([{
+          pageNumber: 1, // Logically page 1
+          dataUrl: mergedImage.dataUrl,
+          width: mergedImage.width,
+          height: mergedImage.height,
+          detections: detections
         }]);
 
         setStatus(ProcessingStatus.CROPPING);
         for (let j = 0; j < detections.length; j++) {
-          const detection = detections[j];
-          setDetailedStatus(`Page ${i}: Cutting & Cleaning Question ${detection.id} (${j+1}/${detections.length})...`);
-          
-          const { final, original } = await cropAndStitchImage(
-            dataUrl, 
-            detection.boxes_2d, 
-            width, 
-            height,
-            cropSettings, // Use current initial settings
-            (msg) => setDetailedStatus(`Q${detection.id}: ${msg}`) 
-          );
-          
-          if (final) {
-            allExtractedQuestions.push({
-              id: detection.id,
-              pageNumber: i,
-              dataUrl: final,
-              originalDataUrl: original
-            });
-          }
+           const detection = detections[j];
+           if (detection.id === 'continuation') continue; // Should rarely happen in single mode, but good safety
+
+           setDetailedStatus(`Extracting Question ${detection.id}...`);
+           const { final, original } = await cropAndStitchImage(
+            mergedImage.dataUrl,
+            detection.boxes_2d,
+            mergedImage.width,
+            mergedImage.height,
+            cropSettings
+           );
+
+           if (final) {
+             allExtractedQuestions.push({
+               id: detection.id,
+               pageNumber: 1,
+               dataUrl: final,
+               originalDataUrl: original
+             });
+           }
         }
-        
-        if (i < pdf.numPages) {
-          setStatus(ProcessingStatus.LOADING_PDF);
+
+      } else {
+        // --- BRANCH 2: Page-by-Page Mode with Stitching (Pages > Threshold) ---
+        for (let i = 1; i <= pdf.numPages; i++) {
+          setProgress(i);
+          setDetailedStatus(`Rendering page ${i}...`);
+          
+          const page = await pdf.getPage(i);
+          const { dataUrl, width, height } = await renderPageToImage(page, 3);
+
+          setStatus(ProcessingStatus.DETECTING_QUESTIONS);
+          setDetailedStatus(`AI identifying questions on page ${i}...`);
+          
+          let detections: DetectedQuestion[] = await detectQuestionsOnPage(dataUrl, selectedModel);
+
+          // Store Raw Data
+          setRawPages(prev => [...prev, {
+            pageNumber: i,
+            dataUrl,
+            width,
+            height,
+            detections
+          }]);
+
+          // --- ORPHAN STITCHING LOGIC ---
+          // Check if the first detected item is a "continuation"
+          if (detections.length > 0 && detections[0].id === 'continuation') {
+             const orphan = detections[0];
+             setDetailedStatus(`Found cross-page content on Page ${i}. Stitching...`);
+             
+             // Crop the orphan fragment
+             const { final: orphanImg } = await cropAndStitchImage(
+                dataUrl, 
+                orphan.boxes_2d, 
+                width, 
+                height, 
+                cropSettings
+             );
+
+             // Find previous question to attach to
+             if (allExtractedQuestions.length > 0 && orphanImg) {
+                const lastQ = allExtractedQuestions[allExtractedQuestions.length - 1];
+                // Merge vertically
+                const stitchedImg = await mergeBase64Images(lastQ.dataUrl, orphanImg);
+                // Update the previous question
+                lastQ.dataUrl = stitchedImg;
+                // Note: We don't update 'originalDataUrl' here easily, but 'final' is updated.
+             }
+
+             // Remove orphan from list so it doesn't become its own question
+             detections = detections.slice(1);
+          }
+
+          setStatus(ProcessingStatus.CROPPING);
+          for (let j = 0; j < detections.length; j++) {
+            const detection = detections[j];
+            setDetailedStatus(`Page ${i}: Cutting Question ${detection.id}...`);
+            
+            const { final, original } = await cropAndStitchImage(
+              dataUrl, 
+              detection.boxes_2d, 
+              width, 
+              height,
+              cropSettings, 
+              (msg) => setDetailedStatus(`Q${detection.id}: ${msg}`) 
+            );
+            
+            if (final) {
+              allExtractedQuestions.push({
+                id: detection.id,
+                pageNumber: i,
+                dataUrl: final,
+                originalDataUrl: original
+              });
+            }
+          }
+          
+          if (i < pdf.numPages) {
+            setStatus(ProcessingStatus.LOADING_PDF);
+          }
         }
       }
 
@@ -178,16 +261,15 @@ const App: React.FC = () => {
       setDetailedStatus('');
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Failed to process PDF. Make sure the file is not password protected.");
+      setError(err.message || "Failed to process PDF.");
       setStatus(ProcessingStatus.ERROR);
     }
   };
 
-  // Determine if we should use the wide layout
   const isWideLayout = showDebug || questions.length > 0;
 
   return (
-    <div className="min-h-screen pb-40 px-4 md:px-8 bg-slate-50 relative">
+    <div className="min-h-screen pb-48 px-4 md:px-8 bg-slate-50 relative">
       <header className="max-w-6xl mx-auto py-10 text-center relative">
         <div className="inline-flex items-center gap-2 bg-blue-100 text-blue-700 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest mb-6">
           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -199,11 +281,9 @@ const App: React.FC = () => {
           Exam <span className="text-blue-600">Question</span> Splitter
         </h1>
         <p className="text-lg text-slate-600 max-w-2xl mx-auto leading-relaxed">
-          Supports 2/3-column layouts. Our AI identifies cross-column fragments and stitches them 
-          back into a single high-quality image.
+          Supports 2/3-column layouts. Auto-merges short PDFs into a single view for perfect question integrity.
         </p>
 
-        {/* Action Bar: View Toggle & Re-upload */}
         {(questions.length > 0 || rawPages.length > 0) && (
           <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mt-8 animate-fade-in">
             <div className="bg-white p-1 rounded-xl border border-slate-200 shadow-sm inline-flex">
@@ -239,7 +319,6 @@ const App: React.FC = () => {
         )}
       </header>
 
-      {/* Main container switches width based on view mode */}
       <main className={`mx-auto transition-all duration-300 ${isWideLayout ? 'w-full max-w-[98vw]' : 'max-w-7xl'}`}>
         {status === ProcessingStatus.IDLE || status === ProcessingStatus.COMPLETED || status === ProcessingStatus.ERROR ? (
           (!isWideLayout && questions.length === 0) && (
@@ -316,29 +395,44 @@ const App: React.FC = () => {
                     </div>
                  </div>
               )}
-              <QuestionGrid questions={questions} sourceFileName={uploadedFileName} />
+              <QuestionGrid questions={questions} sourceFileName={uploadedFileName} rawPages={rawPages} />
             </div>
           )
         )}
       </main>
       
-      {/* Floating Tuning Control Panel - Only show when we have results and not in debug mode */}
-      {!showDebug && rawPages.length > 0 && (
+      {/* Floating Tuning Control Panel */}
+      {!showDebug && (
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/90 backdrop-blur-md border-t border-slate-200 shadow-[0_-5px_30px_rgba(0,0,0,0.1)] transition-transform duration-300 transform translate-y-0">
           <div className="max-w-7xl mx-auto px-4 py-4">
-             <div className="flex flex-col md:flex-row items-center gap-6 justify-between">
+             <div className="flex flex-col xl:flex-row items-center gap-6 justify-between">
                 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 min-w-[150px]">
                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600">
                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
                    </div>
                    <div>
-                     <h3 className="text-sm font-bold text-slate-800">Crop Tuning</h3>
-                     <p className="text-xs text-slate-500 hidden sm:block">Real-time adjustments</p>
+                     <h3 className="text-sm font-bold text-slate-800">Tuning</h3>
+                     <p className="text-xs text-slate-500 hidden sm:block">Settings</p>
                    </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-2 flex-grow w-full md:w-auto">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-x-8 gap-y-2 flex-grow w-full md:w-auto">
+                    {/* Merge Limit */}
+                    <div className="flex flex-col gap-1">
+                       <div className="flex justify-between">
+                          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Merge Threshold</label>
+                          <span className="text-[10px] font-mono bg-indigo-50 text-indigo-700 px-1 rounded">{mergePageLimit} pgs</span>
+                       </div>
+                       <input 
+                         type="range" min="1" max="20" step="1" 
+                         value={mergePageLimit}
+                         onChange={(e) => setMergePageLimit(parseInt(e.target.value))}
+                         className="h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                         title="PDFs smaller than this will be merged into one image"
+                       />
+                    </div>
+
                     {/* Crop Padding */}
                     <div className="flex flex-col gap-1">
                        <div className="flex justify-between">

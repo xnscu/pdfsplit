@@ -1,14 +1,15 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import JSZip from 'jszip';
-import { QuestionImage } from '../types';
+import { QuestionImage, DebugPageData } from '../types';
 
 interface Props {
   questions: QuestionImage[];
   sourceFileName: string;
+  rawPages: DebugPageData[]; // Data required for exporting full pages and JSON
 }
 
-export const QuestionGrid: React.FC<Props> = ({ questions, sourceFileName }) => {
+export const QuestionGrid: React.FC<Props> = ({ questions, sourceFileName, rawPages }) => {
   const [isZipping, setIsZipping] = useState(false);
   const [selectedImage, setSelectedImage] = useState<QuestionImage | null>(null);
   const [showOriginal, setShowOriginal] = useState(false); 
@@ -50,13 +51,38 @@ export const QuestionGrid: React.FC<Props> = ({ questions, sourceFileName }) => 
     
     try {
       const zip = new JSZip();
-      const folder = zip.folder(sourceFileName || "math_questions");
+      const folderName = sourceFileName || "math_questions";
+      const folder = zip.folder(folderName);
+      
+      if (!folder) throw new Error("Failed to create zip folder");
 
-      questions.forEach((q, index) => {
-        // Extract base64 data (part after comma)
+      // 1. Add Analysis JSON
+      // This contains the raw detections and page metadata
+      folder.file("analysis_data.json", JSON.stringify(rawPages, null, 2));
+
+      // 2. Add Full Page Images
+      const fullPagesFolder = folder.folder("full_pages");
+      rawPages.forEach((page) => {
+        const base64Data = page.dataUrl.split(',')[1];
+        fullPagesFolder?.file(`Page_${page.pageNumber}.jpg`, base64Data, { base64: true });
+      });
+
+      // 3. Add Extracted Questions with Naming Logic: `Filename_ID`
+      // Handle duplicates with recursive _1 suffix
+      const usedNames = new Set<string>();
+
+      questions.forEach((q) => {
         const base64Data = q.dataUrl.split(',')[1];
-        const baseFilename = `Page${q.pageNumber}_Q${q.id || index + 1}`;
-        folder?.file(`${baseFilename}.jpg`, base64Data, { base64: true });
+        const baseName = `${sourceFileName}_${q.id}`;
+        
+        let finalName = baseName;
+        // Recursive check: if name exists, append _1, then _1_1, etc.
+        while (usedNames.has(finalName)) {
+           finalName = `${finalName}_1`;
+        }
+        
+        usedNames.add(finalName);
+        folder.file(`${finalName}.jpg`, base64Data, { base64: true });
       });
 
       const content = await zip.generateAsync({ 
