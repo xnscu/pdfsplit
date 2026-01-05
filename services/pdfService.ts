@@ -10,6 +10,7 @@ export interface CropSettings {
   canvasPaddingLeft: number;
   canvasPaddingRight: number;
   canvasPaddingY: number;
+  mergeOverlap: number;
 }
 
 /**
@@ -158,7 +159,11 @@ export const mergePdfPagesToSingleImage = async (
   }
 };
 
-export const mergeBase64Images = async (topBase64: string, bottomBase64: string): Promise<string> => {
+/**
+ * Merges two base64 images vertically with an optional gap.
+ * A negative gap allows for overlapping (removing internal paddings).
+ */
+export const mergeBase64Images = async (topBase64: string, bottomBase64: string, gap: number = 0): Promise<string> => {
   const loadImg = (src: string): Promise<HTMLImageElement> => {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -170,13 +175,18 @@ export const mergeBase64Images = async (topBase64: string, bottomBase64: string)
 
   const [imgTop, imgBottom] = await Promise.all([loadImg(topBase64), loadImg(bottomBase64)]);
   const width = Math.max(imgTop.width, imgBottom.width);
-  const height = imgTop.height + imgBottom.height;
+  // Calculate final height including the gap/overlap
+  const height = Math.max(0, imgTop.height + imgBottom.height + gap);
 
   const { canvas, context: ctx } = createSmartCanvas(width, height);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, width, height);
-  ctx.drawImage(imgTop, 0, 0);
-  ctx.drawImage(imgBottom, 0, imgTop.height);
+  
+  // Draw top image
+  ctx.drawImage(imgTop, (width - imgTop.width) / 2, 0);
+  
+  // Draw bottom image starting after the top image plus the gap
+  ctx.drawImage(imgBottom, (width - imgBottom.width) / 2, imgTop.height + gap);
 
   if ('toDataURL' in canvas) {
     return (canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.95);

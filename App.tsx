@@ -34,7 +34,8 @@ const App: React.FC = () => {
     cropPadding: 25,
     canvasPaddingLeft: 10,
     canvasPaddingRight: 10,
-    canvasPaddingY: 10
+    canvasPaddingY: 10,
+    mergeOverlap: 20
   });
   
   const [isReprocessing, setIsReprocessing] = useState(false);
@@ -78,9 +79,30 @@ const App: React.FC = () => {
     if (rawPages.length === 0) return;
     const updatedQuestions: QuestionImage[] = [];
     
-    for (const page of rawPages) {
-      for (const detection of page.detections) {
-        if (detection.id === 'continuation') continue;
+    for (let i = 0; i < rawPages.length; i++) {
+      const page = rawPages[i];
+      let detections = page.detections;
+
+      // Handle continuation logic during reprocessing to maintain merge consistency
+      if (detections.length > 0 && detections[0].id === 'continuation') {
+        const orphan = detections[0];
+        const { final: orphanImg } = await cropAndStitchImage(
+          page.dataUrl, 
+          orphan.boxes_2d, 
+          page.width, 
+          page.height, 
+          cropSettings
+        );
+        if (updatedQuestions.length > 0 && orphanImg) {
+          const lastQ = updatedQuestions[updatedQuestions.length - 1];
+          // Use user-defined mergeOverlap
+          const stitchedImg = await mergeBase64Images(lastQ.dataUrl, orphanImg, -cropSettings.mergeOverlap);
+          lastQ.dataUrl = stitchedImg;
+        }
+        detections = detections.slice(1);
+      }
+
+      for (const detection of detections) {
         const { final, original } = await cropAndStitchImage(
           page.dataUrl, 
           detection.boxes_2d, 
@@ -222,7 +244,8 @@ const App: React.FC = () => {
           );
           if (allExtractedQuestions.length > 0 && orphanImg) {
             const lastQ = allExtractedQuestions[allExtractedQuestions.length - 1];
-            const stitchedImg = await mergeBase64Images(lastQ.dataUrl, orphanImg);
+            // Use user-defined mergeOverlap
+            const stitchedImg = await mergeBase64Images(lastQ.dataUrl, orphanImg, -cropSettings.mergeOverlap);
             lastQ.dataUrl = stitchedImg;
           }
           setCroppingDone(prev => prev + 1);
@@ -391,14 +414,18 @@ const App: React.FC = () => {
                      <p className="text-[10px] text-slate-400 font-medium">调整切割边缘效果</p>
                    </div>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-10 gap-y-3 flex-grow w-full">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-x-10 gap-y-3 flex-grow w-full">
                     <div className="flex flex-col gap-1.5">
-                       <div className="flex justify-between items-center"><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">检测范围扩展</label><span className="text-xs font-mono text-blue-600 font-bold">{cropSettings.cropPadding}px</span></div>
+                       <div className="flex justify-between items-center"><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">检测扩展</label><span className="text-xs font-mono text-blue-600 font-bold">{cropSettings.cropPadding}px</span></div>
                        <input type="range" min="0" max="100" value={cropSettings.cropPadding} onChange={(e) => setCropSettings(p => ({...p, cropPadding: parseInt(e.target.value)}))} className="h-2 accent-blue-600 cursor-pointer"/>
                     </div>
                     <div className="flex flex-col gap-1.5">
                        <div className="flex justify-between items-center"><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">上下留白</label><span className="text-xs font-mono text-blue-600 font-bold">{cropSettings.canvasPaddingY}px</span></div>
                        <input type="range" min="0" max="100" value={cropSettings.canvasPaddingY} onChange={(e) => setCropSettings(p => ({...p, canvasPaddingY: parseInt(e.target.value)}))} className="h-2 accent-blue-600 cursor-pointer"/>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                       <div className="flex justify-between items-center"><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">跨页重叠</label><span className="text-xs font-mono text-blue-600 font-bold">{cropSettings.mergeOverlap}px</span></div>
+                       <input type="range" min="0" max="100" value={cropSettings.mergeOverlap} onChange={(e) => setCropSettings(p => ({...p, mergeOverlap: parseInt(e.target.value)}))} className="h-2 accent-blue-600 cursor-pointer"/>
                     </div>
                     <div className="flex flex-col gap-1.5">
                        <div className="flex justify-between items-center"><label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">左侧边距</label><span className="text-xs font-mono text-blue-600 font-bold">{cropSettings.canvasPaddingLeft}px</span></div>
@@ -410,7 +437,7 @@ const App: React.FC = () => {
                     </div>
                 </div>
                 <button 
-                  onClick={() => setCropSettings({ cropPadding: 25, canvasPaddingLeft: 10, canvasPaddingRight: 10, canvasPaddingY: 10 })} 
+                  onClick={() => setCropSettings({ cropPadding: 25, canvasPaddingLeft: 10, canvasPaddingRight: 10, canvasPaddingY: 10, mergeOverlap: 20 })} 
                   className="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-red-500 transition-colors border border-slate-200"
                   title="重置"
                 >
