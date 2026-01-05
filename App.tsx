@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
+import JSZip from 'jszip';
 import { ProcessingStatus, QuestionImage, DetectedQuestion, DebugPageData } from './types';
 import { ProcessingState } from './components/ProcessingState';
 import { QuestionGrid } from './components/QuestionGrid';
@@ -18,9 +19,9 @@ const App: React.FC = () => {
   const [showDebug, setShowDebug] = useState(false);
   
   // 核心进度状态
-  const [progress, setProgress] = useState(0); // 这里的 progress 代表“已启动/已发起”的数量
+  const [progress, setProgress] = useState(0); 
   const [total, setTotal] = useState(0);
-  const [completedCount, setCompletedCount] = useState(0); // 真正收到回复的数量
+  const [completedCount, setCompletedCount] = useState(0); 
 
   const [error, setError] = useState<string | undefined>();
   const [detailedStatus, setDetailedStatus] = useState<string>('');
@@ -83,7 +84,6 @@ const App: React.FC = () => {
       const page = rawPages[i];
       let detections = page.detections;
 
-      // Handle continuation logic during reprocessing to maintain merge consistency
       if (detections.length > 0 && detections[0].id === 'continuation') {
         const orphan = detections[0];
         const { final: orphanImg } = await cropAndStitchImage(
@@ -95,7 +95,6 @@ const App: React.FC = () => {
         );
         if (updatedQuestions.length > 0 && orphanImg) {
           const lastQ = updatedQuestions[updatedQuestions.length - 1];
-          // Use user-defined mergeOverlap
           const stitchedImg = await mergeBase64Images(lastQ.dataUrl, orphanImg, -cropSettings.mergeOverlap);
           lastQ.dataUrl = stitchedImg;
         }
@@ -123,9 +122,104 @@ const App: React.FC = () => {
     setQuestions(updatedQuestions);
   };
 
+  const handleZipUpload = async (file: File) => {
+    try {
+      setStatus(ProcessingStatus.LOADING_PDF);
+      setDetailedStatus('正在解析 ZIP 文件...');
+      
+      const zip = new JSZip();
+      const loadedZip = await zip.loadAsync(file);
+      
+      // Look for analysis_data.json
+      let analysisJsonFile: JSZip.JSZipObject | null = null;
+      loadedZip.forEach((relativePath, zipEntry) => {
+        if (relativePath.endsWith('analysis_data.json')) {
+          analysisJsonFile = zipEntry;
+        }
+      });
+
+      if (!analysisJsonFile) {
+        throw new Error('ZIP 中未找到 analysis_data.json，无法恢复数据。');
+      }
+
+      const jsonText = await (analysisJsonFile as JSZip.JSZipObject).async('text');
+      const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
+      
+      setDetailedStatus('正在加载图片资源...');
+      
+      // Try to reconstruct images from full_pages/ if they are not in the JSON or as a backup
+      for (const page of loadedRawPages) {
+        const imgPath = `full_pages/Page_${page.pageNumber}.jpg`;
+        const imgFile = loadedZip.file(new RegExp(`full_pages/Page_${page.pageNumber}\\.jpg$`, 'i'))[0];
+        if (imgFile) {
+          const base64 = await imgFile.async('base64');
+          page.dataUrl = `data:image/jpeg;base64,${base64}`;
+        }
+      }
+
+      setRawPages(loadedRawPages);
+      setTotal(loadedRawPages.length);
+      setUploadedFileName(file.name.replace(/\.[^/.]+$/, ""));
+
+      // Try to reconstruct individual questions from the ZIP
+      const reconstructedQuestions: QuestionImage[] = [];
+      const questionFiles: { name: string, entry: JSZip.JSZipObject }[] = [];
+      
+      loadedZip.forEach((relativePath, zipEntry) => {
+        // Exclude directories and metadata files
+        if (!zipEntry.dir && 
+            !relativePath.includes('full_pages/') && 
+            !relativePath.endsWith('.json') &&
+            relativePath.match(/\.(jpg|jpeg|png)$/i)) {
+          questionFiles.push({ name: relativePath.split('/').pop() || '', entry: zipEntry });
+        }
+      });
+
+      setDetailedStatus(`已发现 ${questionFiles.length} 个题目图片，正在处理...`);
+      
+      for (const qf of questionFiles) {
+        // Try to guess ID and page from filename. Standard export: {FileName}_{ID}.jpg
+        // Note: Filename might be complex.
+        const baseName = qf.name.replace(/\.[^/.]+$/, "");
+        const parts = baseName.split('_');
+        const id = parts.pop() || 'unknown'; 
+        
+        // Match against rawPages to find page number
+        let pageNumber = 1;
+        const pageMatch = loadedRawPages.find(p => p.detections.some(d => d.id === id));
+        if (pageMatch) pageNumber = pageMatch.pageNumber;
+
+        const base64 = await qf.entry.async('base64');
+        reconstructedQuestions.push({
+          id,
+          pageNumber,
+          dataUrl: `data:image/jpeg;base64,${base64}`
+        });
+      }
+
+      // Sort by page and ID if possible
+      reconstructedQuestions.sort((a, b) => {
+        if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+        return a.id.localeCompare(b.id, undefined, { numeric: true });
+      });
+
+      setQuestions(reconstructedQuestions);
+      setStatus(ProcessingStatus.COMPLETED);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "ZIP 加载失败。");
+      setStatus(ProcessingStatus.ERROR);
+    }
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (file.name.endsWith('.zip')) {
+      handleZipUpload(file);
+      return;
+    }
 
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
@@ -152,7 +246,6 @@ const App: React.FC = () => {
 
       if (signal.aborted) return;
 
-      // Phase 1: Rendering
       setDetailedStatus('正在渲染 PDF 页面...');
       const renderedPages: { dataUrl: string, width: number, height: number, pageNumber: number }[] = [];
       for (let i = 1; i <= numPages; i++) {
@@ -164,7 +257,6 @@ const App: React.FC = () => {
         setCompletedCount(i);
       }
 
-      // Phase 2: AI Detection
       setStatus(ProcessingStatus.DETECTING_QUESTIONS);
       setProgress(0);
       setCompletedCount(0);
@@ -175,14 +267,11 @@ const App: React.FC = () => {
       for (let i = 0; i < renderedPages.length; i += CONCURRENCY_LIMIT) {
         if (signal.aborted) return;
         const batch = renderedPages.slice(i, i + CONCURRENCY_LIMIT);
-        
-        // 关键改进：一旦进入循环，立即更新“已启动/已发起”的数量
         setProgress(Math.min(numPages, i + batch.length));
 
         const batchResults = await Promise.all(batch.map(async (pageData) => {
           try {
             const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel);
-            // 每一页完成时更新完成计数
             setCompletedCount(prev => prev + 1);
             return {
               pageNumber: pageData.pageNumber,
@@ -193,7 +282,7 @@ const App: React.FC = () => {
             };
           } catch (err: any) {
             if (signal.aborted) throw err;
-            setCompletedCount(prev => prev + 1); // 报错也算作一页结束
+            setCompletedCount(prev => prev + 1);
             console.error(`Error on page ${pageData.pageNumber}:`, err);
             return {
               pageNumber: pageData.pageNumber,
@@ -213,9 +302,7 @@ const App: React.FC = () => {
       setRawPages(results);
       if (signal.aborted) return;
 
-      // Phase 3: Cropping
       setStatus(ProcessingStatus.CROPPING);
-      
       const totalDetections = results.reduce((acc, p) => acc + p.detections.length, 0);
       setCroppingTotal(totalDetections);
       setCroppingDone(0);
@@ -229,8 +316,6 @@ const App: React.FC = () => {
         if (signal.aborted) return;
         const page = results[i];
         let detections = page.detections;
-
-        // 更新当前正在处理的页码
         setProgress(i + 1);
 
         if (detections.length > 0 && detections[0].id === 'continuation') {
@@ -244,7 +329,6 @@ const App: React.FC = () => {
           );
           if (allExtractedQuestions.length > 0 && orphanImg) {
             const lastQ = allExtractedQuestions[allExtractedQuestions.length - 1];
-            // Use user-defined mergeOverlap
             const stitchedImg = await mergeBase64Images(lastQ.dataUrl, orphanImg, -cropSettings.mergeOverlap);
             lastQ.dataUrl = stitchedImg;
           }
@@ -335,7 +419,7 @@ const App: React.FC = () => {
             <div className="w-full mb-8 relative bg-white border-2 border-dashed border-slate-200 rounded-3xl p-16 text-center hover:border-blue-400 transition-colors z-10 shadow-lg shadow-slate-200/50">
               <input 
                 type="file" 
-                accept="application/pdf"
+                accept="application/pdf,application/zip"
                 onChange={handleFileChange}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
               />
@@ -345,8 +429,8 @@ const App: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                   </svg>
                 </div>
-                <h2 className="text-2xl font-bold text-slate-800 mb-2">上传试卷 PDF</h2>
-                <p className="text-slate-400 font-medium">点击或拖拽文件到此处开始</p>
+                <h2 className="text-2xl font-bold text-slate-800 mb-2">上传试卷 PDF 或 数据 ZIP</h2>
+                <p className="text-slate-400 font-medium">支持 PDF 解析或 ZIP 回放调试</p>
               </div>
             </div>
             <div className="flex flex-col items-center gap-4 mb-4 z-20 w-full">
