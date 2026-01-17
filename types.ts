@@ -15,12 +15,14 @@ export interface DetectedQuestion {
 export interface QuestionImage {
   id: string;
   pageNumber: number;
+  fileName: string; // Added to track which PDF this question belongs to
   dataUrl: string;
   originalDataUrl?: string; // Used for "Before/After" comparison if trimming occurred
 }
 
 export interface DebugPageData {
   pageNumber: number;
+  fileName: string; // Added to track source file
   dataUrl: string; // The full page image
   width: number;
   height: number;

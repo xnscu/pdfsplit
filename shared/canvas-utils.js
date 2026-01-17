@@ -1,13 +1,13 @@
 
 
 /**
- * Shared Canvas Logic for "Edge Peel" algorithm.
+ * Shared Canvas Logic for "Smart Trim" algorithm.
  * Works in both Browser (DOM Canvas) and Node.js (node-canvas).
  */
 
 /**
- * Intelligent "Edge Peel" Trimming.
- * Peels off artifacts (like black lines) from the edges until clean whitespace is found.
+ * Standard "Trim Whitespace" Trimming.
+ * Scans from edges inwards removing TRANSPARENT or WHITE pixels until INK is found.
  * 
  * @param {any} ctx 
  * @param {number} width 
@@ -22,11 +22,15 @@ export const getTrimmedBounds = (ctx, width, height, onStatus = null) => {
 
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
-  const threshold = 200; 
+  // Threshold: pixels darker than this are considered "Ink".
+  // 240 allows faint gray noise to be cropped, but keeps text.
+  const threshold = 240; 
 
+  // Helper: Checks if a row has any pixel darker than threshold
   const rowHasInk = (y) => {
     for (let x = 0; x < w; x++) {
       const i = (y * w + x) * 4;
+      // Alpha > 0 AND (R or G or B < threshold)
       if (data[i + 3] > 0 && (data[i] < threshold || data[i + 1] < threshold || data[i + 2] < threshold)) {
         return true;
       }
@@ -34,6 +38,7 @@ export const getTrimmedBounds = (ctx, width, height, onStatus = null) => {
     return false;
   };
 
+  // Helper: Checks if a column has any pixel darker than threshold
   const colHasInk = (x) => {
     for (let y = 0; y < h; y++) {
       const i = (y * w + x) * 4;
@@ -44,31 +49,43 @@ export const getTrimmedBounds = (ctx, width, height, onStatus = null) => {
     return false;
   };
 
-  const SAFETY_Y = Math.floor(h * 0.3);
-  const SAFETY_X = Math.floor(w * 0.3);
-
   let top = 0;
   let bottom = h;
   let left = 0;
   let right = w;
 
-  if (onStatus) onStatus("Peeling Top...");
-  while (top < SAFETY_Y && rowHasInk(top)) { top++; }
+  // OLD LOGIC (Buggy): while (hasInk) -> Crop. This ate the number "1".
+  // NEW LOGIC (Correct): while (!hasInk) -> Crop. Remove whitespace only.
+
+  if (onStatus) onStatus("Trimming Top Whitespace...");
+  while (top < h && !rowHasInk(top)) { top++; }
   
-  if (onStatus) onStatus("Peeling Bottom...");
-  while (bottom > h - SAFETY_Y && bottom > top && rowHasInk(bottom - 1)) { bottom--; }
+  if (onStatus) onStatus("Trimming Bottom Whitespace...");
+  while (bottom > top && !rowHasInk(bottom - 1)) { bottom--; }
   
-  if (onStatus) onStatus("Peeling Left...");
-  while (left < SAFETY_X && colHasInk(left)) { left++; }
+  if (onStatus) onStatus("Trimming Left Whitespace...");
+  while (left < w && !colHasInk(left)) { left++; }
   
-  if (onStatus) onStatus("Peeling Right...");
-  while (right > w - SAFETY_X && right > left && colHasInk(right - 1)) { right--; }
+  if (onStatus) onStatus("Trimming Right Whitespace...");
+  while (right > left && !colHasInk(right - 1)) { right--; }
+
+  // Fallback: If we trimmed everything away (blank image), return original or zero
+  if (left >= right || top >= bottom) {
+      return { x: 0, y: 0, w: w, h: h };
+  }
+
+  // Optional: Add a tiny bit of padding back (e.g. 5px) so text doesn't touch the edge
+  const PADDING = 5;
+  const finalX = Math.max(0, left - PADDING);
+  const finalY = Math.max(0, top - PADDING);
+  const finalW = Math.min(w - finalX, (right - left) + (PADDING * 2));
+  const finalH = Math.min(h - finalY, (bottom - top) + (PADDING * 2));
 
   return {
-    x: left,
-    y: top,
-    w: Math.max(0, right - left),
-    h: Math.max(0, bottom - top)
+    x: finalX,
+    y: finalY,
+    w: finalW,
+    h: finalH
   };
 };
 

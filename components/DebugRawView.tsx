@@ -117,14 +117,15 @@ export const DebugRawView: React.FC<Props> = ({ pages }) => {
   return (
     <div className="animate-fade-in space-y-12 pb-20 w-full">
       {pages.map((page, pageIdx) => (
-        <div key={page.pageNumber} className="bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-800 flex flex-col lg:flex-row h-[85vh]">
+        <div key={`${page.fileName}-${page.pageNumber}`} className="bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-800 flex flex-col lg:flex-row h-[85vh]">
           
           {/* Main Image Area - Takes remaining width & Uses natural aspect ratio */}
           <div className="flex-grow relative bg-slate-950/50 h-full flex flex-col">
              {/* Header Overlay */}
             <div className="flex-none bg-slate-900/90 backdrop-blur-sm px-6 py-3 border-b border-slate-800 flex justify-between items-center z-10">
                <h2 className="text-white font-bold text-lg flex items-center gap-2">
-                 <span className="bg-blue-600 text-xs px-2 py-1 rounded">Page {page.pageNumber}</span>
+                 <span className="text-slate-300 font-normal">{page.fileName}</span>
+                 <span className="bg-blue-600 text-xs px-2 py-1 rounded ml-2">Page {page.pageNumber}</span>
                </h2>
                <span className="text-slate-500 text-xs font-mono">{page.width} x {page.height}px</span>
             </div>
@@ -284,7 +285,7 @@ export const DebugRawView: React.FC<Props> = ({ pages }) => {
                      Raw Crop: Question {allItems[selectedIndex].detection.id}
                    </h3>
                    <p className="text-xs text-slate-500">
-                     Page {allItems[selectedIndex].page.pageNumber} • Item {selectedIndex + 1} of {allItems.length}
+                     {allItems[selectedIndex].page.fileName} • Page {allItems[selectedIndex].page.pageNumber}
                    </p>
                 </div>
                 <button onClick={() => setSelectedIndex(null)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
