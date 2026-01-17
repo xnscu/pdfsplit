@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
@@ -7,8 +8,6 @@ import { QuestionGrid } from './components/QuestionGrid';
 import { DebugRawView } from './components/DebugRawView';
 import { renderPageToImage, cropAndStitchImage, CropSettings, mergeBase64Images } from './services/pdfService';
 import { detectQuestionsOnPage } from './services/geminiService';
-
-const CONCURRENCY_LIMIT = 5; 
 
 // Initial default settings
 const DEFAULT_SETTINGS: CropSettings = {
@@ -28,7 +27,6 @@ interface SourcePage {
 }
 
 const normalizeBoxes = (boxes2d: any): [number, number, number, number][] => {
-  // Check if the first element is an array (nested) or a number (flat)
   if (Array.isArray(boxes2d[0])) {
     return boxes2d as [number, number, number, number][];
   }
@@ -39,15 +37,16 @@ const App: React.FC = () => {
   const [status, setStatus] = useState<ProcessingStatus>(ProcessingStatus.IDLE);
   const [questions, setQuestions] = useState<QuestionImage[]>([]);
   const [rawPages, setRawPages] = useState<DebugPageData[]>([]);
-  const [sourcePages, setSourcePages] = useState<SourcePage[]>([]); // Store original pages for re-processing
+  const [sourcePages, setSourcePages] = useState<SourcePage[]>([]);
   const [uploadedFileNames, setUploadedFileNames] = useState<string[]>([]);
   const [showDebug, setShowDebug] = useState(false);
   
   // Settings State
   const [cropSettings, setCropSettings] = useState<CropSettings>(DEFAULT_SETTINGS);
+  const [concurrency, setConcurrency] = useState(5);
   const [showSettingsPanel, setShowSettingsPanel] = useState(true);
 
-  // 核心进度状态
+  // 进度状态
   const [progress, setProgress] = useState(0); 
   const [total, setTotal] = useState(0);
   const [completedCount, setCompletedCount] = useState(0); 
@@ -55,7 +54,6 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | undefined>();
   const [detailedStatus, setDetailedStatus] = useState<string>('');
   
-  // 裁剪阶段专属计数
   const [croppingTotal, setCroppingTotal] = useState(0);
   const [croppingDone, setCroppingDone] = useState(0);
 
@@ -63,7 +61,6 @@ const App: React.FC = () => {
   
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // 初始化检查 URL query param
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const zipUrl = params.get('zip');
@@ -73,32 +70,23 @@ const App: React.FC = () => {
         try {
           setStatus(ProcessingStatus.LOADING_PDF);
           setDetailedStatus(`正在下载远程数据: ${zipUrl}`);
-          
           const response = await fetch(zipUrl);
-          if (!response.ok) {
-            throw new Error(`无法下载文件 (Status: ${response.status})`);
-          }
-          
+          if (!response.ok) throw new Error(`无法下载文件 (Status: ${response.status})`);
           const blob = await response.blob();
           const fileName = zipUrl.split('/').pop() || 'remote_debug.zip';
-          
           await processZipData(blob, fileName);
-          setShowDebug(true); // 自动切换到调试视图
+          setShowDebug(true);
         } catch (err: any) {
-          console.error("Remote ZIP load failed:", err);
           setError(err.message || "远程 ZIP 下载失败");
           setStatus(ProcessingStatus.ERROR);
         }
       };
-      
       loadRemoteZip();
     }
   }, []);
 
   const handleReset = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+    if (abortControllerRef.current) abortControllerRef.current.abort();
     setStatus(ProcessingStatus.IDLE);
     setQuestions([]);
     setRawPages([]);
@@ -112,17 +100,9 @@ const App: React.FC = () => {
     setError(undefined);
     setDetailedStatus('');
     setShowDebug(false);
-    
-    // Clear URL params on reset if present
-    if (window.location.search) {
-      window.history.pushState({}, '', window.location.pathname);
-    }
+    if (window.location.search) window.history.pushState({}, '', window.location.pathname);
   };
 
-  /**
-   * Phase 2: Cropping (Local only)
-   * Can be re-run with different settings
-   */
   const runCroppingPhase = async (pages: DebugPageData[], settings: CropSettings, signal: AbortSignal) => {
     setStatus(ProcessingStatus.CROPPING);
     const totalDetections = pages.reduce((acc, p) => acc + p.detections.length, 0);
@@ -139,41 +119,21 @@ const App: React.FC = () => {
         if (signal.aborted) return;
         const page = pages[i];
         setProgress(i + 1);
-
-        // Grouping logic for "continuation" needs to be file-aware
-        // We filter the current list of extracted questions to only find the last one belonging to THIS file
         const getSameFileQuestions = () => allExtractedQuestions.filter(q => q.fileName === page.fileName);
 
         for (const detection of page.detections) {
           if (signal.aborted) return;
-          
           const boxes = normalizeBoxes(detection.boxes_2d);
-
-          const { final, original } = await cropAndStitchImage(
-            page.dataUrl, 
-            boxes, 
-            page.width, 
-            page.height,
-            settings
-          );
+          const { final, original } = await cropAndStitchImage(page.dataUrl, boxes, page.width, page.height, settings);
           
           if (final) {
             const sameFileQuestions = getSameFileQuestions();
-            
             if (detection.id === 'continuation' && sameFileQuestions.length > 0) {
-              // Find the very last question extracted for this file to merge with
-              // We need to find the actual object in the main array to update it
               const lastQIndex = allExtractedQuestions.lastIndexOf(sameFileQuestions[sameFileQuestions.length - 1]);
-              
               if (lastQIndex !== -1) {
                 const lastQ = allExtractedQuestions[lastQIndex];
                 const stitchedImg = await mergeBase64Images(lastQ.dataUrl, final, -settings.mergeOverlap);
-                
-                // Update the existing question in the main array
-                allExtractedQuestions[lastQIndex] = {
-                    ...lastQ,
-                    dataUrl: stitchedImg
-                };
+                allExtractedQuestions[lastQIndex] = { ...lastQ, dataUrl: stitchedImg };
               }
             } else {
               allExtractedQuestions.push({
@@ -190,34 +150,28 @@ const App: React.FC = () => {
         setCompletedCount(i + 1);
         await new Promise(r => setTimeout(r, 0));
       }
-
       setQuestions(allExtractedQuestions);
       setStatus(ProcessingStatus.COMPLETED);
-      setDetailedStatus('');
     } catch (e: any) {
       if (signal.aborted) return;
-      console.error(e);
       setError("切割过程出错: " + e.message);
       setStatus(ProcessingStatus.ERROR);
     }
   };
 
-  /**
-   * Full Process: Detection -> Cropping
-   */
   const runAIDetectionAndCropping = async (pages: SourcePage[], signal: AbortSignal) => {
     try {
       setStatus(ProcessingStatus.DETECTING_QUESTIONS);
       setProgress(0);
       setCompletedCount(0);
-      setDetailedStatus(`AI 正在智能分析 ${pages.length} 页试卷 (${selectedModel === 'gemini-3-flash-preview' ? 'Flash' : 'Pro'})...`);
+      setDetailedStatus(`AI 正在智能分析 ${pages.length} 页试卷...`);
 
       const numPages = pages.length;
       const results: DebugPageData[] = new Array(numPages);
       
-      for (let i = 0; i < pages.length; i += CONCURRENCY_LIMIT) {
+      for (let i = 0; i < pages.length; i += concurrency) {
         if (signal.aborted) return;
-        const batch = pages.slice(i, i + CONCURRENCY_LIMIT);
+        const batch = pages.slice(i, i + concurrency);
         setProgress(Math.min(numPages, i + batch.length));
 
         const batchResults = await Promise.all(batch.map(async (pageData) => {
@@ -235,32 +189,18 @@ const App: React.FC = () => {
           } catch (err: any) {
             if (signal.aborted) throw err;
             setCompletedCount(prev => prev + 1);
-            console.error(`Error on file ${pageData.fileName} page ${pageData.pageNumber}:`, err);
-            return {
-              pageNumber: pageData.pageNumber,
-              fileName: pageData.fileName,
-              dataUrl: pageData.dataUrl,
-              width: pageData.width,
-              height: pageData.height,
-              detections: []
-            };
+            return { ...pageData, detections: [] };
           }
         }));
 
-        batchResults.forEach((res, idx) => {
-          results[i + idx] = res;
-        });
+        batchResults.forEach((res, idx) => { results[i + idx] = res as DebugPageData; });
       }
 
       setRawPages(results);
       if (signal.aborted) return;
-
-      // Automatically start cropping with current settings
       await runCroppingPhase(results, cropSettings, signal);
-
     } catch (err: any) {
        if (err.name === 'AbortError') return;
-       console.error(err);
        setError(err.message || "处理失败。");
        setStatus(ProcessingStatus.ERROR);
     }
@@ -276,71 +216,37 @@ const App: React.FC = () => {
     try {
       setStatus(ProcessingStatus.LOADING_PDF);
       setDetailedStatus('正在解析 ZIP 文件...');
-      
       const zip = new JSZip();
       const loadedZip = await zip.loadAsync(blob);
-      
-      // Look for analysis_data.json
-      let analysisJsonFile: JSZip.JSZipObject | null = null;
-      loadedZip.forEach((relativePath, zipEntry) => {
-        if (relativePath.endsWith('analysis_data.json')) {
-          analysisJsonFile = zipEntry;
-        }
-      });
+      let analysisJsonFile = loadedZip.file(/analysis_data\.json$/i)[0];
 
-      if (!analysisJsonFile) {
-        throw new Error('ZIP 中未找到 analysis_data.json，无法恢复数据。');
-      }
-
-      const jsonText = await (analysisJsonFile as JSZip.JSZipObject).async('text');
+      if (!analysisJsonFile) throw new Error('ZIP 中未找到 analysis_data.json');
+      const jsonText = await analysisJsonFile.async('text');
       const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
       
-      setDetailedStatus('正在加载图片资源...');
-      
-      // Try to reconstruct images from full_pages/
-      // The path might be flat "full_pages/Page_1.jpg" or structured "full_pages/FileName/Page_1.jpg"
-      // We will try to find matches broadly
       for (const page of loadedRawPages) {
-        // Safe regex to find the file
         const safeFileName = page.fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        // Try precise match first, then loose match
-        let imgFile = loadedZip.file(new RegExp(`full_pages/${safeFileName}/Page_${page.pageNumber}\\.jpg$`, 'i'))[0];
-        
-        if (!imgFile) {
-            // Fallback for old zips (no folders)
-            imgFile = loadedZip.file(new RegExp(`full_pages/Page_${page.pageNumber}\\.jpg$`, 'i'))[0];
-        }
-
+        let imgFile = loadedZip.file(new RegExp(`full_pages/${safeFileName}/Page_${page.pageNumber}\\.jpg$`, 'i'))[0] 
+                     || loadedZip.file(new RegExp(`full_pages/Page_${page.pageNumber}\\.jpg$`, 'i'))[0];
         if (imgFile) {
           const base64 = await imgFile.async('base64');
           page.dataUrl = `data:image/jpeg;base64,${base64}`;
         }
       }
-
       setRawPages(loadedRawPages);
       setSourcePages(loadedRawPages.map(({detections, ...rest}) => rest));
       setTotal(loadedRawPages.length);
-      
-      const uniqueNames = Array.from(new Set(loadedRawPages.map(p => p.fileName)));
-      setUploadedFileNames(uniqueNames.length > 0 ? uniqueNames : [fileName.replace(/\.[^/.]+$/, "")]);
-
-      // Process questions from ZIP if available, OR re-crop
       await runCroppingPhase(loadedRawPages, cropSettings, new AbortController().signal);
-
     } catch (err: any) {
-      console.error(err);
       setError(err.message || "ZIP 加载失败。");
       setStatus(ProcessingStatus.ERROR);
-      throw err;
     }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Explicitly type `files` as `File[]` to avoid unknown[] inference if necessary
-    const files: File[] = Array.from(e.target.files || []);
+    // Explicitly cast to File[] to fix errors where files were being inferred as unknown[]
+    const files = Array.from(e.target.files || []) as File[];
     if (files.length === 0) return;
-
-    // Special case for single ZIP upload
     if (files.length === 1 && files[0].name.endsWith('.zip')) {
       processZipData(files[0], files[0].name);
       return;
@@ -353,298 +259,168 @@ const App: React.FC = () => {
       setStatus(ProcessingStatus.LOADING_PDF);
       setError(undefined);
       setDetailedStatus('正在初始化 PDF 引擎...');
-      setQuestions([]);
-      setRawPages([]);
-      setSourcePages([]);
-      setProgress(0);
-      setCompletedCount(0);
-      setCroppingTotal(0);
-      setCroppingDone(0);
       
       const fileNames = files.map(f => f.name.replace(/\.[^/.]+$/, ""));
       setUploadedFileNames(fileNames);
-
       const allRenderedPages: SourcePage[] = [];
       let totalPageCount = 0;
 
       for (let fIdx = 0; fIdx < files.length; fIdx++) {
         if (signal.aborted) return;
         const file = files[fIdx];
-        const fileName = fileNames[fIdx];
-        
-        setDetailedStatus(`正在读取文件 (${fIdx + 1}/${files.length}): ${file.name}...`);
-
-        const arrayBuffer = await file.arrayBuffer();
-        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+        const loadingTask = pdfjsLib.getDocument({ data: await file.arrayBuffer() });
         const pdf = await loadingTask.promise;
-        const numPages = pdf.numPages;
-        totalPageCount += numPages;
+        totalPageCount += pdf.numPages;
 
-        for (let i = 1; i <= numPages; i++) {
+        for (let i = 1; i <= pdf.numPages; i++) {
             if (signal.aborted) return;
-            // Update progress relative to cumulative
-            setProgress(allRenderedPages.length); 
-            setTotal(totalPageCount); // Total keeps growing as we parse more files, or we could calculate all pages first. 
-            // Better UX: Show "Rendering page X of File Y"
-            setDetailedStatus(`正在渲染: ${file.name} - 第 ${i} / ${numPages} 页...`);
-            
+            setDetailedStatus(`正在渲染: ${file.name} - 第 ${i} / ${pdf.numPages} 页...`);
             const page = await pdf.getPage(i);
             const rendered = await renderPageToImage(page, 3);
-            allRenderedPages.push({ 
-                ...rendered, 
-                pageNumber: i,
-                fileName: fileName
-            });
+            allRenderedPages.push({ ...rendered, pageNumber: i, fileName: fileNames[fIdx] });
             setCompletedCount(allRenderedPages.length);
+            setTotal(totalPageCount);
         }
       }
-
       setSourcePages(allRenderedPages);
-      setTotal(allRenderedPages.length);
-      
-      // Trigger the AI processing chain
       await runAIDetectionAndCropping(allRenderedPages, signal);
-
     } catch (err: any) {
       if (err.name === 'AbortError') return;
-      console.error(err);
       setError(err.message || "处理失败。");
       setStatus(ProcessingStatus.ERROR);
     }
   };
 
-  const handleReidentify = async () => {
-    if (sourcePages.length === 0) return;
-    abortControllerRef.current = new AbortController();
-    setQuestions([]);
-    setRawPages([]);
-    await runAIDetectionAndCropping(sourcePages, abortControllerRef.current.signal);
-  };
-
   const isWideLayout = showDebug || questions.length > 0 || sourcePages.length > 0;
-  const canReidentify = sourcePages.length > 0 && status !== ProcessingStatus.LOADING_PDF && status !== ProcessingStatus.DETECTING_QUESTIONS;
   const isProcessing = status === ProcessingStatus.LOADING_PDF || status === ProcessingStatus.DETECTING_QUESTIONS || status === ProcessingStatus.CROPPING;
+  const showInitialUI = status === ProcessingStatus.IDLE || (status === ProcessingStatus.ERROR && sourcePages.length === 0);
 
   return (
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 ${rawPages.length > 0 && showSettingsPanel ? 'pb-64' : 'pb-32'}`}>
       <header className="max-w-6xl mx-auto py-10 text-center relative">
-        <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-4 tracking-tight">
+        <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-2 tracking-tight">
           试卷 <span className="text-blue-600">智能</span> 切割
         </h1>
+        <p className="text-slate-400 font-medium mb-8">精准、高效、批量的题目提取工具</p>
 
-        {canReidentify && !isProcessing && (
-          <div className="flex flex-col md:flex-row justify-center items-center gap-4 mt-8 animate-fade-in flex-wrap">
+        {sourcePages.length > 0 && !isProcessing && (
+          <div className="flex flex-col md:flex-row justify-center items-center gap-4 mt-4 animate-fade-in flex-wrap">
             <div className="bg-white p-1 rounded-xl border border-slate-200 shadow-sm inline-flex">
-              <button
-                onClick={() => setShowDebug(false)}
-                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${
-                  !showDebug ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'
-                }`}
-              >
-                切割结果
-              </button>
-              <button
-                onClick={() => setShowDebug(true)}
-                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${
-                  showDebug ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'
-                }`}
-              >
-                调试视图
-              </button>
+              <button onClick={() => setShowDebug(false)} className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${!showDebug ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>切割结果</button>
+              <button onClick={() => setShowDebug(true)} className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${showDebug ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>调试视图</button>
             </div>
-
-             <div className="flex items-center gap-2 p-1 bg-white rounded-xl border border-slate-200 shadow-sm">
-                <div className="flex items-center px-2 border-r border-slate-100">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mr-2">Model</span>
-                  <select 
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                    className="text-xs font-bold text-slate-700 bg-transparent outline-none cursor-pointer py-2 hover:text-blue-600"
-                  >
-                    <option value="gemini-3-flash-preview">⚡ Flash (Fast)</option>
-                    <option value="gemini-3-pro-preview">🧠 Pro (Accurate)</option>
-                  </select>
-                </div>
-                
-                <button 
-                  onClick={handleReidentify}
-                  className="px-4 py-2 text-sm font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1.5"
-                  title="使用当前选中的模型重新识别所有页面"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                  重新识别
-                </button>
-             </div>
-
-            <button
-              onClick={handleReset}
-              className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-600 bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all shadow-sm flex items-center gap-2 group"
-            >
-               <svg className="w-4 h-4 text-slate-400 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-               </svg>
-               重置
-            </button>
+            <button onClick={handleReset} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-600 bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 transition-all flex items-center gap-2">重置</button>
           </div>
         )}
       </header>
 
-      <main className={`mx-auto transition-all duration-300 ${isWideLayout ? 'w-full max-w-[98vw]' : 'max-w-7xl'}`}>
-        {!canReidentify && (status === ProcessingStatus.IDLE || (status === ProcessingStatus.ERROR && sourcePages.length === 0)) ? (
-          <div className="relative group max-w-2xl mx-auto flex flex-col items-center">
-            <div className="w-full mb-8 relative bg-white border-2 border-dashed border-slate-200 rounded-3xl p-16 text-center hover:border-blue-400 transition-colors z-10 shadow-lg shadow-slate-200/50">
-              <input 
-                type="file" 
-                accept="application/pdf,application/zip"
-                onChange={handleFileChange}
-                multiple // Enable multiple files
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-              />
-              <div className="mb-6">
-                <div className="w-24 h-24 bg-blue-50 rounded-3xl flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform duration-500 shadow-inner">
-                  <svg className="w-12 h-12 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11v-2a2 2 0 00-2-2H7a2 2 0 00-2 2v2" className="opacity-50" />
+      <main className={`mx-auto transition-all duration-300 ${isWideLayout ? 'w-full max-w-[98vw]' : 'max-w-4xl'}`}>
+        {showInitialUI && (
+          <div className="space-y-12 animate-fade-in">
+            {/* 参数配置区 */}
+            <section className="bg-white rounded-3xl p-8 border border-slate-200 shadow-xl shadow-slate-200/50">
+               <div className="flex items-center gap-3 mb-8 pb-4 border-b border-slate-100">
+                  <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-800">全局参数配置 (Configuration)</h2>
+               </div>
+               
+               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                  <div className="space-y-3">
+                    <label className="text-sm font-bold text-slate-500 uppercase flex items-center gap-2">
+                       <span className="w-1.5 h-1.5 bg-amber-400 rounded-full"></span>
+                       AI 识别模型
+                    </label>
+                    <div className="flex p-1 bg-slate-50 rounded-xl border border-slate-200">
+                      <button onClick={() => setSelectedModel('gemini-3-flash-preview')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${selectedModel === 'gemini-3-flash-preview' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>Flash (快)</button>
+                      <button onClick={() => setSelectedModel('gemini-3-pro-preview')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${selectedModel === 'gemini-3-pro-preview' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>Pro (精)</button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="text-sm font-bold text-slate-500 uppercase flex items-center gap-2">
+                       <span className="w-1.5 h-1.5 bg-blue-400 rounded-full"></span>
+                       并发处理数
+                    </label>
+                    <div className="flex items-center gap-4">
+                      <input type="range" min="1" max="10" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} className="flex-1 accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer" />
+                      <span className="w-8 text-center font-black text-blue-600 bg-blue-50 py-1 rounded-lg border border-blue-100">{concurrency}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="text-sm font-bold text-slate-500 uppercase flex items-center gap-2">
+                       <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+                       裁剪边距 (Padding)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input type="number" value={cropSettings.cropPadding} onChange={(e) => setCropSettings(s => ({...s, cropPadding: Number(e.target.value)}))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
+                      <span className="text-xs text-slate-400 font-bold whitespace-nowrap">px</span>
+                    </div>
+                  </div>
+               </div>
+            </section>
+
+            {/* 上传区域 */}
+            <div className="relative group overflow-hidden bg-white border-2 border-dashed border-slate-300 rounded-[2.5rem] p-16 text-center hover:border-blue-500 hover:bg-blue-50/30 transition-all duration-500 shadow-2xl shadow-slate-200/30">
+              <input type="file" accept="application/pdf,application/zip" onChange={handleFileChange} multiple className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20" />
+              <div className="relative z-10">
+                <div className="w-24 h-24 bg-blue-600 text-white rounded-[2rem] flex items-center justify-center mx-auto mb-8 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-500 shadow-xl shadow-blue-200">
+                  <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v12m0 0l-4-4m4 4l4-4M4 17a3 3 0 003 3h10a3 3 0 003-3v-1" />
                   </svg>
                 </div>
-                <h2 className="text-2xl font-bold text-slate-800 mb-2">上传试卷 PDF (支持多选)</h2>
-                <p className="text-slate-400 font-medium">支持批量 PDF 解析或单个 ZIP 回放调试</p>
-              </div>
-            </div>
-            {/* Model Selection for Upload Screen */}
-             <div className="flex flex-col items-center gap-4 mb-4 z-20 w-full">
-              <div className="flex items-center bg-white p-2 rounded-2xl border border-slate-200 shadow-md">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-4 mr-4">AI 模型</span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setSelectedModel('gemini-3-flash-preview')}
-                    className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                      selectedModel === 'gemini-3-flash-preview' ? 'bg-amber-100 text-amber-700 shadow-inner' : 'text-slate-500 hover:bg-slate-50'
-                    }`}
-                  >⚡ Flash (极速)</button>
-                  <button
-                    onClick={() => setSelectedModel('gemini-3-pro-preview')}
-                    className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                      selectedModel === 'gemini-3-pro-preview' ? 'bg-indigo-100 text-indigo-700 shadow-inner' : 'text-slate-500 hover:bg-slate-50'
-                    }`}
-                  >🧠 Pro (高精)</button>
+                <h2 className="text-3xl font-black text-slate-900 mb-3">开始处理试卷</h2>
+                <p className="text-slate-400 text-lg font-medium">点击或将 PDF 文件拖拽至此处 (支持多选)</p>
+                <div className="mt-8 flex justify-center gap-3">
+                   <span className="px-4 py-1.5 bg-slate-100 text-slate-500 text-xs font-bold rounded-full border border-slate-200 uppercase tracking-widest">Supports PDF</span>
+                   <span className="px-4 py-1.5 bg-slate-100 text-slate-500 text-xs font-bold rounded-full border border-slate-200 uppercase tracking-widest">Supports ZIP</span>
                 </div>
               </div>
             </div>
           </div>
-        ) : null}
-
-        <ProcessingState 
-          status={status} 
-          progress={progress} 
-          total={total} 
-          completedCount={completedCount}
-          error={error} 
-          detailedStatus={detailedStatus}
-          croppingTotal={croppingTotal}
-          croppingDone={croppingDone}
-        />
-
-        {showDebug ? (
-          <DebugRawView pages={rawPages} />
-        ) : (
-          questions.length > 0 && (
-            <QuestionGrid questions={questions} rawPages={rawPages} />
-          )
         )}
+
+        <ProcessingState status={status} progress={progress} total={total} completedCount={completedCount} error={error} detailedStatus={detailedStatus} croppingTotal={croppingTotal} croppingDone={croppingDone} />
+        {showDebug ? <DebugRawView pages={rawPages} /> : (questions.length > 0 && <QuestionGrid questions={questions} rawPages={rawPages} />)}
       </main>
       
-      {/* Settings Panel - Fixed at Bottom */}
+      {/* 快捷设置栏 - 仅在处理完后作为微调使用 */}
       {rawPages.length > 0 && (
         <div className={`fixed bottom-0 left-0 right-0 z-[100] transition-transform duration-300 ease-in-out ${showSettingsPanel ? 'translate-y-0' : 'translate-y-[calc(100%-48px)]'}`}>
-          <div className="max-w-4xl mx-auto bg-white rounded-t-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.1)] border border-slate-200">
-            {/* Toggle Header */}
-            <div 
-              className="flex items-center justify-between px-6 py-3 cursor-pointer bg-slate-50 rounded-t-2xl border-b border-slate-100 hover:bg-slate-100 transition-colors"
-              onClick={() => setShowSettingsPanel(!showSettingsPanel)}
-            >
-              <div className="flex items-center gap-2">
-                 <div className={`w-2 h-2 rounded-full ${showSettingsPanel ? 'bg-blue-500' : 'bg-slate-300'}`}></div>
-                 <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wide">参数调整 (Advanced Settings)</h3>
+          <div className="max-w-4xl mx-auto bg-white rounded-t-3xl shadow-[0_-15px_50px_rgba(0,0,0,0.15)] border border-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between px-8 py-4 cursor-pointer bg-slate-50 border-b border-slate-100 hover:bg-slate-100 transition-colors" onClick={() => setShowSettingsPanel(!showSettingsPanel)}>
+              <div className="flex items-center gap-3">
+                 <div className={`w-2.5 h-2.5 rounded-full ${showSettingsPanel ? 'bg-blue-500 animate-pulse' : 'bg-slate-300'}`}></div>
+                 <h3 className="font-black text-slate-700 text-sm uppercase tracking-widest">结果参数微调 (Refine Results)</h3>
               </div>
-              <button className="text-slate-400 hover:text-slate-600">
-                {showSettingsPanel ? (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
-                )}
-              </button>
+              <button className="text-slate-400">{showSettingsPanel ? <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg> : <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>}</button>
             </div>
-
-            {/* Panel Content */}
-            <div className="p-6 md:p-8 grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
+            <div className="p-8 grid grid-cols-1 md:grid-cols-4 gap-8 items-end">
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
-                  裁剪内缩 (Crop Padding)
-                </label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">裁剪内缩</label>
                 <div className="flex items-center gap-2">
-                  <input 
-                    type="number" 
-                    value={cropSettings.cropPadding}
-                    onChange={(e) => setCropSettings(prev => ({ ...prev, cropPadding: Number(e.target.value) }))}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
+                  <input type="number" value={cropSettings.cropPadding} onChange={(e) => setCropSettings(prev => ({ ...prev, cropPadding: Number(e.target.value) }))} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
                   <span className="text-xs text-slate-400 font-bold">px</span>
                 </div>
-                <p className="text-[10px] text-slate-400 leading-tight">坐标框向内/外扩展的像素值，正数向外。</p>
               </div>
-
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
-                  画布留白 (Padding X)
-                </label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">画布留白</label>
                 <div className="flex items-center gap-2">
-                  <input 
-                    type="number" 
-                    value={cropSettings.canvasPaddingLeft}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      setCropSettings(prev => ({ ...prev, canvasPaddingLeft: val, canvasPaddingRight: val }));
-                    }}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
+                  <input type="number" value={cropSettings.canvasPaddingLeft} onChange={(e) => { const v = Number(e.target.value); setCropSettings(p => ({ ...p, canvasPaddingLeft: v, canvasPaddingRight: v })); }} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
                   <span className="text-xs text-slate-400 font-bold">px</span>
                 </div>
-                <p className="text-[10px] text-slate-400 leading-tight">最终图片左右两侧的留白宽度。</p>
               </div>
-
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
-                  拼接重叠 (Merge Overlap)
-                </label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">拼接重叠</label>
                 <div className="flex items-center gap-2">
-                  <input 
-                    type="number" 
-                    value={cropSettings.mergeOverlap}
-                    onChange={(e) => setCropSettings(prev => ({ ...prev, mergeOverlap: Number(e.target.value) }))}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
+                  <input type="number" value={cropSettings.mergeOverlap} onChange={(e) => setCropSettings(p => ({ ...p, mergeOverlap: Number(e.target.value) }))} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
                   <span className="text-xs text-slate-400 font-bold">px</span>
                 </div>
-                <p className="text-[10px] text-slate-400 leading-tight">跨页/跨栏拼接时的重叠消除量。</p>
               </div>
-
-              <button 
-                onClick={handleRecropOnly}
-                disabled={isProcessing}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:opacity-50 disabled:scale-100 text-white font-bold rounded-xl shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2"
-              >
-                {status === ProcessingStatus.CROPPING ? (
-                   <>
-                    <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    <span>处理中...</span>
-                   </>
-                ) : (
-                   <>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                    <span>应用并重新裁剪</span>
-                   </>
-                )}
+              <button onClick={handleRecropOnly} disabled={isProcessing} className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                {status === ProcessingStatus.CROPPING ? <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>重新裁剪</>}
               </button>
             </div>
           </div>
@@ -652,7 +428,7 @@ const App: React.FC = () => {
       )}
 
       <footer className="mt-20 text-center text-slate-400 text-sm py-10 border-t border-slate-100">
-        <p>© 2024 AI 试卷助手</p>
+        <p className="font-bold">© 2025 AI 试卷助手 | 为教育数字化而生</p>
       </footer>
     </div>
   );
