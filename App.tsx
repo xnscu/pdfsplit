@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
@@ -10,10 +11,18 @@ import { detectQuestionsOnPage } from './services/geminiService';
 
 const CONCURRENCY_LIMIT = 5; 
 
+interface SourcePage {
+  dataUrl: string;
+  width: number;
+  height: number;
+  pageNumber: number;
+}
+
 const App: React.FC = () => {
   const [status, setStatus] = useState<ProcessingStatus>(ProcessingStatus.IDLE);
   const [questions, setQuestions] = useState<QuestionImage[]>([]);
   const [rawPages, setRawPages] = useState<DebugPageData[]>([]);
+  const [sourcePages, setSourcePages] = useState<SourcePage[]>([]); // Store original pages for re-processing
   const [uploadedFileName, setUploadedFileName] = useState<string>('exam_paper');
   const [showDebug, setShowDebug] = useState(false);
   
@@ -82,6 +91,7 @@ const App: React.FC = () => {
     setStatus(ProcessingStatus.IDLE);
     setQuestions([]);
     setRawPages([]);
+    setSourcePages([]);
     setUploadedFileName('exam_paper');
     setProgress(0);
     setTotal(0);
@@ -159,151 +169,20 @@ const App: React.FC = () => {
     setQuestions(updatedQuestions);
   };
 
-  const processZipData = async (blob: Blob, fileName: string) => {
+  // Extract core AI logic to be reusable for "Re-identify"
+  const runAIDetectionAndCropping = async (pages: SourcePage[], signal: AbortSignal) => {
     try {
-      setStatus(ProcessingStatus.LOADING_PDF);
-      setDetailedStatus('正在解析 ZIP 文件...');
-      
-      const zip = new JSZip();
-      const loadedZip = await zip.loadAsync(blob);
-      
-      // Look for analysis_data.json
-      let analysisJsonFile: JSZip.JSZipObject | null = null;
-      loadedZip.forEach((relativePath, zipEntry) => {
-        if (relativePath.endsWith('analysis_data.json')) {
-          analysisJsonFile = zipEntry;
-        }
-      });
-
-      if (!analysisJsonFile) {
-        throw new Error('ZIP 中未找到 analysis_data.json，无法恢复数据。');
-      }
-
-      const jsonText = await (analysisJsonFile as JSZip.JSZipObject).async('text');
-      const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
-      
-      setDetailedStatus('正在加载图片资源...');
-      
-      // Try to reconstruct images from full_pages/ if they are not in the JSON or as a backup
-      for (const page of loadedRawPages) {
-        const imgPath = `full_pages/Page_${page.pageNumber}.jpg`;
-        const imgFile = loadedZip.file(new RegExp(`full_pages/Page_${page.pageNumber}\\.jpg$`, 'i'))[0];
-        if (imgFile) {
-          const base64 = await imgFile.async('base64');
-          page.dataUrl = `data:image/jpeg;base64,${base64}`;
-        }
-      }
-
-      setRawPages(loadedRawPages);
-      setTotal(loadedRawPages.length);
-      setUploadedFileName(fileName.replace(/\.[^/.]+$/, ""));
-
-      // Try to reconstruct individual questions from the ZIP
-      const reconstructedQuestions: QuestionImage[] = [];
-      const questionFiles: { name: string, entry: JSZip.JSZipObject }[] = [];
-      
-      loadedZip.forEach((relativePath, zipEntry) => {
-        // Exclude directories and metadata files
-        if (!zipEntry.dir && 
-            !relativePath.includes('full_pages/') && 
-            !relativePath.endsWith('.json') &&
-            relativePath.match(/\.(jpg|jpeg|png)$/i)) {
-          questionFiles.push({ name: relativePath.split('/').pop() || '', entry: zipEntry });
-        }
-      });
-
-      setDetailedStatus(`已发现 ${questionFiles.length} 个题目图片，正在处理...`);
-      
-      for (const qf of questionFiles) {
-        // Try to guess ID and page from filename. Standard export: {FileName}_{ID}.jpg
-        const baseName = qf.name.replace(/\.[^/.]+$/, "");
-        const parts = baseName.split('_');
-        const id = parts.pop() || 'unknown'; 
-        
-        // Match against rawPages to find page number
-        let pageNumber = 1;
-        const pageMatch = loadedRawPages.find(p => p.detections.some(d => d.id === id));
-        if (pageMatch) pageNumber = pageMatch.pageNumber;
-
-        const base64 = await qf.entry.async('base64');
-        reconstructedQuestions.push({
-          id,
-          pageNumber,
-          dataUrl: `data:image/jpeg;base64,${base64}`
-        });
-      }
-
-      // Sort by page and ID if possible
-      reconstructedQuestions.sort((a, b) => {
-        if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
-        return a.id.localeCompare(b.id, undefined, { numeric: true });
-      });
-
-      setQuestions(reconstructedQuestions);
-      setStatus(ProcessingStatus.COMPLETED);
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || "ZIP 加载失败。");
-      setStatus(ProcessingStatus.ERROR);
-      throw err; // Re-throw for caller handling if needed
-    }
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.name.endsWith('.zip')) {
-      processZipData(file, file.name);
-      return;
-    }
-
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
-
-    try {
-      setStatus(ProcessingStatus.LOADING_PDF);
-      setError(undefined);
-      setDetailedStatus('正在初始化 PDF 引擎...');
-      setQuestions([]);
-      setRawPages([]);
-      setProgress(0);
-      setCompletedCount(0);
-      setCroppingTotal(0);
-      setCroppingDone(0);
-      
-      const name = file.name.replace(/\.[^/.]+$/, "");
-      setUploadedFileName(name);
-
-      const arrayBuffer = await file.arrayBuffer();
-      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-      const pdf = await loadingTask.promise;
-      const numPages = pdf.numPages;
-      setTotal(numPages);
-
-      if (signal.aborted) return;
-
-      setDetailedStatus('正在渲染 PDF 页面...');
-      const renderedPages: { dataUrl: string, width: number, height: number, pageNumber: number }[] = [];
-      for (let i = 1; i <= numPages; i++) {
-        if (signal.aborted) return;
-        const page = await pdf.getPage(i);
-        const rendered = await renderPageToImage(page, 3);
-        renderedPages.push({ ...rendered, pageNumber: i });
-        setProgress(i);
-        setCompletedCount(i);
-      }
-
       setStatus(ProcessingStatus.DETECTING_QUESTIONS);
       setProgress(0);
       setCompletedCount(0);
-      setDetailedStatus(`AI 正在智能分析试卷，失败将自动重试...`);
+      setDetailedStatus(`AI 正在智能分析试卷 (${selectedModel === 'gemini-3-flash-preview' ? 'Flash' : 'Pro'})...`);
 
+      const numPages = pages.length;
       const results: DebugPageData[] = new Array(numPages);
       
-      for (let i = 0; i < renderedPages.length; i += CONCURRENCY_LIMIT) {
+      for (let i = 0; i < pages.length; i += CONCURRENCY_LIMIT) {
         if (signal.aborted) return;
-        const batch = renderedPages.slice(i, i + CONCURRENCY_LIMIT);
+        const batch = pages.slice(i, i + CONCURRENCY_LIMIT);
         setProgress(Math.min(numPages, i + batch.length));
 
         const batchResults = await Promise.all(batch.map(async (pageData) => {
@@ -399,6 +278,159 @@ const App: React.FC = () => {
       setQuestions(allExtractedQuestions);
       setStatus(ProcessingStatus.COMPLETED);
       setDetailedStatus('');
+
+    } catch (err: any) {
+       if (err.name === 'AbortError') return;
+       console.error(err);
+       setError(err.message || "处理失败。");
+       setStatus(ProcessingStatus.ERROR);
+    }
+  };
+
+  const processZipData = async (blob: Blob, fileName: string) => {
+    try {
+      setStatus(ProcessingStatus.LOADING_PDF);
+      setDetailedStatus('正在解析 ZIP 文件...');
+      
+      const zip = new JSZip();
+      const loadedZip = await zip.loadAsync(blob);
+      
+      // Look for analysis_data.json
+      let analysisJsonFile: JSZip.JSZipObject | null = null;
+      loadedZip.forEach((relativePath, zipEntry) => {
+        if (relativePath.endsWith('analysis_data.json')) {
+          analysisJsonFile = zipEntry;
+        }
+      });
+
+      if (!analysisJsonFile) {
+        throw new Error('ZIP 中未找到 analysis_data.json，无法恢复数据。');
+      }
+
+      const jsonText = await (analysisJsonFile as JSZip.JSZipObject).async('text');
+      const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
+      
+      setDetailedStatus('正在加载图片资源...');
+      
+      // Try to reconstruct images from full_pages/ if they are not in the JSON or as a backup
+      for (const page of loadedRawPages) {
+        const imgPath = `full_pages/Page_${page.pageNumber}.jpg`;
+        const imgFile = loadedZip.file(new RegExp(`full_pages/Page_${page.pageNumber}\\.jpg$`, 'i'))[0];
+        if (imgFile) {
+          const base64 = await imgFile.async('base64');
+          page.dataUrl = `data:image/jpeg;base64,${base64}`;
+        }
+      }
+
+      setRawPages(loadedRawPages);
+      // Populate sourcePages from the loaded raw data for potential re-identification
+      setSourcePages(loadedRawPages.map(({detections, ...rest}) => rest));
+      
+      setTotal(loadedRawPages.length);
+      setUploadedFileName(fileName.replace(/\.[^/.]+$/, ""));
+
+      // Try to reconstruct individual questions from the ZIP
+      const reconstructedQuestions: QuestionImage[] = [];
+      const questionFiles: { name: string, entry: JSZip.JSZipObject }[] = [];
+      
+      loadedZip.forEach((relativePath, zipEntry) => {
+        // Exclude directories and metadata files
+        if (!zipEntry.dir && 
+            !relativePath.includes('full_pages/') && 
+            !relativePath.endsWith('.json') &&
+            relativePath.match(/\.(jpg|jpeg|png)$/i)) {
+          questionFiles.push({ name: relativePath.split('/').pop() || '', entry: zipEntry });
+        }
+      });
+
+      setDetailedStatus(`已发现 ${questionFiles.length} 个题目图片，正在处理...`);
+      
+      for (const qf of questionFiles) {
+        // Try to guess ID and page from filename. Standard export: {FileName}_{ID}.jpg
+        const baseName = qf.name.replace(/\.[^/.]+$/, "");
+        const parts = baseName.split('_');
+        const id = parts.pop() || 'unknown'; 
+        
+        // Match against rawPages to find page number
+        let pageNumber = 1;
+        const pageMatch = loadedRawPages.find(p => p.detections.some(d => d.id === id));
+        if (pageMatch) pageNumber = pageMatch.pageNumber;
+
+        const base64 = await qf.entry.async('base64');
+        reconstructedQuestions.push({
+          id,
+          pageNumber,
+          dataUrl: `data:image/jpeg;base64,${base64}`
+        });
+      }
+
+      // Sort by page and ID if possible
+      reconstructedQuestions.sort((a, b) => {
+        if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+        return a.id.localeCompare(b.id, undefined, { numeric: true });
+      });
+
+      setQuestions(reconstructedQuestions);
+      setStatus(ProcessingStatus.COMPLETED);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "ZIP 加载失败。");
+      setStatus(ProcessingStatus.ERROR);
+      throw err; // Re-throw for caller handling if needed
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.name.endsWith('.zip')) {
+      processZipData(file, file.name);
+      return;
+    }
+
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
+    try {
+      setStatus(ProcessingStatus.LOADING_PDF);
+      setError(undefined);
+      setDetailedStatus('正在初始化 PDF 引擎...');
+      setQuestions([]);
+      setRawPages([]);
+      setSourcePages([]);
+      setProgress(0);
+      setCompletedCount(0);
+      setCroppingTotal(0);
+      setCroppingDone(0);
+      
+      const name = file.name.replace(/\.[^/.]+$/, "");
+      setUploadedFileName(name);
+
+      const arrayBuffer = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+      const pdf = await loadingTask.promise;
+      const numPages = pdf.numPages;
+      setTotal(numPages);
+
+      if (signal.aborted) return;
+
+      setDetailedStatus('正在渲染 PDF 页面...');
+      const renderedPages: SourcePage[] = [];
+      for (let i = 1; i <= numPages; i++) {
+        if (signal.aborted) return;
+        const page = await pdf.getPage(i);
+        const rendered = await renderPageToImage(page, 3);
+        renderedPages.push({ ...rendered, pageNumber: i });
+        setProgress(i);
+        setCompletedCount(i);
+      }
+
+      setSourcePages(renderedPages);
+      
+      // Trigger the AI processing chain
+      await runAIDetectionAndCropping(renderedPages, signal);
+
     } catch (err: any) {
       if (err.name === 'AbortError') return;
       console.error(err);
@@ -407,7 +439,21 @@ const App: React.FC = () => {
     }
   };
 
-  const isWideLayout = showDebug || questions.length > 0;
+  const handleReidentify = async () => {
+    if (sourcePages.length === 0) return;
+
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+    
+    // Clear previous results but keep sourcePages
+    setQuestions([]);
+    setRawPages([]);
+    
+    await runAIDetectionAndCropping(sourcePages, signal);
+  };
+
+  const isWideLayout = showDebug || questions.length > 0 || sourcePages.length > 0;
+  const canReidentify = sourcePages.length > 0 && status !== ProcessingStatus.LOADING_PDF && status !== ProcessingStatus.DETECTING_QUESTIONS && status !== ProcessingStatus.CROPPING;
 
   return (
     <div className="min-h-screen pb-48 px-4 md:px-8 bg-slate-50 relative">
@@ -416,8 +462,9 @@ const App: React.FC = () => {
           试卷 <span className="text-blue-600">智能</span> 切割
         </h1>
 
-        {(questions.length > 0 || rawPages.length > 0) && (
-          <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mt-8 animate-fade-in">
+        {canReidentify && (
+          <div className="flex flex-col md:flex-row justify-center items-center gap-4 mt-8 animate-fade-in flex-wrap">
+             {/* View Toggle */}
             <div className="bg-white p-1 rounded-xl border border-slate-200 shadow-sm inline-flex">
               <button
                 onClick={() => setShowDebug(false)}
@@ -437,9 +484,34 @@ const App: React.FC = () => {
                 调试视图
               </button>
             </div>
+
+             {/* Action Bar */}
+             <div className="flex items-center gap-2 p-1 bg-white rounded-xl border border-slate-200 shadow-sm">
+                <div className="flex items-center px-2 border-r border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mr-2">Model</span>
+                  <select 
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="text-xs font-bold text-slate-700 bg-transparent outline-none cursor-pointer py-2 hover:text-blue-600"
+                  >
+                    <option value="gemini-3-flash-preview">⚡ Flash (Fast)</option>
+                    <option value="gemini-3-pro-preview">🧠 Pro (Accurate)</option>
+                  </select>
+                </div>
+                
+                <button 
+                  onClick={handleReidentify}
+                  className="px-4 py-2 text-sm font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1.5"
+                  title="使用当前选中的模型重新识别所有页面"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  重新识别
+                </button>
+             </div>
+
             <button
               onClick={handleReset}
-              className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 transition-all shadow-sm flex items-center gap-2 group"
+              className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-600 bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all shadow-sm flex items-center gap-2 group"
             >
                <svg className="w-4 h-4 text-slate-400 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -451,7 +523,8 @@ const App: React.FC = () => {
       </header>
 
       <main className={`mx-auto transition-all duration-300 ${isWideLayout ? 'w-full max-w-[98vw]' : 'max-w-7xl'}`}>
-        {status === ProcessingStatus.IDLE || (status === ProcessingStatus.ERROR && !isWideLayout) ? (
+        {/* Only show upload box if we don't have active content OR if we are in an error state with no content */}
+        {!canReidentify && (status === ProcessingStatus.IDLE || (status === ProcessingStatus.ERROR && sourcePages.length === 0)) ? (
           <div className="relative group max-w-2xl mx-auto flex flex-col items-center">
             <div className="w-full mb-8 relative bg-white border-2 border-dashed border-slate-200 rounded-3xl p-16 text-center hover:border-blue-400 transition-colors z-10 shadow-lg shadow-slate-200/50">
               <input 
