@@ -2,20 +2,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
-import { ProcessingStatus, QuestionImage, DetectedQuestion, DebugPageData } from './types';
+import { ProcessingStatus, QuestionImage, DetectedQuestion, DebugPageData, ProcessedCanvas } from './types';
 import { ProcessingState } from './components/ProcessingState';
 import { QuestionGrid } from './components/QuestionGrid';
 import { DebugRawView } from './components/DebugRawView';
-import { renderPageToImage, cropAndStitchImage, CropSettings, mergeBase64Images } from './services/pdfService';
+import { renderPageToImage, constructQuestionCanvas, mergeCanvasesVertical, analyzeCanvasContent, generateAlignedImage, CropSettings } from './services/pdfService';
 import { detectQuestionsOnPage } from './services/geminiService';
 
-// Initial default settings
+// Updated default settings for better alignment
 const DEFAULT_SETTINGS: CropSettings = {
   cropPadding: 15,
   canvasPaddingLeft: 10,
   canvasPaddingRight: 10,
   canvasPaddingY: 10,
-  mergeOverlap: 20
+  mergeOverlap: 0
 };
 
 interface SourcePage {
@@ -103,6 +103,11 @@ const App: React.FC = () => {
     if (window.location.search) window.history.pushState({}, '', window.location.pathname);
   };
 
+  /**
+   * New 2-Phase Cropping Logic:
+   * Phase 1: Construct & Merge (Build the raw question images)
+   * Phase 2: Analyze & Align (Calculate dimensions and export consistent images)
+   */
   const runCroppingPhase = async (pages: DebugPageData[], settings: CropSettings, signal: AbortSignal) => {
     setStatus(ProcessingStatus.CROPPING);
     const totalDetections = pages.reduce((acc, p) => acc + p.detections.length, 0);
@@ -110,46 +115,100 @@ const App: React.FC = () => {
     setCroppingDone(0);
     setProgress(0); 
     setCompletedCount(0);
-    setDetailedStatus('正在根据参数切割题目图片...');
+    setDetailedStatus('正在精确切割并对齐题目图片...');
+
+    // Group pages by file to handle per-file alignment
+    const pagesByFile: Record<string, DebugPageData[]> = {};
+    pages.forEach(p => {
+      if (!pagesByFile[p.fileName]) pagesByFile[p.fileName] = [];
+      pagesByFile[p.fileName].push(p);
+    });
 
     let allExtractedQuestions: QuestionImage[] = [];
 
     try {
-      for (let i = 0; i < pages.length; i++) {
+      // Process file by file
+      for (const [fileName, filePages] of Object.entries(pagesByFile)) {
         if (signal.aborted) return;
-        const page = pages[i];
-        setProgress(i + 1);
-        const getSameFileQuestions = () => allExtractedQuestions.filter(q => q.fileName === page.fileName);
-
-        for (const detection of page.detections) {
+        
+        // --- Phase 1: Construction ---
+        const constructedItems: ProcessedCanvas[] = [];
+        
+        for (let i = 0; i < filePages.length; i++) {
           if (signal.aborted) return;
-          const boxes = normalizeBoxes(detection.boxes_2d);
-          const { final, original } = await cropAndStitchImage(page.dataUrl, boxes, page.width, page.height, settings);
-          
-          if (final) {
-            const sameFileQuestions = getSameFileQuestions();
-            if (detection.id === 'continuation' && sameFileQuestions.length > 0) {
-              const lastQIndex = allExtractedQuestions.lastIndexOf(sameFileQuestions[sameFileQuestions.length - 1]);
-              if (lastQIndex !== -1) {
-                const lastQ = allExtractedQuestions[lastQIndex];
-                const stitchedImg = await mergeBase64Images(lastQ.dataUrl, final, -settings.mergeOverlap);
-                allExtractedQuestions[lastQIndex] = { ...lastQ, dataUrl: stitchedImg };
+          const page = filePages[i];
+          setProgress(prev => prev + 1);
+
+          for (const detection of page.detections) {
+            const boxes = normalizeBoxes(detection.boxes_2d);
+            
+            // Construct raw (stitched) canvas
+            const result = await constructQuestionCanvas(page.dataUrl, boxes, page.width, page.height, settings);
+            
+            if (result.canvas) {
+              if (detection.id === 'continuation' && constructedItems.length > 0) {
+                 // Merge with previous question
+                 const lastIdx = constructedItems.length - 1;
+                 const lastQ = constructedItems[lastIdx];
+                 
+                 const merged = mergeCanvasesVertical(lastQ.canvas, result.canvas, settings.mergeOverlap);
+                 
+                 // Update the last entry
+                 constructedItems[lastIdx] = {
+                   ...lastQ,
+                   canvas: merged.canvas,
+                   width: merged.width,
+                   height: merged.height
+                 };
+              } else {
+                 constructedItems.push({
+                   id: detection.id,
+                   pageNumber: page.pageNumber,
+                   fileName: page.fileName,
+                   canvas: result.canvas,
+                   width: result.width,
+                   height: result.height,
+                   originalDataUrl: result.originalDataUrl
+                 });
               }
-            } else {
-              allExtractedQuestions.push({
-                id: detection.id,
-                pageNumber: page.pageNumber,
-                fileName: page.fileName,
-                dataUrl: final,
-                originalDataUrl: original
-              });
             }
+            setCroppingDone(prev => prev + 1);
           }
-          setCroppingDone(prev => prev + 1);
         }
-        setCompletedCount(i + 1);
-        await new Promise(r => setTimeout(r, 0));
+
+        // --- Phase 2: Batch Alignment ---
+        if (constructedItems.length > 0) {
+           // A. Analyze all items to find their content bounds
+           const itemsWithTrim = constructedItems.map(item => ({
+             ...item,
+             trim: analyzeCanvasContent(item.canvas)
+           }));
+
+           // B. Find Global Max Content Width for this file
+           const maxContentWidth = Math.max(...itemsWithTrim.map(i => i.trim.w));
+           
+           // C. Generate Aligned Images
+           for (const item of itemsWithTrim) {
+              if (signal.aborted) return;
+              
+              const finalDataUrl = await generateAlignedImage(
+                  item.canvas, 
+                  item.trim, 
+                  maxContentWidth, 
+                  settings
+              );
+              
+              allExtractedQuestions.push({
+                 id: item.id,
+                 pageNumber: item.pageNumber,
+                 fileName: item.fileName,
+                 dataUrl: finalDataUrl,
+                 originalDataUrl: item.originalDataUrl
+              });
+           }
+        }
       }
+
       setQuestions(allExtractedQuestions);
       setStatus(ProcessingStatus.COMPLETED);
     } catch (e: any) {
@@ -225,9 +284,15 @@ const App: React.FC = () => {
       const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
       
       for (const page of loadedRawPages) {
-        const safeFileName = page.fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Fix: Ensure fileName exists for backward compatibility or malformed JSON
+        const rawFileName = page.fileName || "unknown_file";
+        page.fileName = rawFileName;
+        
+        const safeFileName = rawFileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
         let imgFile = loadedZip.file(new RegExp(`full_pages/${safeFileName}/Page_${page.pageNumber}\\.jpg$`, 'i'))[0] 
                      || loadedZip.file(new RegExp(`full_pages/Page_${page.pageNumber}\\.jpg$`, 'i'))[0];
+        
         if (imgFile) {
           const base64 = await imgFile.async('base64');
           page.dataUrl = `data:image/jpeg;base64,${base64}`;
@@ -352,10 +417,13 @@ const App: React.FC = () => {
                   <div className="space-y-3">
                     <label className="text-sm font-bold text-slate-500 uppercase flex items-center gap-2">
                        <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
-                       裁剪边距 (Padding)
+                       内补白 (Padding)
                     </label>
                     <div className="flex items-center gap-2">
-                      <input type="number" value={cropSettings.cropPadding} onChange={(e) => setCropSettings(s => ({...s, cropPadding: Number(e.target.value)}))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input type="number" value={cropSettings.canvasPaddingLeft} onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setCropSettings(s => ({...s, canvasPaddingLeft: v, canvasPaddingRight: v, canvasPaddingY: v}));
+                      }} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
                       <span className="text-xs text-slate-400 font-bold whitespace-nowrap">px</span>
                     </div>
                   </div>
@@ -383,7 +451,7 @@ const App: React.FC = () => {
         )}
 
         <ProcessingState status={status} progress={progress} total={total} completedCount={completedCount} error={error} detailedStatus={detailedStatus} croppingTotal={croppingTotal} croppingDone={croppingDone} />
-        {showDebug ? <DebugRawView pages={rawPages} /> : (questions.length > 0 && <QuestionGrid questions={questions} rawPages={rawPages} />)}
+        {showDebug ? <DebugRawView pages={rawPages} settings={cropSettings} /> : (questions.length > 0 && <QuestionGrid questions={questions} rawPages={rawPages} />)}
       </main>
       
       {/* 快捷设置栏 - 仅在处理完后作为微调使用 */}
@@ -399,21 +467,21 @@ const App: React.FC = () => {
             </div>
             <div className="p-8 grid grid-cols-1 md:grid-cols-4 gap-8 items-end">
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">裁剪内缩</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">裁剪内缩 (Raw Crop)</label>
                 <div className="flex items-center gap-2">
                   <input type="number" value={cropSettings.cropPadding} onChange={(e) => setCropSettings(prev => ({ ...prev, cropPadding: Number(e.target.value) }))} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
                   <span className="text-xs text-slate-400 font-bold">px</span>
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">画布留白</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">内补白 (Final Pad)</label>
                 <div className="flex items-center gap-2">
-                  <input type="number" value={cropSettings.canvasPaddingLeft} onChange={(e) => { const v = Number(e.target.value); setCropSettings(p => ({ ...p, canvasPaddingLeft: v, canvasPaddingRight: v })); }} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input type="number" value={cropSettings.canvasPaddingLeft} onChange={(e) => { const v = Number(e.target.value); setCropSettings(p => ({ ...p, canvasPaddingLeft: v, canvasPaddingRight: v, canvasPaddingY: v })); }} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
                   <span className="text-xs text-slate-400 font-bold">px</span>
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">拼接重叠</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">拼接重叠 (Overlap)</label>
                 <div className="flex items-center gap-2">
                   <input type="number" value={cropSettings.mergeOverlap} onChange={(e) => setCropSettings(p => ({ ...p, mergeOverlap: Number(e.target.value) }))} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
                   <span className="text-xs text-slate-400 font-bold">px</span>

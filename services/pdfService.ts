@@ -6,15 +6,22 @@ import { getTrimmedBounds, isContained } from '../shared/canvas-utils.js';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
 
 export interface CropSettings {
-  cropPadding: number;
-  canvasPaddingLeft: number;
+  cropPadding: number; // Raw crop buffer
+  canvasPaddingLeft: number; // Final aesthetic padding
   canvasPaddingRight: number;
   canvasPaddingY: number;
   mergeOverlap: number;
 }
 
+export interface TrimBounds {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 /**
- * 助手函数：创建一个 Canvas，如果支持则优先使用 OffscreenCanvas
+ * Helper: Create a Smart Canvas (Offscreen if available)
  */
 const createSmartCanvas = (width: number, height: number): { canvas: HTMLCanvasElement | OffscreenCanvas, context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D } => {
   const safeWidth = Math.max(1, Math.floor(width));
@@ -27,7 +34,7 @@ const createSmartCanvas = (width: number, height: number): { canvas: HTMLCanvasE
       if (!context) throw new Error("OffscreenCanvas context failed");
       return { canvas, context: context as OffscreenCanvasRenderingContext2D };
     } catch (e) {
-      // Fallback to DOM canvas if OffscreenCanvas fails (e.g. invalid size or OOM)
+      // Fallback
     }
   } 
   
@@ -41,8 +48,6 @@ const createSmartCanvas = (width: number, height: number): { canvas: HTMLCanvasE
 
 export const renderPageToImage = async (page: any, scale: number = 3): Promise<{ dataUrl: string, width: number, height: number }> => {
   const viewport = page.getViewport({ scale });
-  
-  // PDF.js 渲染目前仍需 DOM Canvas，但我们通过立即转换 DataURL 来减少对 UI 帧的依赖
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
   
@@ -60,7 +65,7 @@ export const renderPageToImage = async (page: any, scale: number = 3): Promise<{
   const w = canvas.width;
   const h = canvas.height;
   
-  // 清理临时 Canvas
+  // Cleanup
   canvas.width = 0;
   canvas.height = 0;
 
@@ -68,159 +73,26 @@ export const renderPageToImage = async (page: any, scale: number = 3): Promise<{
 };
 
 /**
- * Creates a lower resolution copy for faster AI processing.
+ * PHASE 1: Extract & Stitch (Construction)
+ * Gets the question content from the page, trims FRAGMENTS (to remove inter-box gaps), 
+ * and stitches them together.
+ * Does NOT apply final padding or alignment.
  */
-export const createLowResCopy = async (base64: string, scaleFactor: number = 0.5): Promise<{ dataUrl: string, width: number, height: number }> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const w = Math.floor(img.width * scaleFactor);
-      const h = Math.floor(img.height * scaleFactor);
-      const { canvas, context: ctx } = createSmartCanvas(w, h);
-      
-      ctx.drawImage(img, 0, 0, w, h);
-      
-      const result = {
-        dataUrl: (canvas as HTMLCanvasElement).toDataURL ? (canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.8) : '', // Fallback for pure Offscreen
-        width: w,
-        height: h
-      };
-      
-      // Handle OffscreenCanvas blob conversion if needed
-      if (!result.dataUrl && 'convertToBlob' in canvas) {
-        (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality: 0.8 }).then(blob => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            resolve({ dataUrl: reader.result as string, width: w, height: h });
-          };
-          reader.readAsDataURL(blob);
-        });
-      } else {
-        resolve(result);
-      }
-    };
-    img.onerror = reject;
-    img.src = base64;
-  });
-};
-
-export const mergePdfPagesToSingleImage = async (
-  pdf: any, 
-  totalPages: number, 
-  scale: number = 2.5,
-  onProgress?: (current: number, total: number) => void
-): Promise<{ dataUrl: string, width: number, height: number }> => {
-  
-  const pageImages: { img: HTMLImageElement, width: number, height: number }[] = [];
-  let totalHeight = 0;
-  let maxWidth = 0;
-
-  for (let i = 1; i <= totalPages; i++) {
-    if (onProgress) onProgress(i, totalPages);
-    const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale });
-    
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    const ctx = canvas.getContext('2d');
-    
-    if (ctx) {
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      const img = new Image();
-      img.src = canvas.toDataURL('image/jpeg', 0.85);
-      await new Promise(r => img.onload = r);
-      
-      pageImages.push({ img, width: viewport.width, height: viewport.height });
-      totalHeight += viewport.height;
-      maxWidth = Math.max(maxWidth, viewport.width);
-      
-      canvas.width = 0; canvas.height = 0; // Release memory
-    }
-  }
-
-  const { canvas, context: ctx } = createSmartCanvas(maxWidth, totalHeight);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, maxWidth, totalHeight);
-
-  let currentY = 0;
-  for (const p of pageImages) {
-    const x = (maxWidth - p.width) / 2;
-    ctx.drawImage(p.img, x, currentY);
-    currentY += p.height;
-  }
-
-  if ('toDataURL' in canvas) {
-    return {
-      dataUrl: (canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.85),
-      width: maxWidth,
-      height: totalHeight
-    };
-  } else {
-    const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality: 0.85 });
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve({ dataUrl: reader.result as string, width: maxWidth, height: totalHeight });
-      reader.readAsDataURL(blob);
-    });
-  }
-};
-
-/**
- * Merges two base64 images vertically with an optional gap.
- * A negative gap allows for overlapping (removing internal paddings).
- */
-export const mergeBase64Images = async (topBase64: string, bottomBase64: string, gap: number = 0): Promise<string> => {
-  const loadImg = (src: string): Promise<HTMLImageElement> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = src;
-    });
-  };
-
-  const [imgTop, imgBottom] = await Promise.all([loadImg(topBase64), loadImg(bottomBase64)]);
-  const width = Math.max(imgTop.width, imgBottom.width);
-  // Calculate final height including the gap/overlap
-  const height = Math.max(0, imgTop.height + imgBottom.height + gap);
-
-  const { canvas, context: ctx } = createSmartCanvas(width, height);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, width, height);
-  
-  // Draw top image
-  ctx.drawImage(imgTop, (width - imgTop.width) / 2, 0);
-  
-  // Draw bottom image starting after the top image plus the gap
-  ctx.drawImage(imgBottom, (width - imgBottom.width) / 2, imgTop.height + gap);
-
-  if ('toDataURL' in canvas) {
-    return (canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.95);
-  } else {
-    const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality: 0.95 });
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.readAsDataURL(blob);
-    });
-  }
-};
-
-export const cropAndStitchImage = (
+export const constructQuestionCanvas = (
   sourceDataUrl: string, 
   boxes: [number, number, number, number][],
   originalWidth: number, 
   originalHeight: number,
   settings: CropSettings,
   onStatus?: (msg: string) => void
-): Promise<{ final: string, original?: string }> => {
+): Promise<{ canvas: HTMLCanvasElement | OffscreenCanvas | null, width: number, height: number, originalDataUrl?: string }> => {
   return new Promise((resolve) => {
     if (!boxes || boxes.length === 0) {
-      resolve({ final: '' });
+      resolve({ canvas: null, width: 0, height: 0 });
       return;
     }
 
+    // Filter nested boxes
     const indicesToDrop = new Set<number>();
     for (let i = 0; i < boxes.length; i++) {
       for (let j = 0; j < boxes.length; j++) {
@@ -236,17 +108,18 @@ export const cropAndStitchImage = (
         }
       }
     }
-
     const finalBoxes = boxes.filter((_, i) => !indicesToDrop.has(i));
+
     const img = new Image();
     img.onload = async () => {
+      // 1. Initial Raw Crop Settings
       const CROP_PADDING = settings.cropPadding; 
-      const CANVAS_PADDING_LEFT = settings.canvasPaddingLeft;
-      const CANVAS_PADDING_RIGHT = settings.canvasPaddingRight;
-      const CANVAS_PADDING_Y = settings.canvasPaddingY;
-
+      
+      // 2. Process each fragment (Crop -> Trim)
       const processedFragments = finalBoxes.map((box, idx) => {
         const [ymin, xmin, ymax, xmax] = box;
+        
+        // Calculate raw crop coordinates
         const x = Math.max(0, (xmin / 1000) * originalWidth - CROP_PADDING);
         const y = Math.max(0, (ymin / 1000) * originalHeight - CROP_PADDING);
         const rawW = ((xmax - xmin) / 1000) * originalWidth + (CROP_PADDING * 2);
@@ -254,100 +127,188 @@ export const cropAndStitchImage = (
         const w = Math.min(originalWidth - x, rawW);
         const h = Math.min(originalHeight - y, rawH);
 
-        // Safety check: skip invalid or empty dimensions to prevent OffscreenCanvas constructor errors
         if (w < 1 || h < 1) return null;
 
+        // Draw raw crop
         const { canvas: tempCanvas, context: tempCtx } = createSmartCanvas(Math.floor(w), Math.floor(h));
         tempCtx.drawImage(img, x, y, w, h, 0, 0, w, h);
 
         if (onStatus) onStatus(`Refining ${idx + 1}/${finalBoxes.length}...`);
+        
+        // EDGE PEEL: Trim white space from this fragment
         const trim = getTrimmedBounds(tempCtx, Math.floor(w), Math.floor(h), onStatus);
 
         return {
           sourceCanvas: tempCanvas,
           trim: trim,
-          absInkX: x + trim.x 
+          absInkX: x + trim.x, // Used for relative alignment
+          rawW: w,
+          rawH: h
         };
       }).filter((item) => item !== null);
 
       if (processedFragments.length === 0) {
-        resolve({ final: '' });
+        resolve({ canvas: null, width: 0, height: 0 });
         return;
       }
 
+      // 3. Calculate Stitched Dimensions (Tight Fit)
       const minAbsInkX = Math.min(...processedFragments.map(f => f!.absInkX));
-      const maxRightEdge = Math.max(...processedFragments.map(f => (f!.absInkX - minAbsInkX) + f!.trim.w));
-      const finalWidth = maxRightEdge + CANVAS_PADDING_LEFT + CANVAS_PADDING_RIGHT;
-      const fragmentGap = 10; 
+      // Max width required to hold fragments relative to leftmost ink
+      const maxContentWidth = Math.max(...processedFragments.map(f => (f!.absInkX - minAbsInkX) + f!.trim.w));
+      
+      const fragmentGap = 5; 
       const totalContentHeight = processedFragments.reduce((acc, f) => acc + f!.trim.h, 0) + (fragmentGap * (Math.max(0, processedFragments.length - 1)));
-      const finalHeight = totalContentHeight + (CANVAS_PADDING_Y * 2);
 
-      const { canvas, context: ctx } = createSmartCanvas(finalWidth, finalHeight);
+      // Canvas size is exactly the content size (no padding yet)
+      const { canvas, context: ctx } = createSmartCanvas(maxContentWidth, totalContentHeight);
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, finalWidth, finalHeight);
+      ctx.fillRect(0, 0, maxContentWidth, totalContentHeight);
 
-      let currentY = CANVAS_PADDING_Y;
+      // 4. Draw Fragments (Stitched)
+      let currentY = 0;
       processedFragments.forEach((f) => {
         if (!f) return;
         const relativeOffset = f.absInkX - minAbsInkX;
-        const offsetX = CANVAS_PADDING_LEFT + relativeOffset;
+        
         ctx.drawImage(
           f.sourceCanvas as any, 
           f.trim.x, f.trim.y, f.trim.w, f.trim.h,
-          offsetX, currentY, f.trim.w, f.trim.h
+          relativeOffset, currentY, f.trim.w, f.trim.h
         );
         currentY += f.trim.h + fragmentGap;
       });
 
-      let finalDataUrl = '';
-      if ('toDataURL' in canvas) {
-        finalDataUrl = (canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.95);
-      } else {
-        const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality: 0.95 });
-        finalDataUrl = await new Promise(r => {
-          const reader = new FileReader();
-          reader.onloadend = () => r(reader.result as string);
-          reader.readAsDataURL(blob);
-        });
-      }
-
+      // 5. Generate Original for debug/comparison
+      let originalDataUrl: string | undefined;
       const wasTrimmed = processedFragments.some(f => 
-        f && (f.trim.w < (f.sourceCanvas as any).width || f.trim.h < (f.sourceCanvas as any).height)
+        f && (f.trim.w < f.rawW * 0.9 || f.trim.h < f.rawH * 0.9)
       );
 
-      let originalDataUrl: string | undefined;
       if (wasTrimmed) {
+         // Re-stitch raw fragments without trim for comparison
          const maxRawWidth = Math.max(...processedFragments.map(f => f ? (f.sourceCanvas as any).width : 0));
-         const finalRawWidth = maxRawWidth + CANVAS_PADDING_LEFT + CANVAS_PADDING_RIGHT;
-         const totalRawHeight = processedFragments.reduce((acc, f) => acc + (f ? (f.sourceCanvas as any).height : 0), 0) + (fragmentGap * (Math.max(0, processedFragments.length - 1)));
-         const finalRawHeight = totalRawHeight + (CANVAS_PADDING_Y * 2);
+         const finalRawWidth = maxRawWidth + 20;
+         const finalRawHeight = processedFragments.reduce((acc, f) => acc + (f ? (f.sourceCanvas as any).height : 0), 0) + (fragmentGap * (Math.max(0, processedFragments.length - 1))) + 20;
 
          const { canvas: rawCanvas, context: rawCtx } = createSmartCanvas(finalRawWidth, finalRawHeight);
          rawCtx.fillStyle = '#ffffff';
          rawCtx.fillRect(0, 0, finalRawWidth, finalRawHeight);
          
-         let currentRawY = CANVAS_PADDING_Y;
+         let currentRawY = 10;
          processedFragments.forEach(f => {
              if (f) {
-                rawCtx.drawImage(f.sourceCanvas as any, CANVAS_PADDING_LEFT, currentRawY);
+                rawCtx.drawImage(f.sourceCanvas as any, 10, currentRawY);
                 currentRawY += (f.sourceCanvas as any).height + fragmentGap;
              }
          });
-
+         
          if ('toDataURL' in rawCanvas) {
-           originalDataUrl = (rawCanvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.95);
+             originalDataUrl = (rawCanvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.8);
          } else {
-           const blob = await (rawCanvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality: 0.95 });
-           originalDataUrl = await new Promise(r => {
-             const reader = new FileReader();
-             reader.onloadend = () => r(reader.result as string);
-             reader.readAsDataURL(blob);
-           });
+             const blob = await (rawCanvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+             originalDataUrl = await new Promise(r => {
+                 const reader = new FileReader();
+                 reader.onloadend = () => r(reader.result as string);
+                 reader.readAsDataURL(blob);
+             });
          }
       }
 
-      resolve({ final: finalDataUrl, original: originalDataUrl });
+      resolve({ canvas, width: maxContentWidth, height: totalContentHeight, originalDataUrl });
     };
     img.src = sourceDataUrl;
   });
+};
+
+/**
+ * Merge two canvases vertically (for continuation).
+ * Returns a new Canvas.
+ */
+export const mergeCanvasesVertical = (topCanvas: HTMLCanvasElement | OffscreenCanvas, bottomCanvas: HTMLCanvasElement | OffscreenCanvas, overlap: number = 0): { canvas: HTMLCanvasElement | OffscreenCanvas, width: number, height: number } => {
+    const width = Math.max(topCanvas.width, bottomCanvas.width);
+    const height = Math.max(0, topCanvas.height + bottomCanvas.height - overlap);
+    
+    const { canvas, context: ctx } = createSmartCanvas(width, height);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    
+    // Draw top
+    ctx.drawImage(topCanvas as any, 0, 0);
+    // Draw bottom
+    ctx.drawImage(bottomCanvas as any, 0, topCanvas.height - overlap);
+    
+    return { canvas, width, height };
+};
+
+/**
+ * PHASE 2: Analyze Content
+ * Returns the trim bounds of the constructed canvas.
+ */
+export const analyzeCanvasContent = (canvas: HTMLCanvasElement | OffscreenCanvas): TrimBounds => {
+    const w = canvas.width;
+    const h = canvas.height;
+    if (w === 0 || h === 0) return { x: 0, y: 0, w: 0, h: 0 };
+    
+    // Create temp context to read data
+    const { context } = createSmartCanvas(w, h);
+    context.drawImage(canvas as any, 0, 0);
+    
+    return getTrimmedBounds(context, w, h);
+};
+
+/**
+ * PHASE 3: Align and Export
+ * Draws the content (defined by trimBounds) into a new canvas of (targetContentWidth + padding).
+ */
+export const generateAlignedImage = async (
+    sourceCanvas: HTMLCanvasElement | OffscreenCanvas, 
+    trimBounds: TrimBounds,
+    targetContentWidth: number,
+    settings: CropSettings
+): Promise<string> => {
+    // Final dimensions
+    const finalWidth = targetContentWidth + settings.canvasPaddingLeft + settings.canvasPaddingRight;
+    const finalHeight = trimBounds.h + (settings.canvasPaddingY * 2);
+    
+    const { canvas, context: ctx } = createSmartCanvas(finalWidth, finalHeight);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, finalWidth, finalHeight);
+    
+    // Draw specific trim area from source to destination with padding
+    ctx.drawImage(
+        sourceCanvas as any,
+        trimBounds.x, trimBounds.y, trimBounds.w, trimBounds.h, // Source Slice
+        settings.canvasPaddingLeft, settings.canvasPaddingY, trimBounds.w, trimBounds.h // Dest Rect
+    );
+    
+    if ('toDataURL' in canvas) {
+        return (canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.95);
+    } else {
+        const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality: 0.95 });
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+        });
+    }
+};
+
+/**
+ * Legacy wrapper if needed
+ */
+export const cropAndStitchImage = async (
+  sourceDataUrl: string, 
+  boxes: [number, number, number, number][],
+  originalWidth: number, 
+  originalHeight: number,
+  settings: CropSettings
+): Promise<{ final: string, original?: string }> => {
+    // This legacy function mimics the old one-shot behavior roughly
+    const { canvas, originalDataUrl } = await constructQuestionCanvas(sourceDataUrl, boxes, originalWidth, originalHeight, settings);
+    if (!canvas) return { final: '' };
+    
+    const trim = analyzeCanvasContent(canvas);
+    const final = await generateAlignedImage(canvas, trim, trim.w, settings);
+    return { final, original: originalDataUrl };
 };

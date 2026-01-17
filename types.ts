@@ -29,6 +29,16 @@ export interface DebugPageData {
   detections: DetectedQuestion[]; // Raw coordinates from Gemini
 }
 
+export interface ProcessedCanvas {
+  id: string;
+  pageNumber: number;
+  fileName: string;
+  canvas: HTMLCanvasElement | OffscreenCanvas;
+  width: number;
+  height: number;
+  originalDataUrl?: string;
+}
+
 export enum ProcessingStatus {
   IDLE = 'IDLE',
   LOADING_PDF = 'LOADING_PDF',

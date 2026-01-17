@@ -1,9 +1,11 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { DebugPageData, DetectedQuestion } from '../types';
+import { constructQuestionCanvas, analyzeCanvasContent, generateAlignedImage, CropSettings } from '../services/pdfService';
 
 interface Props {
   pages: DebugPageData[];
+  settings: CropSettings;
 }
 
 // Flattened structure for easy navigation across all pages
@@ -14,9 +16,11 @@ interface FlattenedItem {
   detectionIndex: number;
 }
 
-export const DebugRawView: React.FC<Props> = ({ pages }) => {
+export const DebugRawView: React.FC<Props> = ({ pages, settings }) => {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewData, setPreviewData] = useState<{ final: string, original: string } | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
 
   // Flatten all detections into a single list for easy sequential navigation
   const allItems = useMemo(() => {
@@ -34,61 +38,76 @@ export const DebugRawView: React.FC<Props> = ({ pages }) => {
     return items;
   }, [pages]);
 
-  // Generate the raw crop when the selection changes
+  // Generate both the Processed (Aligned) and Raw (Original/Stitched) crops
   useEffect(() => {
     if (selectedIndex === null) {
-      setPreviewUrl(null);
+      setPreviewData(null);
       return;
     }
 
     const item = allItems[selectedIndex];
     if (!item) return;
 
-    const generateCrop = async () => {
-      const { page, detection } = item;
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = page.dataUrl;
-      await new Promise((resolve) => { img.onload = resolve; });
-
-      // Handle both single and multiple boxes
-      const rawBoxes = (Array.isArray(detection.boxes_2d[0]) 
-        ? detection.boxes_2d 
-        : [detection.boxes_2d]) as [number, number, number, number][];
-
-      const fragments = rawBoxes.map(box => {
-        const x = Math.floor((box[1] / 1000) * page.width);
-        const y = Math.floor((box[0] / 1000) * page.height);
-        const w = Math.floor(((box[3] - box[1]) / 1000) * page.width);
-        const h = Math.floor(((box[2] - box[0]) / 1000) * page.height);
-        return { x, y, w, h };
-      });
-
-      const totalHeight = fragments.reduce((acc, f) => acc + f.h, 0);
-      const maxWidth = Math.max(...fragments.map(f => f.w));
-
-      if (maxWidth === 0 || totalHeight === 0) return;
-
-      const canvas = document.createElement('canvas');
-      canvas.width = maxWidth;
-      canvas.height = totalHeight + (fragments.length > 1 ? (fragments.length - 1) * 10 : 0); // Add slight gap for multi-box
-      const ctx = canvas.getContext('2d');
-
-      if (ctx) {
-        ctx.fillStyle = '#eee';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const generatePreview = async () => {
+      setIsGenerating(true);
+      try {
+        const { page, detection } = item;
         
-        let currentY = 0;
-        fragments.forEach(f => {
-          ctx.drawImage(img, f.x, f.y, f.w, f.h, 0, currentY, f.w, f.h);
-          currentY += f.h + 10;
-        });
-        setPreviewUrl(canvas.toDataURL('image/jpeg', 1.0));
+        // Handle both single and multiple boxes
+        const boxes = (Array.isArray(detection.boxes_2d[0]) 
+          ? detection.boxes_2d 
+          : [detection.boxes_2d]) as [number, number, number, number][];
+
+        // 1. Construct the Raw Stitched Canvas
+        const constructed = await constructQuestionCanvas(
+          page.dataUrl,
+          boxes,
+          page.width,
+          page.height,
+          settings
+        );
+
+        if (constructed.canvas) {
+           // 2. Analyze content to find trim bounds
+           const trim = analyzeCanvasContent(constructed.canvas);
+           
+           // 3. Generate Final Aligned Image (Processed)
+           const finalDataUrl = await generateAlignedImage(
+               constructed.canvas,
+               trim,
+               trim.w, // For debug, just align to itself
+               settings
+           );
+
+           // 4. Determine "Original" view
+           // If constructQuestionCanvas created a raw visualization (e.g. from stitching), use it.
+           // Otherwise use the raw stitched canvas itself.
+           let rawDataUrl = constructed.originalDataUrl;
+           if (!rawDataUrl && 'toDataURL' in constructed.canvas) {
+              rawDataUrl = (constructed.canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.8);
+           } else if (!rawDataUrl && constructed.canvas instanceof OffscreenCanvas) {
+              const blob = await constructed.canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+              rawDataUrl = await new Promise(r => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => r(reader.result as string);
+                  reader.readAsDataURL(blob);
+              });
+           }
+
+           setPreviewData({
+               final: finalDataUrl,
+               original: rawDataUrl || finalDataUrl
+           });
+        }
+      } catch (e) {
+        console.error("Preview generation failed", e);
+      } finally {
+        setIsGenerating(false);
       }
     };
 
-    generateCrop();
-  }, [selectedIndex, allItems]);
+    generatePreview();
+  }, [selectedIndex, allItems, settings]);
 
   const handleNext = useCallback((e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -119,7 +138,7 @@ export const DebugRawView: React.FC<Props> = ({ pages }) => {
       {pages.map((page, pageIdx) => (
         <div key={`${page.fileName}-${page.pageNumber}`} className="bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-800 flex flex-col lg:flex-row h-[85vh]">
           
-          {/* Main Image Area - Takes remaining width & Uses natural aspect ratio */}
+          {/* Main Image Area */}
           <div className="flex-grow relative bg-slate-950/50 h-full flex flex-col">
              {/* Header Overlay */}
             <div className="flex-none bg-slate-900/90 backdrop-blur-sm px-6 py-3 border-b border-slate-800 flex justify-between items-center z-10">
@@ -148,13 +167,8 @@ export const DebugRawView: React.FC<Props> = ({ pages }) => {
                     preserveAspectRatio="none"
                  >
                     {page.detections.map((det) => {
-                      // Find index in flattened list for click handler
                       const globalIndex = allItems.findIndex(item => item.pageIndex === pageIdx && item.detection.id === det.id);
-                      
-                      // Normalize boxes for rendering
-                      const boxes = (Array.isArray(det.boxes_2d[0]) 
-                        ? det.boxes_2d 
-                        : [det.boxes_2d]) as [number, number, number, number][];
+                      const boxes = (Array.isArray(det.boxes_2d[0]) ? det.boxes_2d : [det.boxes_2d]) as [number, number, number, number][];
                       
                       return (
                         <g 
@@ -168,10 +182,10 @@ export const DebugRawView: React.FC<Props> = ({ pages }) => {
                           {boxes.map((box, bIdx) => (
                             <rect
                               key={bIdx}
-                              x={box[1]} // xmin
-                              y={box[0]} // ymin
-                              width={box[3] - box[1]} // xmax - xmin
-                              height={box[2] - box[0]} // ymax - ymin
+                              x={box[1]}
+                              y={box[0]}
+                              width={box[3] - box[1]}
+                              height={box[2] - box[0]}
                               fill="rgba(255, 50, 50, 0.1)"
                               stroke="red"
                               strokeWidth="2"
@@ -180,17 +194,15 @@ export const DebugRawView: React.FC<Props> = ({ pages }) => {
                             />
                           ))}
                           
-                          {/* ID Label - Top Right inside the first box */}
+                          {/* ID Label */}
                           <text
                             x={boxes[0][3] - 10}
                             y={boxes[0][0] + 35}
-                            fill="#991b1b" // Deep Red (red-800)
+                            fill="#991b1b"
                             fontSize="40"
                             fontWeight="900"
                             textAnchor="end"
-                            style={{ 
-                              textShadow: '0 0 4px #fff, 0 0 2px #fff' // White halo for contrast
-                            }}
+                            style={{ textShadow: '0 0 4px #fff, 0 0 2px #fff' }}
                           >
                             {det.id}
                           </text>
@@ -202,7 +214,7 @@ export const DebugRawView: React.FC<Props> = ({ pages }) => {
             </div>
           </div>
 
-          {/* Sidebar List - Fixed Width */}
+          {/* Sidebar List */}
           <div className="w-full lg:w-80 bg-slate-900 border-l border-slate-800 flex flex-col flex-none h-[300px] lg:h-full">
             <div className="p-4 border-b border-slate-800 bg-slate-900 flex-none">
               <h3 className="text-slate-300 font-semibold text-sm uppercase tracking-wider">Coordinates List</h3>
@@ -251,10 +263,10 @@ export const DebugRawView: React.FC<Props> = ({ pages }) => {
         </div>
       ))}
 
-      {/* Raw Crop Modal */}
+      {/* Enhanced Preview Modal */}
       {selectedIndex !== null && allItems[selectedIndex] && (
         <div 
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/95 backdrop-blur-sm"
           onClick={() => setSelectedIndex(null)}
         >
           {/* Previous Button */}
@@ -276,38 +288,69 @@ export const DebugRawView: React.FC<Props> = ({ pages }) => {
           </button>
 
           <div 
-             className="bg-white rounded-xl overflow-hidden max-w-5xl w-full max-h-[90vh] flex flex-col shadow-2xl m-4 z-40" 
+             className="relative max-w-7xl w-full h-[95vh] flex flex-col items-center justify-center p-4 md:px-12 md:py-8"
              onClick={e => e.stopPropagation()}
           >
-             <div className="bg-slate-50 px-6 py-4 border-b flex justify-between items-center">
-                <div>
-                   <h3 className="font-bold text-xl text-slate-900">
-                     Raw Crop: Question {allItems[selectedIndex].detection.id}
-                   </h3>
-                   <p className="text-xs text-slate-500">
-                     {allItems[selectedIndex].page.fileName} • Page {allItems[selectedIndex].page.pageNumber}
-                   </p>
+             <div className="w-full flex justify-between items-center text-white mb-4">
+               <div className="flex flex-col">
+                 <h2 className="text-2xl font-bold">Debug Crop: Q{allItems[selectedIndex].detection.id}</h2>
+                 <p className="text-sm text-white/50">{allItems[selectedIndex].page.fileName} • Page {allItems[selectedIndex].page.pageNumber}</p>
+               </div>
+               <button onClick={() => setSelectedIndex(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/50 hover:text-white">
+                  <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+               </button>
+             </div>
+
+             <div className="flex-1 w-full bg-white rounded-xl overflow-hidden shadow-2xl relative flex flex-col">
+                <div className="relative w-full h-full bg-slate-100 flex items-center justify-center p-8">
+                   
+                   {/* Compare Button Overlay */}
+                   {previewData?.original && !isGenerating && (
+                      <div className="absolute top-4 left-4 z-20">
+                        <button 
+                          onMouseDown={() => setShowOriginal(true)}
+                          onMouseUp={() => setShowOriginal(false)}
+                          onMouseLeave={() => setShowOriginal(false)}
+                          onTouchStart={() => setShowOriginal(true)}
+                          onTouchEnd={() => setShowOriginal(false)}
+                          className={`
+                            px-4 py-2 rounded-full font-bold shadow-lg transition-all border-2
+                            ${showOriginal 
+                              ? 'bg-orange-500 text-white border-orange-600 scale-105' 
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                            }
+                          `}
+                        >
+                          {showOriginal ? '显示原始裁剪 (Raw)' : '长按对比原图 (Original)'}
+                        </button>
+                      </div>
+                   )}
+
+                   {isGenerating ? (
+                      <div className="flex flex-col items-center gap-4 text-slate-400">
+                         <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+                         <span className="font-bold text-sm">Generating optimized crop...</span>
+                      </div>
+                   ) : previewData ? (
+                      <img 
+                        src={showOriginal ? previewData.original : previewData.final} 
+                        alt="Question Crop" 
+                        className={`max-h-full max-w-full object-contain shadow-lg transition-all duration-150 ${showOriginal ? 'ring-4 ring-orange-500' : ''}`}
+                      />
+                   ) : (
+                      <span className="text-red-400 font-bold">Failed to load preview</span>
+                   )}
                 </div>
-                <button onClick={() => setSelectedIndex(null)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-                  <svg className="w-6 h-6 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
              </div>
-             
-             <div className="flex-1 bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABGdBTUEAALGPC/xhBQAAAAlwSFlzAAAOwgAADsIBFShKgAAAABhJREFUOBFjTE1N/Z8YCwgodQwY1YAMgAAAVg4EIZ77X6YAAAAASUVORK5CYII=')] overflow-auto flex items-center justify-center p-8 min-h-[400px]">
-                {previewUrl ? (
-                   <img src={previewUrl} className="border-2 border-red-500 shadow-xl max-w-full object-contain" alt="Raw Crop" />
-                ) : (
-                   <div className="animate-pulse flex space-x-4">
-                      <div className="h-12 w-12 bg-slate-200 rounded-full"></div>
-                   </div>
-                )}
-             </div>
-             
-             <div className="bg-yellow-50 px-6 py-3 text-xs text-yellow-800 border-t border-yellow-100 flex justify-between items-center">
-               <span>⚠️ Displaying exact coordinates (0px padding, No cleaning).</span>
-               <span className="font-mono text-yellow-900/50 hidden sm:inline">
-                   {(Array.isArray(allItems[selectedIndex].detection.boxes_2d[0])) ? "Nested Box Structure" : `[${Math.round(allItems[selectedIndex].detection.boxes_2d[0] as number)},${Math.round(allItems[selectedIndex].detection.boxes_2d[1] as number)}]`}
-               </span>
+
+             <div className="mt-6 flex items-center justify-between w-full max-w-4xl text-white/60 text-sm">
+                <span>
+                    Use arrow keys to navigate. 
+                    {showOriginal ? <strong className="text-orange-400 ml-2">Viewing Raw Stitch</strong> : <strong className="text-blue-400 ml-2">Viewing Final Processed</strong>}
+                </span>
+                <div className="font-mono text-xs opacity-50">
+                    Box: {JSON.stringify(allItems[selectedIndex].detection.boxes_2d)}
+                </div>
              </div>
           </div>
         </div>
