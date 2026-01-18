@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
@@ -6,9 +5,14 @@ import { ProcessingStatus, QuestionImage, DebugPageData, ProcessedCanvas, Histor
 import { ProcessingState } from './components/ProcessingState';
 import { QuestionGrid } from './components/QuestionGrid';
 import { DebugRawView } from './components/DebugRawView';
+import { Header } from './components/Header';
+import { UploadSection } from './components/UploadSection';
+import { ConfigurationPanel } from './components/ConfigurationPanel';
+import { HistorySidebar } from './components/HistorySidebar';
+import { RefinementModal } from './components/RefinementModal';
 import { renderPageToImage, constructQuestionCanvas, mergeCanvasesVertical, analyzeCanvasContent, generateAlignedImage, CropSettings } from './services/pdfService';
 import { detectQuestionsOnPage } from './services/geminiService';
-import { saveExamResult, getHistoryList, loadExamResult, deleteExamResult, deleteExamResults } from './services/storageService';
+import { saveExamResult, getHistoryList, loadExamResult } from './services/storageService';
 
 const DEFAULT_SETTINGS: CropSettings = {
   cropPadding: 25,
@@ -47,10 +51,6 @@ const formatTime = (seconds: number): string => {
   return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
 
-const formatDate = (ts: number): string => {
-  return new Date(ts).toLocaleString();
-};
-
 const App: React.FC = () => {
   const [status, setStatus] = useState<ProcessingStatus>(ProcessingStatus.IDLE);
   const [questions, setQuestions] = useState<QuestionImage[]>([]);
@@ -60,13 +60,11 @@ const App: React.FC = () => {
   // State for specific file interactions
   const [debugFile, setDebugFile] = useState<string | null>(null);
   const [refiningFile, setRefiningFile] = useState<string | null>(null);
-  const [localSettings, setLocalSettings] = useState<CropSettings>(DEFAULT_SETTINGS);
 
   // History State
   const [showHistory, setShowHistory] = useState(false);
   const [historyList, setHistoryList] = useState<HistoryMetadata[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
 
   const [cropSettings, setCropSettings] = useState<CropSettings>(() => {
     try {
@@ -213,47 +211,6 @@ const App: React.FC = () => {
     if (window.location.search) window.history.pushState({}, '', window.location.pathname);
   };
 
-  // History Actions
-  const handleToggleHistorySelection = (id: string) => {
-    const newSet = new Set(selectedHistoryIds);
-    if (newSet.has(id)) {
-      newSet.delete(id);
-    } else {
-      newSet.add(id);
-    }
-    setSelectedHistoryIds(newSet);
-  };
-
-  const handleSelectAllHistory = () => {
-    if (selectedHistoryIds.size === historyList.length) {
-      setSelectedHistoryIds(new Set());
-    } else {
-      setSelectedHistoryIds(new Set(historyList.map(h => h.id)));
-    }
-  };
-
-  const handleDeleteSelectedHistory = async () => {
-    if (selectedHistoryIds.size === 0) return;
-    if (confirm(`Are you sure you want to delete ${selectedHistoryIds.size} records?`)) {
-        await deleteExamResults(Array.from(selectedHistoryIds));
-        setSelectedHistoryIds(new Set());
-        await loadHistoryList();
-    }
-  };
-
-  const deleteHistoryItem = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirm("Are you sure you want to delete this record?")) {
-      await deleteExamResult(id);
-      setSelectedHistoryIds(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(id);
-        return newSet;
-      });
-      await loadHistoryList();
-    }
-  };
-
   const handleLoadHistory = async (id: string) => {
     handleReset();
     setShowHistory(false);
@@ -267,7 +224,6 @@ const App: React.FC = () => {
 
       setRawPages(result.rawPages);
       
-      // Reconstruct source pages from raw pages for UI state consistency
       const recoveredSourcePages = result.rawPages.map(rp => ({
         dataUrl: rp.dataUrl,
         width: rp.width,
@@ -277,7 +233,6 @@ const App: React.FC = () => {
       }));
       setSourcePages(recoveredSourcePages);
 
-      // Now immediately trigger cropping with CURRENT settings
       setStatus(ProcessingStatus.CROPPING);
       setDetailedStatus('Applying current crop settings...');
       
@@ -315,7 +270,6 @@ const App: React.FC = () => {
       pagesByFile[p.fileName].push(p);
     });
 
-    // Sort pages by pageNumber to ensure correct order
     Object.values(pagesByFile).forEach(list => list.sort((a, b) => a.pageNumber - b.pageNumber));
 
     const finalQuestions: QuestionImage[] = [];
@@ -417,8 +371,6 @@ const App: React.FC = () => {
   };
 
   const processZipFiles = async (files: { blob: Blob, name: string }[]) => {
-    // ZIP Processing logic remains largely the same as it handles ready-made data
-    // It doesn't use the Gemini retry queue.
     try {
       setStatus(ProcessingStatus.LOADING_PDF);
       setDetailedStatus('Reading ZIP contents...');
@@ -625,7 +577,6 @@ const App: React.FC = () => {
     const filesToProcess: File[] = [];
     const cachedRawPages: DebugPageData[] = [];
 
-    // Check History Cache
     if (useHistoryCache) {
       setDetailedStatus("Checking history for existing files...");
       for (const file of pdfFiles) {
@@ -653,9 +604,6 @@ const App: React.FC = () => {
     }
 
     try {
-      // ---------------------------------------------------------
-      // PHASE 0: RESTORE CACHED DATA
-      // ---------------------------------------------------------
       if (cachedRawPages.length > 0) {
          setDetailedStatus("Restoring cached files...");
          setRawPages(prev => [...prev, ...cachedRawPages]);
@@ -685,14 +633,9 @@ const App: React.FC = () => {
          return;
       }
 
-      // ---------------------------------------------------------
-      // PHASE 1: RENDER NEW PDFS (Pre-processing)
-      // ---------------------------------------------------------
-      // We render ALL pages first to have a definitive queue
       const allNewPages: SourcePage[] = [];
       let cumulativeRendered = 0;
       
-      // Init total to an estimate, update as we parse
       setTotal(cachedRawPages.length + (filesToProcess.length * 3));
 
       for (let fIdx = 0; fIdx < filesToProcess.length; fIdx++) {
@@ -721,14 +664,9 @@ const App: React.FC = () => {
       setTotal(cachedRawPages.length + allNewPages.length);
       setProgress(cachedRawPages.length);
 
-      // ---------------------------------------------------------
-      // PHASE 2: QUEUE PROCESSING WITH RETRY LOOPS
-      // ---------------------------------------------------------
       if (allNewPages.length > 0 && !stopRequestedRef.current && !signal.aborted) {
          setStatus(ProcessingStatus.DETECTING_QUESTIONS);
          
-         // Helper to track processing per file to know when to crop
-         // We must track this across rounds.
          const fileMeta: Record<string, { totalPages: number, processedPages: number, cropped: boolean }> = {};
          allNewPages.forEach(p => {
              if (!fileMeta[p.fileName]) {
@@ -743,7 +681,6 @@ const App: React.FC = () => {
          let queue = [...allNewPages];
          let round = 1;
 
-         // Infinite loop for retries until queue empty or stopped
          while (queue.length > 0) {
              if (stopRequestedRef.current || signal.aborted) break;
 
@@ -752,10 +689,7 @@ const App: React.FC = () => {
                 ? "Analyzing pages with AI..." 
                 : `Round ${round}: Retrying ${queue.length} failed pages...`);
              
-             // Process current queue
              const nextRoundQueue: SourcePage[] = [];
-             
-             // Concurrency Loop for the current batch
              const executing = new Set<Promise<void>>();
              
              for (const pageData of queue) {
@@ -763,7 +697,6 @@ const App: React.FC = () => {
 
                  const task = (async () => {
                      try {
-                         // Attempt Detection
                          const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel);
                          
                          const resultPage: DebugPageData = {
@@ -779,60 +712,33 @@ const App: React.FC = () => {
                          setCompletedCount(prev => prev + 1);
                          setCroppingTotal(prev => prev + detections.length);
 
-                         // Check File Completion
                          if (fileMeta[pageData.fileName]) {
                              fileMeta[pageData.fileName].processedPages++;
                              const meta = fileMeta[pageData.fileName];
                              
-                             // If all pages for this file are done (across all rounds so far), crop it.
                              if (!meta.cropped && meta.processedPages === meta.totalPages) {
                                  meta.cropped = true;
                                  
-                                 // We need to fetch ALL pages for this file from state (including those from previous rounds)
-                                 // Note: state updates are async, so we use a functional update logic or local aggregator if needed.
-                                 // However, here we are inside an async task. We can't rely on 'rawPages' state being perfectly up to date immediately for *this* specific page insertion.
-                                 // Best practice: Pass the complete list or rely on `setRawPages` callback, but for cropping we need the data.
-                                 // Let's grab the latest from state in a slightly unsafe way or wait?
-                                 // Actually, we can just grab from `rawPages` state which might miss the *current* page if React hasn't rendered.
-                                 // To fix: We can push to a local `accumulatedRawPages` ref if needed, but for now let's use the functional updater pattern combined with a separate tracker?
-                                 // Simplification: We wait for the next render cycle or just execute cropping separately? 
-                                 // BETTER: Just trigger the crop. The logic in `handleLoadHistory` does this well.
-                                 
-                                 // We need to fetch all debug pages for this file. 
-                                 // Since `setRawPages` is async, we can't guarantee `rawPages` has `resultPage` yet.
-                                 // So we pass it explicitly alongside the existing ones.
                                  setRawPages(current => {
                                      const filePages = [...current.filter(p => p.fileName === pageData.fileName), resultPage];
                                      filePages.sort((a,b) => a.pageNumber - b.pageNumber);
                                      
-                                     // Save to history
                                      saveExamResult(pageData.fileName, filePages).then(() => loadHistoryList());
                                      
-                                     // Trigger crop
                                      generateQuestionsFromRawPages(filePages, cropSettings, signal).then(newQuestions => {
                                         if (!signal.aborted && !stopRequestedRef.current) {
                                             setQuestions(prevQ => [...prevQ, ...newQuestions]);
                                         }
                                      });
-                                     
-                                     return current; // Return current because we already did the update via setRawPages(prev => ...) above? 
-                                     // Wait, we called setRawPages above. This logic is slightly duplicated.
-                                     // Let's NOT call setRawPages above, and do it here inside the check?
-                                     // No, because we want to see progress even if file not complete.
-                                     // Let's just assume React updates are fast enough or use a mutable Ref for the accumulator logic if strictness required.
-                                     // For this UI, eventually cropping will happen. 
+                                     return current;
                                  });
-                                 // NOTE: The above `setRawPages` inside the check is complex. 
-                                 // Simplified: `fileMeta` tracks count. We know when it's done. 
-                                 // We initiate a standalone "finish file" routine.
                              }
                          }
 
                      } catch (err: any) {
-                         // Failed! Add to next round queue.
                          console.warn(`Failed ${pageData.fileName} P${pageData.pageNumber} in Round ${round}`, err);
                          nextRoundQueue.push(pageData);
-                         setFailedCount(prev => prev + 1); // Aggregate total failures encountered
+                         setFailedCount(prev => prev + 1);
                      }
                  })();
 
@@ -841,17 +747,14 @@ const App: React.FC = () => {
                  if (executing.size >= concurrency) await Promise.race(executing);
              }
 
-             // Wait for current batch to finish
              await Promise.all(executing);
 
-             // Prepare for next round
              if (nextRoundQueue.length > 0 && !stopRequestedRef.current && !signal.aborted) {
                  queue = nextRoundQueue;
                  round++;
-                 // Small delay to let system breathe
                  await new Promise(r => setTimeout(r, 1000));
              } else {
-                 queue = []; // Done
+                 queue = [];
              }
          }
       }
@@ -873,17 +776,14 @@ const App: React.FC = () => {
   };
 
   const startRefineFile = (fileName: string) => {
-      setLocalSettings(cropSettings);
       setRefiningFile(fileName);
   };
 
-  // Compute filtered raw pages for the debug view
   const debugPages = useMemo(() => {
     if (!debugFile) return [];
     return rawPages.filter(p => p.fileName === debugFile);
   }, [rawPages, debugFile]);
 
-  // Compute filtered questions for the debug view
   const debugQuestions = useMemo(() => {
     if (!debugFile) return [];
     return questions.filter(q => q.fileName === debugFile);
@@ -895,128 +795,27 @@ const App: React.FC = () => {
 
   return (
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 pb-32`}>
-      <header className="max-w-6xl mx-auto py-10 text-center relative z-50 bg-slate-50">
-        <div className="absolute right-0 top-10 hidden md:block">
-           <button 
-             onClick={() => setShowHistory(true)}
-             className="px-4 py-2 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 hover:text-blue-600 transition-colors flex items-center gap-2 font-bold text-xs shadow-sm uppercase tracking-wider"
-           >
-             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-             History
-           </button>
-        </div>
-
-        <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-2 tracking-tight">
-          Exam <span className="text-blue-600">Smart</span> Splitter
-        </h1>
-        <p className="text-slate-400 font-medium mb-8">AI-powered Batch Question Extraction Tool</p>
-
-        {sourcePages.length > 0 && !isProcessing && (
-          <div className="flex flex-col md:flex-row justify-center items-center gap-4 mt-4 animate-fade-in flex-wrap">
-            <button onClick={handleReset} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-600 bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 transition-all flex items-center gap-2 shadow-sm">Reset</button>
-          </div>
-        )}
-        <div className="md:hidden mt-4 flex justify-center">
-            <button 
-             onClick={() => setShowHistory(true)}
-             className="px-4 py-2 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 hover:text-blue-600 transition-colors flex items-center gap-2 font-bold text-xs shadow-sm uppercase tracking-wider"
-           >
-             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-             History
-           </button>
-        </div>
-      </header>
+      <Header 
+        onShowHistory={() => setShowHistory(true)} 
+        onReset={handleReset} 
+        showReset={sourcePages.length > 0 && !isProcessing}
+      />
 
       <main className={`mx-auto transition-all duration-300 ${isWideLayout ? 'w-full max-w-[98vw]' : 'max-w-4xl'}`}>
         {showInitialUI && (
           <div className="space-y-8 animate-fade-in">
-            {/* Drop Zone moved to top */}
-            <div className="relative group overflow-hidden bg-white border-2 border-dashed border-slate-300 rounded-[3rem] p-20 text-center hover:border-blue-500 hover:bg-blue-50/20 transition-all duration-500 shadow-2xl shadow-slate-200/20">
-              <input type="file" accept="application/pdf,application/zip" onChange={handleFileChange} multiple className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20" />
-              <div className="relative z-10">
-                <div className="w-24 h-24 bg-blue-600 text-white rounded-[2rem] flex items-center justify-center mx-auto mb-8 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-500 shadow-2xl shadow-blue-200">
-                  <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v12m0 0l-4-4m4 4l4-4M4 17a3 3 0 003 3h10a3 3 0 003-3v-1" /></svg>
-                </div>
-                <h2 className="text-3xl font-black text-slate-900 mb-3 tracking-tight">Process Documents</h2>
-                <p className="text-slate-400 text-lg font-medium">Click or drag PDF files here (Batch supported)</p>
-                <div className="mt-10 flex justify-center gap-4">
-                   <span className="px-5 py-2 bg-slate-50 text-slate-400 text-[10px] font-black rounded-xl border border-slate-200 uppercase tracking-widest shadow-sm">PDF Files</span>
-                   <span className="px-5 py-2 bg-slate-50 text-slate-400 text-[10px] font-black rounded-xl border border-slate-200 uppercase tracking-widest shadow-sm">Data ZIPs</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Minimalist Configuration Section */}
-            <section className="bg-white rounded-[2rem] p-8 md:p-10 border border-slate-200 shadow-xl shadow-slate-200/50">
-               <div className="flex items-center gap-3 mb-10 pb-4 border-b border-slate-100">
-                  <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c-.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                  </div>
-                  <h2 className="text-2xl font-black text-slate-800 tracking-tight">Configuration</h2>
-               </div>
-               
-               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-x-12 gap-y-10">
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">AI Model</label>
-                    <div className="flex p-1.5 bg-slate-50 rounded-2xl border border-slate-200">
-                      <button onClick={() => setSelectedModel('gemini-3-flash-preview')} className={`flex-1 py-2.5 text-[10px] font-black uppercase rounded-xl transition-all ${selectedModel === 'gemini-3-flash-preview' ? 'bg-white text-blue-600 shadow-md ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-600'}`}>Flash</button>
-                      <button onClick={() => setSelectedModel('gemini-3-pro-preview')} className={`flex-1 py-2.5 text-[10px] font-black uppercase rounded-xl transition-all ${selectedModel === 'gemini-3-pro-preview' ? 'bg-white text-blue-600 shadow-md ring-1 ring-slate-200' : 'text-slate-400 hover:text-slate-600'}`}>Pro</button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Concurrency</label>
-                      <span className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">{concurrency} Threads</span>
-                    </div>
-                    <div className="pt-2 px-1">
-                      <input type="range" min="1" max="10" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} className="w-full accent-blue-600 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Crop Padding</label>
-                    <div className="relative group">
-                      <input type="number" value={cropSettings.cropPadding} onChange={(e) => setCropSettings(s => ({...s, cropPadding: Number(e.target.value)}))} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-300 uppercase select-none group-focus-within:text-blue-400 transition-colors">px</div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Merge Overlap</label>
-                    <div className="relative group">
-                      <input type="number" value={cropSettings.mergeOverlap} onChange={(e) => setCropSettings(s => ({...s, mergeOverlap: Number(e.target.value)}))} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-300 uppercase select-none group-focus-within:text-blue-400 transition-colors">px</div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Inner Padding</label>
-                    <div className="relative group">
-                      <input type="number" value={cropSettings.canvasPaddingLeft} onChange={(e) => {
-                          const v = Number(e.target.value);
-                          setCropSettings(s => ({...s, canvasPaddingLeft: v, canvasPaddingRight: v, canvasPaddingY: v}));
-                      }} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-300 uppercase select-none group-focus-within:text-blue-400 transition-colors">px</div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Smart History</label>
-                    </div>
-                    <label className="flex items-center gap-3 cursor-pointer group p-3 bg-slate-50 rounded-2xl border border-slate-200 hover:border-blue-300 transition-all">
-                        <div className="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" className="sr-only peer" checked={useHistoryCache} onChange={(e) => setUseHistoryCache(e.target.checked)} />
-                            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                        </div>
-                        <span className="text-xs font-bold text-slate-600 group-hover:text-blue-600 transition-colors">
-                            Use Cached Data
-                        </span>
-                    </label>
-                  </div>
-               </div>
-            </section>
+            <UploadSection onFileChange={handleFileChange} />
+            
+            <ConfigurationPanel 
+              selectedModel={selectedModel}
+              setSelectedModel={setSelectedModel}
+              concurrency={concurrency}
+              setConcurrency={setConcurrency}
+              cropSettings={cropSettings}
+              setCropSettings={setCropSettings}
+              useHistoryCache={useHistoryCache}
+              setUseHistoryCache={setUseHistoryCache}
+            />
           </div>
         )}
 
@@ -1055,170 +854,23 @@ const App: React.FC = () => {
 
       </main>
 
-      {/* History Sidebar */}
-      {showHistory && (
-        <div className="fixed inset-0 z-[200] overflow-hidden">
-          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowHistory(false)}></div>
-          <div className="absolute right-0 top-0 bottom-0 w-full max-w-md bg-white shadow-2xl animate-[fade-in_0.3s_ease-out] flex flex-col">
-             <div className="p-6 border-b border-slate-100 bg-slate-50">
-               <div className="flex justify-between items-center mb-4">
-                 <div>
-                   <h2 className="text-xl font-black text-slate-900 tracking-tight">Processing History</h2>
-                   <p className="text-slate-400 text-xs font-bold">Local History (Stored in Browser)</p>
-                 </div>
-                 <button onClick={() => setShowHistory(false)} className="p-2 text-slate-400 hover:text-slate-600 bg-white rounded-xl border border-slate-200 hover:bg-slate-100 transition-colors">
-                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                 </button>
-               </div>
-
-               <div className="flex items-center justify-between pt-2">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <input 
-                          type="checkbox" 
-                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                          checked={historyList.length > 0 && selectedHistoryIds.size === historyList.length}
-                          onChange={handleSelectAllHistory}
-                          disabled={historyList.length === 0}
-                      />
-                      <span className="text-xs font-bold text-slate-500">Select All</span>
-                  </label>
-                  
-                  {selectedHistoryIds.size > 0 && (
-                      <button 
-                          onClick={handleDeleteSelectedHistory}
-                          className="text-xs font-bold text-red-600 bg-red-50 px-3 py-1.5 rounded-lg border border-red-100 hover:bg-red-100 transition-colors flex items-center gap-1"
-                      >
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                          Delete ({selectedHistoryIds.size})
-                      </button>
-                  )}
-               </div>
-             </div>
-             
-             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
-               {historyList.length === 0 ? (
-                 <div className="text-center py-20 text-slate-400">
-                   <p className="text-sm font-bold">No history records found.</p>
-                 </div>
-               ) : (
-                 historyList.map(item => (
-                   <div 
-                      key={item.id} 
-                      className={`bg-white p-4 rounded-2xl border transition-all group relative ${selectedHistoryIds.has(item.id) ? 'border-blue-400 ring-1 ring-blue-400 bg-blue-50/10' : 'border-slate-200 shadow-sm hover:shadow-md'}`}
-                   >
-                      <div className="absolute left-4 top-5 z-10">
-                           <input 
-                               type="checkbox"
-                               className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                               checked={selectedHistoryIds.has(item.id)}
-                               onChange={() => handleToggleHistorySelection(item.id)}
-                               onClick={(e) => e.stopPropagation()} 
-                           />
-                      </div>
-
-                      <div className="pl-8">
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex-1 overflow-hidden cursor-pointer" onClick={() => handleToggleHistorySelection(item.id)}>
-                            <h3 className="font-bold text-slate-800 truncate" title={item.name}>{item.name}</h3>
-                            <div className="flex items-center gap-2 mt-1">
-                              <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{item.pageCount} Pages</span>
-                              <span className="text-[10px] text-slate-400">{formatDate(item.timestamp)}</span>
-                            </div>
-                          </div>
-                          <button 
-                              onClick={(e) => deleteHistoryItem(item.id, e)}
-                              className="text-slate-300 hover:text-red-500 p-1.5 rounded-lg hover:bg-red-50 transition-colors"
-                              title="Delete"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                          </button>
-                        </div>
-                        <button 
-                          onClick={() => handleLoadHistory(item.id)}
-                          className="w-full py-2.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                          Load & Re-Crop
-                        </button>
-                      </div>
-                   </div>
-                 ))
-               )}
-             </div>
-             {isLoadingHistory && (
-               <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-10">
-                 <div className="flex flex-col items-center gap-3">
-                   <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                   <p className="text-sm font-bold text-slate-600">Loading Data...</p>
-                 </div>
-               </div>
-             )}
-          </div>
-        </div>
-      )}
+      <HistorySidebar 
+        isOpen={showHistory}
+        onClose={() => setShowHistory(false)}
+        historyList={historyList}
+        isLoading={isLoadingHistory}
+        onLoadHistory={handleLoadHistory}
+        onRefreshList={loadHistoryList}
+      />
       
-      {/* Refinement Modal - File Specific */}
       {refiningFile && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm animate-[fade-in_0.2s_ease-out]">
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden scale-100 animate-[scale-in_0.2s_cubic-bezier(0.175,0.885,0.32,1.275)]">
-            <div className="p-6 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-              <div>
-                <h3 className="font-black text-slate-800 text-lg tracking-tight">Refine Settings</h3>
-                <p className="text-slate-400 text-xs font-bold truncate max-w-[250px]">{refiningFile}</p>
-              </div>
-              <button 
-                onClick={() => setRefiningFile(null)}
-                className="text-slate-400 hover:text-slate-600 transition-colors p-2 rounded-xl hover:bg-slate-200/50"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            
-            <div className="p-8 space-y-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Crop Padding</label>
-                <div className="flex items-center gap-3 relative group">
-                  <input type="number" value={localSettings.cropPadding} onChange={(e) => setLocalSettings(prev => ({ ...prev, cropPadding: Number(e.target.value) }))} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-base" />
-                  <span className="absolute right-5 text-xs text-slate-400 font-black uppercase select-none">px</span>
-                </div>
-                <p className="text-[10px] text-slate-400">Buffer around the AI detection box.</p>
-              </div>
-              
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Inner Padding</label>
-                <div className="flex items-center gap-3 relative group">
-                  <input type="number" value={localSettings.canvasPaddingLeft} onChange={(e) => { const v = Number(e.target.value); setLocalSettings(p => ({ ...p, canvasPaddingLeft: v, canvasPaddingRight: v, canvasPaddingY: v })); }} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-base" />
-                  <span className="absolute right-5 text-xs text-slate-400 font-black uppercase select-none">px</span>
-                </div>
-                 <p className="text-[10px] text-slate-400">Aesthetic whitespace added to the final image.</p>
-              </div>
-              
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Merge Overlap</label>
-                <div className="flex items-center gap-3 relative group">
-                  <input type="number" value={localSettings.mergeOverlap} onChange={(e) => setLocalSettings(p => ({ ...p, mergeOverlap: Number(e.target.value) }))} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-base" />
-                  <span className="absolute right-5 text-xs text-slate-400 font-black uppercase select-none">px</span>
-                </div>
-                <p className="text-[10px] text-slate-400">Vertical overlap when stitching split questions.</p>
-              </div>
-
-              <div className="pt-4">
-                <button 
-                  onClick={() => handleRecropFile(refiningFile!, localSettings)} 
-                  disabled={isProcessing} 
-                  className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-xl shadow-blue-200 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 text-base"
-                >
-                  {status === ProcessingStatus.CROPPING ? (
-                    <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 
-                  ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                  )}
-                  Apply & Recrop File
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <RefinementModal 
+          fileName={refiningFile}
+          initialSettings={cropSettings}
+          status={status}
+          onClose={() => setRefiningFile(null)}
+          onApply={handleRecropFile}
+        />
       )}
 
       <footer className="mt-24 text-center text-slate-400 text-xs py-12 border-t border-slate-100 font-bold tracking-widest uppercase">
