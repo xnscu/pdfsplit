@@ -564,7 +564,7 @@ const App: React.FC = () => {
         )}
 
         <ProcessingState status={status} progress={progress} total={total} completedCount={completedCount} error={error} detailedStatus={detailedStatus} croppingTotal={croppingTotal} croppingDone={croppingDone} />
-        {showDebug ? <DebugRawView pages={rawPages} settings={cropSettings} /> : (questions.length > 0 && <QuestionGrid questions={questions} rawPages={rawPages} />)}
+        {showDebug ? <DebugRawView pages={rawPages} /> : (questions.length > 0 && <QuestionGrid questions={questions} rawPages={rawPages} />)}
       </main>
       
       {/* 快捷设置栏 - 仅在处理完后作为微调使用 */}

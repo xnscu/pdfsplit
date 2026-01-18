@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import JSZip from 'jszip';
 import { QuestionImage, DebugPageData } from '../types';
@@ -61,49 +62,54 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages }) => {
     
     try {
       const zip = new JSZip();
-      
-      // 1. Add Analysis JSON
-      // This contains the raw detections and page metadata
-      zip.file("analysis_data.json", JSON.stringify(rawPages, null, 2));
+      const fileNames = Object.keys(groupedQuestions);
+      const isBatch = fileNames.length > 1;
 
-      // 2. Add Full Page Images organized by folder
-      const fullPagesFolder = zip.folder("full_pages");
-      rawPages.forEach((page) => {
-        const base64Data = page.dataUrl.split(',')[1];
-        // Create subfolder for each file
-        const fileFolder = fullPagesFolder?.folder(page.fileName);
-        fileFolder?.file(`Page_${page.pageNumber}.jpg`, base64Data, { base64: true });
-      });
+      // Iterate through each source file
+      fileNames.forEach((fileName) => {
+        // Filter data for this specific file
+        const fileQs = groupedQuestions[fileName];
+        const fileRawPages = rawPages.filter(p => p.fileName === fileName);
+        
+        // Determine the root folder for this file in the ZIP
+        // If batch: Root/FileName/...
+        // If single: Root/...
+        const folder = isBatch ? zip.folder(fileName) : zip;
+        
+        if (!folder) return;
 
-      // 3. Add Extracted Questions with folder structure: PDF_Name/Question_ID.jpg
-      const questionsFolder = zip.folder("questions");
-      const usedNames = new Set<string>();
+        // 1. Add Analysis JSON
+        folder.file("analysis_data.json", JSON.stringify(fileRawPages, null, 2));
 
-      questions.forEach((q) => {
-        const base64Data = q.dataUrl.split(',')[1];
-        
-        // Ensure folder exists for this specific PDF file
-        const fileQFolder = questionsFolder?.folder(q.fileName);
-        
-        // Base name for the question
-        const baseName = `${q.fileName}_Q${q.id}`;
-        
-        let finalName = `Q${q.id}`; // Inside the folder, just use Q ID
-        // Simple collision check although ID should be unique per file per logic
-        // But in case user re-uploaded same file or weird AI behavior:
-        let fullPath = `${q.fileName}/${finalName}`;
-        
-        if (usedNames.has(fullPath)) {
-            let counter = 1;
-            while(usedNames.has(`${fullPath}_${counter}`)) {
-                counter++;
-            }
-            finalName = `${finalName}_${counter}`;
-            fullPath = `${fullPath}_${counter}`;
-        }
-        usedNames.add(fullPath);
+        // 2. Add Full Pages Folder
+        const fullPagesFolder = folder.folder("full_pages");
+        fileRawPages.forEach((page) => {
+          const base64Data = page.dataUrl.split(',')[1];
+          fullPagesFolder?.file(`Page_${page.pageNumber}.jpg`, base64Data, { base64: true });
+        });
 
-        fileQFolder?.file(`${finalName}.jpg`, base64Data, { base64: true });
+        // 3. Add Question Images (Flat in the folder)
+        const usedNames = new Set<string>();
+
+        fileQs.forEach((q) => {
+          const base64Data = q.dataUrl.split(',')[1];
+          
+          // Desired format: FileName_QID.jpg
+          let finalName = `${q.fileName}_Q${q.id}.jpg`;
+          
+          // Handle potential duplicate IDs (though rare with correct logic)
+          if (usedNames.has(finalName)) {
+             let counter = 1;
+             const baseName = `${q.fileName}_Q${q.id}`;
+             while(usedNames.has(`${baseName}_${counter}.jpg`)) {
+                 counter++;
+             }
+             finalName = `${baseName}_${counter}.jpg`;
+          }
+          usedNames.add(finalName);
+
+          folder.file(finalName, base64Data, { base64: true });
+        });
       });
 
       const content = await zip.generateAsync({ 
@@ -115,10 +121,11 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages }) => {
       const url = window.URL.createObjectURL(content);
       const link = document.createElement('a');
       link.href = url;
-      // Use a generic name or the first file's name + "etc"
-      const downloadName = Object.keys(groupedQuestions).length > 1 
-        ? "exam_papers_split_batch.zip" 
-        : `${Object.keys(groupedQuestions)[0]}_split.zip`;
+      
+      // Filename logic
+      const downloadName = isBatch 
+        ? "math_exam_batch_processed.zip" 
+        : `${fileNames[0]}_processed.zip`;
         
       link.download = downloadName;
       document.body.appendChild(link);
