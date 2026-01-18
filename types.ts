@@ -39,6 +39,13 @@ export interface ProcessedCanvas {
   originalDataUrl?: string;
 }
 
+export interface HistoryMetadata {
+  id: string;
+  name: string;
+  timestamp: number;
+  pageCount: number;
+}
+
 export enum ProcessingStatus {
   IDLE = 'IDLE',
   LOADING_PDF = 'LOADING_PDF',

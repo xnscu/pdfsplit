@@ -2,12 +2,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
-import { ProcessingStatus, QuestionImage, DebugPageData, ProcessedCanvas } from './types';
+import { ProcessingStatus, QuestionImage, DebugPageData, ProcessedCanvas, HistoryMetadata } from './types';
 import { ProcessingState } from './components/ProcessingState';
 import { QuestionGrid } from './components/QuestionGrid';
 import { DebugRawView } from './components/DebugRawView';
 import { renderPageToImage, constructQuestionCanvas, mergeCanvasesVertical, analyzeCanvasContent, generateAlignedImage, CropSettings } from './services/pdfService';
 import { detectQuestionsOnPage } from './services/geminiService';
+import { saveExamResult, getHistoryList, loadExamResult, deleteExamResult, deleteExamResults } from './services/storageService';
 
 const DEFAULT_SETTINGS: CropSettings = {
   cropPadding: 25,
@@ -45,6 +46,10 @@ const formatTime = (seconds: number): string => {
   return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
 
+const formatDate = (ts: number): string => {
+  return new Date(ts).toLocaleString();
+};
+
 const App: React.FC = () => {
   const [status, setStatus] = useState<ProcessingStatus>(ProcessingStatus.IDLE);
   const [questions, setQuestions] = useState<QuestionImage[]>([]);
@@ -55,6 +60,12 @@ const App: React.FC = () => {
   const [debugFile, setDebugFile] = useState<string | null>(null);
   const [refiningFile, setRefiningFile] = useState<string | null>(null);
   const [localSettings, setLocalSettings] = useState<CropSettings>(DEFAULT_SETTINGS);
+
+  // History State
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyList, setHistoryList] = useState<HistoryMetadata[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
 
   const [cropSettings, setCropSettings] = useState<CropSettings>(() => {
     try {
@@ -106,6 +117,20 @@ const App: React.FC = () => {
     localStorage.setItem(STORAGE_KEYS.MODEL, selectedModel);
   }, [selectedModel]);
 
+  // Load History List on Mount
+  useEffect(() => {
+    loadHistoryList();
+  }, []);
+
+  const loadHistoryList = async () => {
+    try {
+      const list = await getHistoryList();
+      setHistoryList(list);
+    } catch (e) {
+      console.error("Failed to load history list", e);
+    }
+  };
+
   // Timer Effect
   useEffect(() => {
     let interval: number;
@@ -133,8 +158,6 @@ const App: React.FC = () => {
           const blob = await response.blob();
           const fileName = zipUrl.split('/').pop() || 'remote_debug.zip';
           await processZipFiles([{ blob, name: fileName }]);
-          // Auto open debug for the first file if loaded
-          // setDebugFile(fileName);
         } catch (err: any) {
           setError(err.message || "Remote ZIP download failed");
           setStatus(ProcessingStatus.ERROR);
@@ -164,6 +187,98 @@ const App: React.FC = () => {
     if (window.location.search) window.history.pushState({}, '', window.location.pathname);
   };
 
+  // History Actions
+  const handleToggleHistorySelection = (id: string) => {
+    const newSet = new Set(selectedHistoryIds);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    setSelectedHistoryIds(newSet);
+  };
+
+  const handleSelectAllHistory = () => {
+    if (selectedHistoryIds.size === historyList.length) {
+      setSelectedHistoryIds(new Set());
+    } else {
+      setSelectedHistoryIds(new Set(historyList.map(h => h.id)));
+    }
+  };
+
+  const handleDeleteSelectedHistory = async () => {
+    if (selectedHistoryIds.size === 0) return;
+    if (confirm(`Are you sure you want to delete ${selectedHistoryIds.size} records?`)) {
+        await deleteExamResults(Array.from(selectedHistoryIds));
+        setSelectedHistoryIds(new Set());
+        await loadHistoryList();
+    }
+  };
+
+  const deleteHistoryItem = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm("Are you sure you want to delete this record?")) {
+      await deleteExamResult(id);
+      setSelectedHistoryIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(id);
+        return newSet;
+      });
+      await loadHistoryList();
+    }
+  };
+
+  const handleLoadHistory = async (id: string) => {
+    handleReset();
+    setShowHistory(false);
+    setIsLoadingHistory(true);
+    setStatus(ProcessingStatus.LOADING_PDF);
+    setDetailedStatus('Restoring from history...');
+
+    try {
+      const result = await loadExamResult(id);
+      if (!result) throw new Error("History record not found.");
+
+      setRawPages(result.rawPages);
+      
+      // Reconstruct source pages from raw pages for UI state consistency
+      const recoveredSourcePages = result.rawPages.map(rp => ({
+        dataUrl: rp.dataUrl,
+        width: rp.width,
+        height: rp.height,
+        pageNumber: rp.pageNumber,
+        fileName: rp.fileName
+      }));
+      setSourcePages(recoveredSourcePages);
+
+      // Now immediately trigger cropping with CURRENT settings
+      setStatus(ProcessingStatus.CROPPING);
+      setDetailedStatus('Applying current crop settings...');
+      
+      const totalDetections = result.rawPages.reduce((acc, p) => acc + p.detections.length, 0);
+      setCroppingTotal(totalDetections);
+      setCroppingDone(0);
+      setTotal(result.rawPages.length);
+      setCompletedCount(result.rawPages.length);
+
+      abortControllerRef.current = new AbortController();
+      const generatedQuestions = await generateQuestionsFromRawPages(
+        result.rawPages, 
+        cropSettings, 
+        abortControllerRef.current.signal
+      );
+
+      setQuestions(generatedQuestions);
+      setStatus(ProcessingStatus.COMPLETED);
+
+    } catch (e: any) {
+      setError("Failed to load history: " + e.message);
+      setStatus(ProcessingStatus.ERROR);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
   /**
    * Generates processed questions from raw debug data.
    * Does NOT set state directly, returns the questions.
@@ -174,6 +289,9 @@ const App: React.FC = () => {
       if (!pagesByFile[p.fileName]) pagesByFile[p.fileName] = [];
       pagesByFile[p.fileName].push(p);
     });
+
+    // Sort pages by pageNumber to ensure correct order
+    Object.values(pagesByFile).forEach(list => list.sort((a, b) => a.pageNumber - b.pageNumber));
 
     const finalQuestions: QuestionImage[] = [];
 
@@ -318,6 +436,7 @@ const App: React.FC = () => {
           }
           allRawPages.push(...loadedRawPages);
 
+          // Attempt to load questions if they exist in ZIP, otherwise we might regen later
           const potentialImageKeys = Object.keys(loadedZip.files).filter(k => 
             !loadedZip.files[k].dir && /\.(jpg|jpeg|png)$/i.test(k) && !k.includes('full_pages/')
           );
@@ -370,6 +489,19 @@ const App: React.FC = () => {
       setRawPages(allRawPages);
       setSourcePages(allRawPages.map(({detections, ...rest}) => rest));
       setTotal(allRawPages.length);
+      
+      // Auto-save imported data to history with Promise.all to ensure completion
+      try {
+        const uniqueFiles = new Set(allRawPages.map(p => p.fileName));
+        const savePromises = Array.from(uniqueFiles).map(fileName => {
+           const filePages = allRawPages.filter(p => p.fileName === fileName);
+           return saveExamResult(fileName, filePages);
+        });
+        await Promise.all(savePromises);
+        await loadHistoryList(); // Refresh list immediately after valid saves
+      } catch (saveErr) {
+        console.warn("History auto-save encountered an issue:", saveErr);
+      }
 
       if (allQuestions.length > 0) {
         allQuestions.sort((a, b) => {
@@ -383,7 +515,15 @@ const App: React.FC = () => {
         setCompletedCount(allRawPages.length);
         setStatus(ProcessingStatus.COMPLETED);
       } else {
-         throw new Error("No valid data found in ZIP");
+         // If zip has analysis data but no images, we can generate them
+         if (allRawPages.length > 0) {
+            const qs = await generateQuestionsFromRawPages(allRawPages, cropSettings, new AbortController().signal);
+            setQuestions(qs);
+            setCompletedCount(allRawPages.length);
+            setStatus(ProcessingStatus.COMPLETED);
+         } else {
+            throw new Error("No valid data found in ZIP");
+         }
       }
     } catch (err: any) {
       setError("Batch ZIP load failed: " + err.message);
@@ -395,7 +535,7 @@ const App: React.FC = () => {
     const files = Array.from(e.target.files || []) as File[];
     if (files.length === 0) return;
     
-    // Handle ZIPs differently
+    // Handle ZIPs
     const zipFiles = files.filter(f => f.name.toLowerCase().endsWith('.zip'));
     if (zipFiles.length > 0) {
       await processZipFiles(zipFiles.map(f => ({ blob: f, name: f.name })));
@@ -405,102 +545,142 @@ const App: React.FC = () => {
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
     
-    // Reset Start
+    // Reset State
     setStartTime(Date.now());
     setStatus(ProcessingStatus.LOADING_PDF);
     setError(undefined);
-    
-    // Calculate total pages for progress bar estimation (approximate initially)
-    let totalPdfPages = 0;
-    setTotal(files.length * 3); // Rough estimate, will update as we parse
+    setSourcePages([]);
+    setRawPages([]);
+    setQuestions([]);
+    setCompletedCount(0);
+    setCroppingTotal(0);
+    setCroppingDone(0);
+
+    // Initial Estimate
+    setTotal(files.length * 3); 
 
     try {
-      let cumulativePages = 0;
+      // ---------------------------------------------------------
+      // PHASE 1: LOAD & RENDER ALL PAGES (Serial to prevent OOM)
+      // ---------------------------------------------------------
+      const allPendingPages: SourcePage[] = [];
+      // Track metadata for cropping completion
+      const fileMeta: Record<string, { totalPages: number, processedPages: number, cropped: boolean }> = {};
+      let cumulativeRendered = 0;
 
       for (let fIdx = 0; fIdx < files.length; fIdx++) {
          if (signal.aborted) return;
          const file = files[fIdx];
          const fileName = file.name.replace(/\.[^/.]+$/, "");
          
-         // 1. Render PDF Pages
-         setDetailedStatus(`Rendering: ${file.name}...`);
+         setDetailedStatus(`Rendering (${fIdx + 1}/${files.length}): ${file.name}...`);
+         
          const loadingTask = pdfjsLib.getDocument({ data: await file.arrayBuffer() });
          const pdf = await loadingTask.promise;
          
-         // Update total accurately now that we know one
-         totalPdfPages += pdf.numPages;
-         setTotal(totalPdfPages + (files.length - fIdx - 1) * 3); // Adjust estimate
+         cumulativeRendered += pdf.numPages;
+         // Refine estimate
+         setTotal(cumulativeRendered + (files.length - fIdx - 1) * 3);
          
-         const currentFilePages: SourcePage[] = [];
+         fileMeta[fileName] = { totalPages: pdf.numPages, processedPages: 0, cropped: false };
+
          for (let i = 1; i <= pdf.numPages; i++) {
             if (signal.aborted) return;
             const page = await pdf.getPage(i);
             const rendered = await renderPageToImage(page, 3);
-            currentFilePages.push({ ...rendered, pageNumber: i, fileName });
+            const sourcePage = { ...rendered, pageNumber: i, fileName };
+            allPendingPages.push(sourcePage);
+            setSourcePages(prev => [...prev, sourcePage]);
          }
-         
-         // Incremental Update: Add Source Pages
-         setSourcePages(prev => [...prev, ...currentFilePages]);
-         
-         // 2. AI Detection for this file
-         setStatus(ProcessingStatus.DETECTING_QUESTIONS);
-         setDetailedStatus(`Analyzing ${file.name}...`);
-         
-         const currentRawPages: DebugPageData[] = new Array(currentFilePages.length);
-         const numPages = currentFilePages.length;
-         
-         // Batch pages within the file for AI requests
-         for (let i = 0; i < numPages; i += concurrency) {
-            if (signal.aborted) return;
-            const batch = currentFilePages.slice(i, i + concurrency);
-            
-            // UI Progress: Total processed pages so far + current batch
-            setCompletedCount(cumulativePages + i); 
-            setProgress(cumulativePages + Math.min(numPages, i + batch.length));
+      }
 
-            const batchResults = await Promise.all(batch.map(async (pageData) => {
+      setTotal(allPendingPages.length);
+      setProgress(0);
+
+      // ---------------------------------------------------------
+      // PHASE 2: DYNAMIC CONCURRENCY QUEUE (Sliding Window)
+      // ---------------------------------------------------------
+      setStatus(ProcessingStatus.DETECTING_QUESTIONS);
+      
+      // We accumulate raw pages locally to ensure we have complete file data for cropping
+      const accumulatedRawPages: DebugPageData[] = [];
+      const executing = new Set<Promise<void>>();
+
+      for (const pageData of allPendingPages) {
+          if (signal.aborted) break;
+
+          const task = (async () => {
+              // 1. Mark as Sent IMMEDIATELY when task starts
+              setProgress(prev => prev + 1);
+              setDetailedStatus(`Analyzing P${pageData.pageNumber} of ${pageData.fileName}...`);
+              
+              let detections: any[] = [];
               try {
-                const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel);
-                return {
+                detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel);
+              } catch (err: any) {
+                if (!signal.aborted) console.warn(`Detection failed for ${pageData.fileName} P${pageData.pageNumber}`, err);
+              }
+
+              if (signal.aborted) return;
+
+              const resultPage: DebugPageData = {
                   pageNumber: pageData.pageNumber,
                   fileName: pageData.fileName,
                   dataUrl: pageData.dataUrl,
                   width: pageData.width,
                   height: pageData.height,
                   detections
-                };
-              } catch (err: any) {
-                if (signal.aborted) throw err;
-                console.warn(`Detection failed for ${pageData.fileName} P${pageData.pageNumber}`, err);
-                return { ...pageData, detections: [] };
+              };
+
+              // Store results
+              accumulatedRawPages.push(resultPage);
+              setRawPages(prev => [...prev, resultPage]);
+
+              // 2. Mark as Done
+              setCompletedCount(prev => prev + 1);
+              setCroppingTotal(prev => prev + detections.length);
+
+              // 3. Check if file is ready for processing
+              if (fileMeta[pageData.fileName]) {
+                  fileMeta[pageData.fileName].processedPages++;
+                  const meta = fileMeta[pageData.fileName];
+                  
+                  if (!meta.cropped && meta.processedPages === meta.totalPages) {
+                      meta.cropped = true;
+                      
+                      // Filter pages for this file from our accumulator
+                      const fileRawPages = accumulatedRawPages.filter(p => p.fileName === pageData.fileName);
+                      fileRawPages.sort((a,b) => a.pageNumber - b.pageNumber); // Ensure order
+                      
+                      // Save to history
+                      saveExamResult(pageData.fileName, fileRawPages).then(() => loadHistoryList());
+                      
+                      if (fileRawPages.length > 0) {
+                          // Perform cropping
+                          const newQuestions = await generateQuestionsFromRawPages(fileRawPages, cropSettings, signal);
+                          if (!signal.aborted) {
+                              setQuestions(prev => [...prev, ...newQuestions]);
+                          }
+                      }
+                  }
               }
-            }));
-            batchResults.forEach((res, idx) => { currentRawPages[i + idx] = res as DebugPageData; });
-         }
+          })();
 
-         // Incremental Update: Add Raw Pages (Debug Data)
-         setRawPages(prev => [...prev, ...currentRawPages]);
-         
-         // 3. Cropping for this file
-         setStatus(ProcessingStatus.CROPPING);
-         setDetailedStatus(`Cropping ${file.name}...`);
-         const detectionsInFile = currentRawPages.reduce((acc, p) => acc + p.detections.length, 0);
-         
-         // Update global cropping stats
-         setCroppingTotal(prev => prev + detectionsInFile);
-         
-         const newQuestions = await generateQuestionsFromRawPages(currentRawPages, cropSettings, signal);
-         
-         // Incremental Update: Add Final Questions
-         if (!signal.aborted) {
-             setQuestions(prev => [...prev, ...newQuestions]);
-         }
+          // Add task to the executing pool
+          executing.add(task);
+          
+          // Remove task from pool when finished
+          task.then(() => executing.delete(task));
 
-         cumulativePages += numPages;
+          // If pool is full, wait for the fastest one to finish before adding next
+          if (executing.size >= concurrency) {
+              await Promise.race(executing);
+          }
       }
       
-      setCompletedCount(totalPdfPages);
-      setProgress(totalPdfPages);
+      // Wait for all remaining tasks to finish
+      await Promise.all(executing);
+      
       setStatus(ProcessingStatus.COMPLETED);
 
     } catch (err: any) {
@@ -511,8 +691,6 @@ const App: React.FC = () => {
   };
 
   const startRefineFile = (fileName: string) => {
-      // Use current global settings as default, or we could look up if we stored per-file.
-      // For now, defaulting to the current dashboard settings is a good UX.
       setLocalSettings(cropSettings);
       setRefiningFile(fileName);
   };
@@ -523,7 +701,7 @@ const App: React.FC = () => {
     return rawPages.filter(p => p.fileName === debugFile);
   }, [rawPages, debugFile]);
 
-  // Compute filtered questions for the debug view (it needs them to show the processed result)
+  // Compute filtered questions for the debug view
   const debugQuestions = useMemo(() => {
     if (!debugFile) return [];
     return questions.filter(q => q.fileName === debugFile);
@@ -536,6 +714,16 @@ const App: React.FC = () => {
   return (
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 pb-32`}>
       <header className="max-w-6xl mx-auto py-10 text-center relative z-50 bg-slate-50">
+        <div className="absolute right-0 top-10 hidden md:block">
+           <button 
+             onClick={() => setShowHistory(true)}
+             className="px-4 py-2 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 hover:text-blue-600 transition-colors flex items-center gap-2 font-bold text-xs shadow-sm uppercase tracking-wider"
+           >
+             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+             History
+           </button>
+        </div>
+
         <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-2 tracking-tight">
           Exam <span className="text-blue-600">Smart</span> Splitter
         </h1>
@@ -546,6 +734,15 @@ const App: React.FC = () => {
             <button onClick={handleReset} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-600 bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 transition-all flex items-center gap-2 shadow-sm">Reset</button>
           </div>
         )}
+        <div className="md:hidden mt-4 flex justify-center">
+            <button 
+             onClick={() => setShowHistory(true)}
+             className="px-4 py-2 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 hover:text-blue-600 transition-colors flex items-center gap-2 font-bold text-xs shadow-sm uppercase tracking-wider"
+           >
+             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+             History
+           </button>
+        </div>
       </header>
 
       <main className={`mx-auto transition-all duration-300 ${isWideLayout ? 'w-full max-w-[98vw]' : 'max-w-4xl'}`}>
@@ -571,7 +768,7 @@ const App: React.FC = () => {
             <section className="bg-white rounded-[2rem] p-8 md:p-10 border border-slate-200 shadow-xl shadow-slate-200/50">
                <div className="flex items-center gap-3 mb-10 pb-4 border-b border-slate-100">
                   <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c-.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                   </div>
                   <h2 className="text-2xl font-black text-slate-800 tracking-tight">Configuration</h2>
                </div>
@@ -657,6 +854,109 @@ const App: React.FC = () => {
         )}
 
       </main>
+
+      {/* History Sidebar */}
+      {showHistory && (
+        <div className="fixed inset-0 z-[200] overflow-hidden">
+          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowHistory(false)}></div>
+          <div className="absolute right-0 top-0 bottom-0 w-full max-w-md bg-white shadow-2xl animate-[fade-in_0.3s_ease-out] flex flex-col">
+             <div className="p-6 border-b border-slate-100 bg-slate-50">
+               <div className="flex justify-between items-center mb-4">
+                 <div>
+                   <h2 className="text-xl font-black text-slate-900 tracking-tight">Processing History</h2>
+                   <p className="text-slate-400 text-xs font-bold">Local History (Stored in Browser)</p>
+                 </div>
+                 <button onClick={() => setShowHistory(false)} className="p-2 text-slate-400 hover:text-slate-600 bg-white rounded-xl border border-slate-200 hover:bg-slate-100 transition-colors">
+                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                 </button>
+               </div>
+
+               <div className="flex items-center justify-between pt-2">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input 
+                          type="checkbox" 
+                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          checked={historyList.length > 0 && selectedHistoryIds.size === historyList.length}
+                          onChange={handleSelectAllHistory}
+                          disabled={historyList.length === 0}
+                      />
+                      <span className="text-xs font-bold text-slate-500">Select All</span>
+                  </label>
+                  
+                  {selectedHistoryIds.size > 0 && (
+                      <button 
+                          onClick={handleDeleteSelectedHistory}
+                          className="text-xs font-bold text-red-600 bg-red-50 px-3 py-1.5 rounded-lg border border-red-100 hover:bg-red-100 transition-colors flex items-center gap-1"
+                      >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          Delete ({selectedHistoryIds.size})
+                      </button>
+                  )}
+               </div>
+             </div>
+             
+             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
+               {historyList.length === 0 ? (
+                 <div className="text-center py-20 text-slate-400">
+                   <p className="text-sm font-bold">No history records found.</p>
+                 </div>
+               ) : (
+                 historyList.map(item => (
+                   <div 
+                      key={item.id} 
+                      className={`bg-white p-4 rounded-2xl border transition-all group relative ${selectedHistoryIds.has(item.id) ? 'border-blue-400 ring-1 ring-blue-400 bg-blue-50/10' : 'border-slate-200 shadow-sm hover:shadow-md'}`}
+                   >
+                       {/* Checkbox Overlay */}
+                      <div className="absolute left-4 top-5 z-10">
+                           <input 
+                               type="checkbox"
+                               className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                               checked={selectedHistoryIds.has(item.id)}
+                               onChange={() => handleToggleHistorySelection(item.id)}
+                               onClick={(e) => e.stopPropagation()} 
+                           />
+                      </div>
+
+                      <div className="pl-8">
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex-1 overflow-hidden cursor-pointer" onClick={() => handleToggleHistorySelection(item.id)}>
+                            <h3 className="font-bold text-slate-800 truncate" title={item.name}>{item.name}</h3>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{item.pageCount} Pages</span>
+                              <span className="text-[10px] text-slate-400">{formatDate(item.timestamp)}</span>
+                            </div>
+                          </div>
+                          <button 
+                              onClick={(e) => deleteHistoryItem(item.id, e)}
+                              className="text-slate-300 hover:text-red-500 p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                              title="Delete"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </div>
+                        <button 
+                          onClick={() => handleLoadHistory(item.id)}
+                          className="w-full py-2.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                          Load & Re-Crop
+                        </button>
+                      </div>
+                   </div>
+                 ))
+               )}
+             </div>
+             {isLoadingHistory && (
+               <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-10">
+                 <div className="flex flex-col items-center gap-3">
+                   <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                   <p className="text-sm font-bold text-slate-600">Loading Data...</p>
+                 </div>
+               </div>
+             )}
+          </div>
+        </div>
+      )}
       
       {/* Refinement Modal - File Specific */}
       {refiningFile && (

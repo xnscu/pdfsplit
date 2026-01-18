@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import JSZip from 'jszip';
 import { QuestionImage, DebugPageData } from '../types';
@@ -118,6 +117,9 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
         downloadName = `${targetFileName}_processed.zip`;
       } else if (isBatch) {
         downloadName = "exam_batch_processed.zip";
+      } else if (fileNames.length === 1) {
+        // Fallback for "Download All" when only 1 file exists
+        downloadName = `${fileNames[0]}_processed.zip`;
       }
 
       link.download = downloadName;
@@ -150,19 +152,17 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
               Extracted {questions.length} questions from {Object.keys(groupedQuestions).length} source files
             </p>
           </div>
-          {Object.keys(groupedQuestions).length > 1 && (
-            <button 
-                onClick={() => generateZip()}
-                disabled={zippingFile !== null}
-                className={`group px-8 py-3 rounded-2xl font-black transition-all flex items-center justify-center gap-3 shadow-lg min-w-[200px] tracking-tight uppercase text-xs ${
-                zippingFile 
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none' 
-                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 active:scale-95'
-                }`}
-            >
-                {zippingFile === 'ALL' ? 'Zipping All...' : 'Download All as ZIP'}
-            </button>
-          )}
+          <button 
+              onClick={() => generateZip()}
+              disabled={zippingFile !== null}
+              className={`group px-8 py-3 rounded-2xl font-black transition-all flex items-center justify-center gap-3 shadow-lg min-w-[200px] tracking-tight uppercase text-xs ${
+              zippingFile 
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none' 
+                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 active:scale-95'
+              }`}
+          >
+              {zippingFile === 'ALL' ? 'Zipping All...' : 'Download All Results (ZIP)'}
+          </button>
         </div>
 
         {Object.entries(groupedQuestions).map(([fileName, fileQuestions]: [string, QuestionImage[]]) => (

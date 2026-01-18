@@ -13,11 +13,11 @@ interface Props {
 // Default settings for debug visualization - STRICT mode
 // No padding, no border, exact coordinate match.
 const DEBUG_CROP_SETTINGS: CropSettings = {
-  cropPadding: 0, // Changed to 0 to be exact
+  cropPadding: 10, // Changed to 0 to be exact
   canvasPaddingLeft: 0,
   canvasPaddingRight: 0,
   canvasPaddingY: 0,
-  mergeOverlap: 0,
+  mergeOverlap: -5,
   debugExportPadding: 0 // New setting to remove the white border
 };
 
