@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
 import { ProcessingStatus, QuestionImage, DebugPageData, ProcessedCanvas } from './types';
@@ -50,10 +50,12 @@ const App: React.FC = () => {
   const [questions, setQuestions] = useState<QuestionImage[]>([]);
   const [rawPages, setRawPages] = useState<DebugPageData[]>([]);
   const [sourcePages, setSourcePages] = useState<SourcePage[]>([]);
-  const [uploadedFileNames, setUploadedFileNames] = useState<string[]>([]);
-  const [showDebug, setShowDebug] = useState(false);
   
-  // Settings State with Persistence
+  // State for specific file interactions
+  const [debugFile, setDebugFile] = useState<string | null>(null);
+  const [refiningFile, setRefiningFile] = useState<string | null>(null);
+  const [localSettings, setLocalSettings] = useState<CropSettings>(DEFAULT_SETTINGS);
+
   const [cropSettings, setCropSettings] = useState<CropSettings>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CROP_SETTINGS);
@@ -75,8 +77,6 @@ const App: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.MODEL) || 'gemini-3-flash-preview';
   });
-
-  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
 
   // Progress States
   const [progress, setProgress] = useState(0); 
@@ -133,7 +133,8 @@ const App: React.FC = () => {
           const blob = await response.blob();
           const fileName = zipUrl.split('/').pop() || 'remote_debug.zip';
           await processZipFiles([{ blob, name: fileName }]);
-          setShowDebug(true);
+          // Auto open debug for the first file if loaded
+          // setDebugFile(fileName);
         } catch (err: any) {
           setError(err.message || "Remote ZIP download failed");
           setStatus(ProcessingStatus.ERROR);
@@ -149,7 +150,6 @@ const App: React.FC = () => {
     setQuestions([]);
     setRawPages([]);
     setSourcePages([]);
-    setUploadedFileNames([]);
     setProgress(0);
     setTotal(0);
     setCompletedCount(0);
@@ -157,7 +157,8 @@ const App: React.FC = () => {
     setCroppingDone(0);
     setError(undefined);
     setDetailedStatus('');
-    setShowDebug(false);
+    setDebugFile(null);
+    setRefiningFile(null);
     setStartTime(null);
     setElapsedTime("00:00");
     if (window.location.search) window.history.pushState({}, '', window.location.pathname);
@@ -184,9 +185,6 @@ const App: React.FC = () => {
         if (signal.aborted) return [];
         const page = filePages[i];
         
-        // UI Update for cropping progress happens in the parent loop or here if needed,
-        // but since we are splitting by file, we update global counters outside usually.
-        // However, for granularity:
         for (const detection of page.detections) {
            if (signal.aborted) return [];
            const boxes = normalizeBoxes(detection.boxes_2d);
@@ -243,24 +241,34 @@ const App: React.FC = () => {
   };
 
   /**
-   * Helper to re-run cropping on existing raw pages (Refine button)
+   * Re-runs cropping for a specific file using specific settings.
    */
-  const handleRecropOnly = async () => {
-    if (rawPages.length === 0) return;
+  const handleRecropFile = async (fileName: string, specificSettings: CropSettings) => {
+    // Filter pages for this file
+    const targetPages = rawPages.filter(p => p.fileName === fileName);
+    if (targetPages.length === 0) return;
+
     abortControllerRef.current = new AbortController();
     setStatus(ProcessingStatus.CROPPING);
     setStartTime(Date.now());
     
-    const totalDetections = rawPages.reduce((acc, p) => acc + p.detections.length, 0);
-    setCroppingTotal(totalDetections);
+    // We are only processing this file's detections
+    const detectionsInFile = targetPages.reduce((acc, p) => acc + p.detections.length, 0);
+    setCroppingTotal(detectionsInFile);
     setCroppingDone(0);
-    setDetailedStatus('Re-cropping images...');
+    setDetailedStatus(`Refining ${fileName}...`);
 
     try {
-       const newQuestions = await generateQuestionsFromRawPages(rawPages, cropSettings, abortControllerRef.current.signal);
+       const newQuestions = await generateQuestionsFromRawPages(targetPages, specificSettings, abortControllerRef.current.signal);
+       
        if (!abortControllerRef.current.signal.aborted) {
-         setQuestions(newQuestions);
+         // Replace questions for this file only
+         setQuestions(prev => {
+            const others = prev.filter(q => q.fileName !== fileName);
+            return [...others, ...newQuestions];
+         });
          setStatus(ProcessingStatus.COMPLETED);
+         setRefiningFile(null); // Close modal
        }
     } catch (e: any) {
        setError(e.message);
@@ -401,7 +409,6 @@ const App: React.FC = () => {
     setStartTime(Date.now());
     setStatus(ProcessingStatus.LOADING_PDF);
     setError(undefined);
-    setUploadedFileNames(files.map(f => f.name.replace(/\.[^/.]+$/, "")));
     
     // Calculate total pages for progress bar estimation (approximate initially)
     let totalPdfPages = 0;
@@ -503,7 +510,26 @@ const App: React.FC = () => {
     }
   };
 
-  const isWideLayout = showDebug || questions.length > 0 || sourcePages.length > 0;
+  const startRefineFile = (fileName: string) => {
+      // Use current global settings as default, or we could look up if we stored per-file.
+      // For now, defaulting to the current dashboard settings is a good UX.
+      setLocalSettings(cropSettings);
+      setRefiningFile(fileName);
+  };
+
+  // Compute filtered raw pages for the debug view
+  const debugPages = useMemo(() => {
+    if (!debugFile) return [];
+    return rawPages.filter(p => p.fileName === debugFile);
+  }, [rawPages, debugFile]);
+
+  // Compute filtered questions for the debug view (it needs them to show the processed result)
+  const debugQuestions = useMemo(() => {
+    if (!debugFile) return [];
+    return questions.filter(q => q.fileName === debugFile);
+  }, [questions, debugFile]);
+
+  const isWideLayout = debugFile !== null || questions.length > 0 || sourcePages.length > 0;
   const isProcessing = status === ProcessingStatus.LOADING_PDF || status === ProcessingStatus.DETECTING_QUESTIONS || status === ProcessingStatus.CROPPING;
   const showInitialUI = status === ProcessingStatus.IDLE || (status === ProcessingStatus.ERROR && sourcePages.length === 0);
 
@@ -517,20 +543,6 @@ const App: React.FC = () => {
 
         {sourcePages.length > 0 && !isProcessing && (
           <div className="flex flex-col md:flex-row justify-center items-center gap-4 mt-4 animate-fade-in flex-wrap">
-            <div className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm inline-flex">
-              <button onClick={() => setShowDebug(false)} className={`px-6 py-2 rounded-xl text-sm font-bold transition-all ${!showDebug ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>Results</button>
-              <button onClick={() => setShowDebug(true)} className={`px-6 py-2 rounded-xl text-sm font-bold transition-all ${showDebug ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>Debug View</button>
-            </div>
-            
-            {rawPages.length > 0 && (
-              <button
-                onClick={() => setShowSettingsPanel(!showSettingsPanel)}
-                className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 shadow-sm border ${showSettingsPanel ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
-                Refine
-              </button>
-            )}
-
             <button onClick={handleReset} className="px-6 py-2.5 rounded-xl text-sm font-bold text-slate-600 bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 transition-all flex items-center gap-2 shadow-sm">Reset</button>
           </div>
         )}
@@ -625,59 +637,86 @@ const App: React.FC = () => {
           croppingDone={croppingDone} 
           elapsedTime={elapsedTime}
         />
-        {showDebug ? <DebugRawView pages={rawPages} questions={questions} onClose={() => setShowDebug(false)} /> : (questions.length > 0 && <QuestionGrid questions={questions} rawPages={rawPages} />)}
+        
+        {debugFile && (
+            <DebugRawView 
+                pages={debugPages} 
+                questions={debugQuestions} 
+                onClose={() => setDebugFile(null)} 
+                title={debugFile}
+            />
+        )}
+
+        {!debugFile && questions.length > 0 && (
+            <QuestionGrid 
+                questions={questions} 
+                rawPages={rawPages} 
+                onDebug={(fileName) => setDebugFile(fileName)}
+                onRefine={(fileName) => startRefineFile(fileName)}
+            />
+        )}
+
       </main>
       
-      {/* Refinement Panel - Moved to Top Right Floating Dialog */}
-      {showSettingsPanel && rawPages.length > 0 && (
-        <div className="fixed top-24 right-4 z-[100] w-80 bg-white rounded-3xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] border border-slate-200 overflow-hidden animate-[fade-in_0.2s_ease-out]">
-          <div className="p-5 bg-slate-50/50 border-b border-slate-100 flex justify-between items-center backdrop-blur-sm">
-            <h3 className="font-black text-slate-700 text-xs uppercase tracking-[0.2em]">Refine Settings</h3>
-            <button 
-              onClick={() => setShowSettingsPanel(false)}
-              className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg hover:bg-slate-100"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
-          </div>
-          <div className="p-6 space-y-5">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Crop Padding</label>
-              <div className="flex items-center gap-3 relative group">
-                <input type="number" value={cropSettings.cropPadding} onChange={(e) => setCropSettings(prev => ({ ...prev, cropPadding: Number(e.target.value) }))} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm" />
-                <span className="absolute right-4 text-[10px] text-slate-400 font-black uppercase select-none">px</span>
+      {/* Refinement Modal - File Specific */}
+      {refiningFile && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm animate-[fade-in_0.2s_ease-out]">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden scale-100 animate-[scale-in_0.2s_cubic-bezier(0.175,0.885,0.32,1.275)]">
+            <div className="p-6 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+              <div>
+                <h3 className="font-black text-slate-800 text-lg tracking-tight">Refine Settings</h3>
+                <p className="text-slate-400 text-xs font-bold truncate max-w-[250px]">{refiningFile}</p>
               </div>
-            </div>
-            
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Inner Pad</label>
-              <div className="flex items-center gap-3 relative group">
-                <input type="number" value={cropSettings.canvasPaddingLeft} onChange={(e) => { const v = Number(e.target.value); setCropSettings(p => ({ ...p, canvasPaddingLeft: v, canvasPaddingRight: v, canvasPaddingY: v })); }} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm" />
-                <span className="absolute right-4 text-[10px] text-slate-400 font-black uppercase select-none">px</span>
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Overlap</label>
-              <div className="flex items-center gap-3 relative group">
-                <input type="number" value={cropSettings.mergeOverlap} onChange={(e) => setCropSettings(p => ({ ...p, mergeOverlap: Number(e.target.value) }))} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm" />
-                <span className="absolute right-4 text-[10px] text-slate-400 font-black uppercase select-none">px</span>
-              </div>
-            </div>
-
-            <div className="pt-2">
               <button 
-                onClick={handleRecropOnly} 
-                disabled={isProcessing} 
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl shadow-lg shadow-blue-200 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 text-sm"
+                onClick={() => setRefiningFile(null)}
+                className="text-slate-400 hover:text-slate-600 transition-colors p-2 rounded-xl hover:bg-slate-200/50"
               >
-                {status === ProcessingStatus.CROPPING ? (
-                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 
-                ) : (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                )}
-                Recrop Images
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
+            </div>
+            
+            <div className="p-8 space-y-6">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Crop Padding</label>
+                <div className="flex items-center gap-3 relative group">
+                  <input type="number" value={localSettings.cropPadding} onChange={(e) => setLocalSettings(prev => ({ ...prev, cropPadding: Number(e.target.value) }))} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-base" />
+                  <span className="absolute right-5 text-xs text-slate-400 font-black uppercase select-none">px</span>
+                </div>
+                <p className="text-[10px] text-slate-400">Buffer around the AI detection box.</p>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Inner Padding</label>
+                <div className="flex items-center gap-3 relative group">
+                  <input type="number" value={localSettings.canvasPaddingLeft} onChange={(e) => { const v = Number(e.target.value); setLocalSettings(p => ({ ...p, canvasPaddingLeft: v, canvasPaddingRight: v, canvasPaddingY: v })); }} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-base" />
+                  <span className="absolute right-5 text-xs text-slate-400 font-black uppercase select-none">px</span>
+                </div>
+                 <p className="text-[10px] text-slate-400">Aesthetic whitespace added to the final image.</p>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Merge Overlap</label>
+                <div className="flex items-center gap-3 relative group">
+                  <input type="number" value={localSettings.mergeOverlap} onChange={(e) => setLocalSettings(p => ({ ...p, mergeOverlap: Number(e.target.value) }))} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-base" />
+                  <span className="absolute right-5 text-xs text-slate-400 font-black uppercase select-none">px</span>
+                </div>
+                <p className="text-[10px] text-slate-400">Vertical overlap when stitching split questions.</p>
+              </div>
+
+              <div className="pt-4">
+                <button 
+                  onClick={() => handleRecropFile(refiningFile!, localSettings)} 
+                  disabled={isProcessing} 
+                  className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-xl shadow-blue-200 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 text-base"
+                >
+                  {status === ProcessingStatus.CROPPING ? (
+                    <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  )}
+                  Apply & Recrop File
+                </button>
+              </div>
             </div>
           </div>
         </div>

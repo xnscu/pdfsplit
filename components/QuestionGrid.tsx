@@ -6,10 +6,12 @@ import { QuestionImage, DebugPageData } from '../types';
 interface Props {
   questions: QuestionImage[];
   rawPages: DebugPageData[];
+  onDebug: (fileName: string) => void;
+  onRefine: (fileName: string) => void;
 }
 
-export const QuestionGrid: React.FC<Props> = ({ questions, rawPages }) => {
-  const [isZipping, setIsZipping] = useState(false);
+export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, onRefine }) => {
+  const [zippingFile, setZippingFile] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<QuestionImage | null>(null);
   const [showOriginal, setShowOriginal] = useState(false); 
 
@@ -54,22 +56,32 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedImage, handleNext, handlePrev]);
 
-  const downloadAllAsZip = async () => {
+  const generateZip = async (targetFileName?: string) => {
     if (questions.length === 0) return;
-    setIsZipping(true);
+    
+    const fileNames = targetFileName ? [targetFileName] : Object.keys(groupedQuestions);
+    if (fileNames.length === 0) return;
+
+    if (targetFileName) setZippingFile(targetFileName);
+    else setZippingFile('ALL');
     
     try {
       const zip = new JSZip();
-      const fileNames = Object.keys(groupedQuestions);
       const isBatch = fileNames.length > 1;
 
       fileNames.forEach((fileName) => {
         const fileQs = groupedQuestions[fileName];
+        if (!fileQs) return;
+
         const fileRawPages = rawPages.filter(p => p.fileName === fileName);
+        
+        // If batch download, put in folder. If single file download, put in root.
         const folder = isBatch ? zip.folder(fileName) : zip;
         if (!folder) return;
 
+        // Add metadata/debug info
         folder.file("analysis_data.json", JSON.stringify(fileRawPages, null, 2));
+        
         const fullPagesFolder = folder.folder("full_pages");
         fileRawPages.forEach((page) => {
           const base64Data = page.dataUrl.split(',')[1];
@@ -100,7 +112,14 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages }) => {
       const url = window.URL.createObjectURL(content);
       const link = document.createElement('a');
       link.href = url;
-      const downloadName = isBatch ? "exam_batch_processed.zip" : `${fileNames[0]}_processed.zip`;
+      
+      let downloadName = "exam_processed.zip";
+      if (targetFileName) {
+        downloadName = `${targetFileName}_processed.zip`;
+      } else if (isBatch) {
+        downloadName = "exam_batch_processed.zip";
+      }
+
       link.download = downloadName;
       document.body.appendChild(link);
       link.click();
@@ -108,9 +127,9 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages }) => {
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error("ZIP Error:", err);
-      alert("Error creating ZIP. Try individual downloads.");
+      alert("Error creating ZIP.");
     } finally {
-      setIsZipping(false);
+      setZippingFile(null);
     }
   };
 
@@ -131,70 +150,87 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages }) => {
               Extracted {questions.length} questions from {Object.keys(groupedQuestions).length} source files
             </p>
           </div>
-          <button 
-            onClick={downloadAllAsZip}
-            disabled={isZipping}
-            className={`group px-10 py-4 rounded-2xl font-black transition-all flex items-center justify-center gap-3 shadow-2xl min-w-[240px] tracking-tight uppercase text-xs ${
-              isZipping 
-                ? 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none' 
-                : 'bg-blue-600 hover:bg-blue-700 text-white active:scale-95 shadow-blue-200'
-            }`}
-          >
-            {isZipping ? (
-              <>
-                <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Zipping...
-              </>
-            ) : (
-              <>
-                <svg className="w-5 h-5 group-hover:translate-y-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Download All (ZIP)
-              </>
-            )}
-          </button>
+          {Object.keys(groupedQuestions).length > 1 && (
+            <button 
+                onClick={() => generateZip()}
+                disabled={zippingFile !== null}
+                className={`group px-8 py-3 rounded-2xl font-black transition-all flex items-center justify-center gap-3 shadow-lg min-w-[200px] tracking-tight uppercase text-xs ${
+                zippingFile 
+                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none' 
+                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 active:scale-95'
+                }`}
+            >
+                {zippingFile === 'ALL' ? 'Zipping All...' : 'Download All as ZIP'}
+            </button>
+          )}
         </div>
 
         {Object.entries(groupedQuestions).map(([fileName, fileQuestions]: [string, QuestionImage[]]) => (
-            <div key={fileName} className="mb-16">
-                <div className="flex items-center gap-4 mb-8 px-2">
-                    <div className="bg-blue-50 text-blue-600 p-2.5 rounded-xl border border-blue-100">
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            <div key={fileName} className="mb-16 bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-xl shadow-slate-200/40">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 pb-6 border-b border-slate-50">
+                    <div className="flex items-center gap-4">
+                        <div className="bg-blue-50 text-blue-600 p-3 rounded-2xl border border-blue-100">
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                        </div>
+                        <div>
+                          <h3 className="text-2xl font-black text-slate-800 tracking-tight break-all">{fileName}</h3>
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{fileQuestions.length} Items Found</p>
+                        </div>
                     </div>
-                    <div>
-                      <h3 className="text-2xl font-black text-slate-800 tracking-tight">{fileName}</h3>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{fileQuestions.length} Items Found</p>
+                    
+                    <div className="flex flex-wrap items-center gap-3">
+                        <button 
+                           onClick={() => onDebug(fileName)}
+                           className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors flex items-center gap-2 border border-slate-200 bg-white"
+                           title="View Debug Analysis"
+                        >
+                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+                           Debug
+                        </button>
+                        <button 
+                           onClick={() => onRefine(fileName)}
+                           className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors flex items-center gap-2 border border-slate-200 bg-white"
+                           title="Refine Crop Settings"
+                        >
+                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
+                           Refine
+                        </button>
+                        <button 
+                           onClick={() => generateZip(fileName)}
+                           disabled={zippingFile !== null}
+                           className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-green-600 hover:bg-green-50 transition-colors flex items-center gap-2 border border-slate-200 bg-white disabled:opacity-50"
+                           title="Download ZIP"
+                        >
+                           {zippingFile === fileName ? (
+                             <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                           ) : (
+                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                           )}
+                           ZIP
+                        </button>
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {fileQuestions.map((q, idx) => (
                     <div 
                     key={`${q.fileName}-${q.pageNumber}-${q.id}-${idx}`} 
-                    className="group bg-white border border-slate-200 rounded-[2rem] overflow-hidden hover:shadow-2xl transition-all duration-500 hover:-translate-y-2 flex flex-col shadow-xl shadow-slate-200/40"
+                    className="group bg-slate-50 border border-slate-200 rounded-[1.5rem] overflow-hidden hover:shadow-xl transition-all duration-300 hover:-translate-y-1 flex flex-col"
                     >
-                    <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                    <div className="px-5 py-3 border-b border-slate-200/50 flex justify-between items-center bg-white/50">
                         <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">P{q.pageNumber} • Q{q.id}</span>
-                        <div className="flex gap-2">
                         {q.originalDataUrl && (
-                            <span className="text-[9px] px-2.5 py-1 bg-blue-50 text-blue-600 rounded-lg font-black uppercase tracking-widest border border-blue-100">
-                            Refined
-                            </span>
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" title="Refined"></span>
                         )}
-                        </div>
                     </div>
                     <div 
-                        className="p-8 flex items-center justify-center flex-grow bg-white min-h-[260px] cursor-zoom-in relative"
+                        className="p-6 flex items-center justify-center flex-grow bg-white min-h-[200px] cursor-zoom-in relative"
                         onClick={() => setSelectedImage(q)}
                     >
                         <img 
                         src={q.dataUrl} 
                         alt={`Question ${q.id}`} 
-                        className="max-w-full h-auto rounded-lg select-none transition-transform duration-500 group-hover:scale-[1.03]"
+                        className="max-w-full h-auto rounded-md select-none transition-transform duration-500 group-hover:scale-[1.02]"
                         />
                     </div>
                     </div>
@@ -206,7 +242,7 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages }) => {
 
       {selectedImage && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/95 backdrop-blur-md transition-opacity animate-[fade-in_0.2s_ease-out]"
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/95 backdrop-blur-md transition-opacity animate-[fade-in_0.2s_ease-out]"
           onClick={() => setSelectedImage(null)}
         >
           {hasPrev && (
