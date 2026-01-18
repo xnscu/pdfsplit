@@ -299,11 +299,19 @@ const App: React.FC = () => {
           const analysisFileKey = Object.keys(loadedZip.files).find(key => key.match(/(^|\/)analysis_data\.json$/i));
           if (!analysisFileKey) continue;
 
+          // Determine fallback filename from ZIP name
+          const zipBaseName = file.name.replace(/\.[^/.]+$/, "");
+
           const jsonText = await loadedZip.file(analysisFileKey)!.async('text');
           const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
           for (const page of loadedRawPages) {
-            const rawFileName = page.fileName || "unknown_file";
+            // Fix: Use ZIP filename if internal filename is missing or generic
+            let rawFileName = page.fileName;
+            if (!rawFileName || rawFileName === "unknown_file") {
+              rawFileName = zipBaseName || "unknown_file";
+            }
             page.fileName = rawFileName;
+            
             const safeFileName = rawFileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const imgKey = Object.keys(loadedZip.files).find(k => 
                 !loadedZip.files[k].dir &&
@@ -343,12 +351,18 @@ const App: React.FC = () => {
                           if (parent.toLowerCase() !== 'questions') qFileName = parent;
                           else if (loadedRawPages.length > 0) qFileName = loadedRawPages[0].fileName;
                         }
+                        // If we still don't have a filename, use the zip fallback
+                        if (qFileName === "unknown" && loadedRawPages.length > 0) {
+                            qFileName = loadedRawPages[0].fileName;
+                        }
                         matched = true;
                     }
                 }
                 if (matched) {
                     const base64 = await loadedZip.file(key)!.async('base64');
+                    // Find target page to match filenames if possible
                     const targetPage = loadedRawPages.find(p => (p.fileName === qFileName && p.detections.some(d => d.id === qId)) || p.detections.some(d => d.id === qId));
+                    
                     loadedQuestions.push({
                       id: qId,
                       pageNumber: targetPage?.pageNumber || 0,
