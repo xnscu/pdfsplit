@@ -11,6 +11,7 @@ export interface CropSettings {
   canvasPaddingRight: number;
   canvasPaddingY: number;
   mergeOverlap: number;
+  debugExportPadding?: number; // Optional: Padding for the debug 'raw' image export
 }
 
 export interface TrimBounds {
@@ -183,19 +184,21 @@ export const constructQuestionCanvas = (
       // ALWAYS generate this to allow the user to see "Raw Gemini Box" vs "Processed Result"
       let originalDataUrl: string | undefined;
       
+      const exportPadding = settings.debugExportPadding !== undefined ? settings.debugExportPadding : 10;
+
       // Re-stitch raw fragments without trim for comparison
       const maxRawWidth = Math.max(...processedFragments.map(f => f ? (f.sourceCanvas as any).width : 0));
-      const finalRawWidth = maxRawWidth + 20;
-      const finalRawHeight = processedFragments.reduce((acc, f) => acc + (f ? (f.sourceCanvas as any).height : 0), 0) + (fragmentGap * (Math.max(0, processedFragments.length - 1))) + 20;
+      const finalRawWidth = maxRawWidth + (exportPadding * 2);
+      const finalRawHeight = processedFragments.reduce((acc, f) => acc + (f ? (f.sourceCanvas as any).height : 0), 0) + (fragmentGap * (Math.max(0, processedFragments.length - 1))) + (exportPadding * 2);
 
       const { canvas: rawCanvas, context: rawCtx } = createSmartCanvas(finalRawWidth, finalRawHeight);
       rawCtx.fillStyle = '#ffffff';
       rawCtx.fillRect(0, 0, finalRawWidth, finalRawHeight);
       
-      let currentRawY = 10;
+      let currentRawY = exportPadding;
       processedFragments.forEach(f => {
           if (f) {
-            rawCtx.drawImage(f.sourceCanvas as any, 10, currentRawY);
+            rawCtx.drawImage(f.sourceCanvas as any, exportPadding, currentRawY);
             currentRawY += (f.sourceCanvas as any).height + fragmentGap;
           }
       });

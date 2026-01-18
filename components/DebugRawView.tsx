@@ -9,13 +9,15 @@ interface Props {
   onClose: () => void;
 }
 
-// Default settings for debug visualization
+// Default settings for debug visualization - STRICT mode
+// No padding, no border, exact coordinate match.
 const DEBUG_CROP_SETTINGS: CropSettings = {
-  cropPadding: 20, // Standard padding to see context
+  cropPadding: 0, // Changed to 0 to be exact
   canvasPaddingLeft: 0,
   canvasPaddingRight: 0,
   canvasPaddingY: 0,
-  mergeOverlap: 0
+  mergeOverlap: 0,
+  debugExportPadding: 0 // New setting to remove the white border
 };
 
 export const DebugRawView: React.FC<Props> = ({ pages, questions, onClose }) => {
@@ -68,7 +70,7 @@ export const DebugRawView: React.FC<Props> = ({ pages, questions, onClose }) => 
     return { selectedImage: image, selectedDetection: detection };
   }, [selectedKey, pages, questions]);
 
-  // Effect: Dynamically generate the raw crop if it's missing from the stored image
+  // Effect: Dynamically generate the raw crop
   useEffect(() => {
     // Reset state when selection changes
     setDynamicRawUrl(null);
@@ -76,8 +78,9 @@ export const DebugRawView: React.FC<Props> = ({ pages, questions, onClose }) => 
 
     if (!selectedDetection || !selectedKey) return;
 
-    // If we already have the originalDataUrl in the processed image, use it (no need to regenerate)
-    if (selectedImage?.originalDataUrl) return;
+    // We ALWAYS regenerate the raw view here using DEBUG_CROP_SETTINGS (0 padding).
+    // The selectedImage.originalDataUrl typically contains padding (25px) from the main app settings,
+    // so we cannot use it if we want to show the "Exact" raw match.
 
     const generateRawView = async () => {
       setIsGeneratingRaw(true);
@@ -119,10 +122,11 @@ export const DebugRawView: React.FC<Props> = ({ pages, questions, onClose }) => 
 
     generateRawView();
 
-  }, [selectedDetection, selectedKey, pages, selectedImage]);
+  }, [selectedDetection, selectedKey, pages]); // Removed selectedImage from deps to avoid unnecessary re-runs
 
-  // Determine which URL to show for the Raw View
-  const displayRawUrl = selectedImage?.originalDataUrl || dynamicRawUrl;
+  // Determine which URL to show for the Raw View. 
+  // We prefer the dynamic one because it uses 0-padding (strict match).
+  const displayRawUrl = dynamicRawUrl;
 
   if (pages.length === 0) return null;
 
