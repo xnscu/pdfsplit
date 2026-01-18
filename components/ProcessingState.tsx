@@ -11,6 +11,7 @@ interface Props {
   detailedStatus?: string;
   croppingTotal?: number;
   croppingDone?: number;
+  elapsedTime?: string;
 }
 
 export const ProcessingState: React.FC<Props> = ({ 
@@ -21,7 +22,8 @@ export const ProcessingState: React.FC<Props> = ({
   error, 
   detailedStatus,
   croppingTotal = 0,
-  croppingDone = 0
+  croppingDone = 0,
+  elapsedTime = "00:00"
 }) => {
   if (status === ProcessingStatus.IDLE) return null;
 
@@ -94,7 +96,7 @@ export const ProcessingState: React.FC<Props> = ({
               <>
                 <span className="mb-4 opacity-80 text-sm font-semibold">{detailedStatus}</span>
                 
-                <div className="flex gap-4 text-[10px] font-black uppercase tracking-widest bg-slate-50 px-6 py-3 rounded-2xl border border-slate-100 shadow-sm">
+                <div className="flex flex-wrap items-center justify-center gap-3 text-[10px] font-black uppercase tracking-widest bg-slate-50 px-6 py-3 rounded-2xl border border-slate-100 shadow-sm">
                   {status === ProcessingStatus.DETECTING_QUESTIONS ? (
                     <>
                       <span className="flex items-center gap-2 text-slate-400">Total: {total}</span>
@@ -113,6 +115,11 @@ export const ProcessingState: React.FC<Props> = ({
                   ) : (
                     <span className="text-blue-600">Page {progress} / {total}</span>
                   )}
+                  {/* Elapsed Time Display */}
+                   <div className="flex items-center gap-2 pl-3 ml-1 border-l border-slate-200 text-slate-500 tabular-nums">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      {elapsedTime}
+                   </div>
                 </div>
               </>
             )}

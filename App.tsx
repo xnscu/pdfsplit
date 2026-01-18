@@ -38,6 +38,13 @@ const normalizeBoxes = (boxes2d: any): [number, number, number, number][] => {
   return [boxes2d] as [number, number, number, number][];
 };
 
+const formatTime = (seconds: number): string => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
+
 const App: React.FC = () => {
   const [status, setStatus] = useState<ProcessingStatus>(ProcessingStatus.IDLE);
   const [questions, setQuestions] = useState<QuestionImage[]>([]);
@@ -80,6 +87,10 @@ const App: React.FC = () => {
   const [croppingTotal, setCroppingTotal] = useState(0);
   const [croppingDone, setCroppingDone] = useState(0);
 
+  // Timer State
+  const [startTime, setStartTime] = useState<number | null>(null);
+  const [elapsedTime, setElapsedTime] = useState("00:00");
+
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Persistence Effects
@@ -94,6 +105,19 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.MODEL, selectedModel);
   }, [selectedModel]);
+
+  // Timer Effect
+  useEffect(() => {
+    let interval: number;
+    if (status !== ProcessingStatus.IDLE && status !== ProcessingStatus.COMPLETED && status !== ProcessingStatus.ERROR && startTime) {
+      interval = window.setInterval(() => {
+        const now = Date.now();
+        const diff = Math.floor((now - startTime) / 1000);
+        setElapsedTime(formatTime(diff));
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [status, startTime]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -134,40 +158,41 @@ const App: React.FC = () => {
     setError(undefined);
     setDetailedStatus('');
     setShowDebug(false);
+    setStartTime(null);
+    setElapsedTime("00:00");
     if (window.location.search) window.history.pushState({}, '', window.location.pathname);
   };
 
-  const runCroppingPhase = async (pages: DebugPageData[], settings: CropSettings, signal: AbortSignal) => {
-    setStatus(ProcessingStatus.CROPPING);
-    const totalDetections = pages.reduce((acc, p) => acc + p.detections.length, 0);
-    setCroppingTotal(totalDetections);
-    setCroppingDone(0);
-    setProgress(0); 
-    setCompletedCount(0);
-    setDetailedStatus('Cropping and aligning question images...');
-
+  /**
+   * Generates processed questions from raw debug data.
+   * Does NOT set state directly, returns the questions.
+   */
+  const generateQuestionsFromRawPages = async (pages: DebugPageData[], settings: CropSettings, signal: AbortSignal): Promise<QuestionImage[]> => {
     const pagesByFile: Record<string, DebugPageData[]> = {};
     pages.forEach(p => {
       if (!pagesByFile[p.fileName]) pagesByFile[p.fileName] = [];
       pagesByFile[p.fileName].push(p);
     });
 
-    const allConstructedItems: ProcessedCanvas[] = [];
+    const finalQuestions: QuestionImage[] = [];
 
-    try {
-      for (const [fileName, filePages] of Object.entries(pagesByFile)) {
-        if (signal.aborted) return;
-        const fileItems: ProcessedCanvas[] = [];
-        for (let i = 0; i < filePages.length; i++) {
-          if (signal.aborted) return;
-          const page = filePages[i];
-          setProgress(prev => prev + 1);
-
-          for (const detection of page.detections) {
-            const boxes = normalizeBoxes(detection.boxes_2d);
-            const result = await constructQuestionCanvas(page.dataUrl, boxes, page.width, page.height, settings);
-            
-            if (result.canvas) {
+    for (const [fileName, filePages] of Object.entries(pagesByFile)) {
+      if (signal.aborted) return [];
+      const fileItems: ProcessedCanvas[] = [];
+      
+      for (let i = 0; i < filePages.length; i++) {
+        if (signal.aborted) return [];
+        const page = filePages[i];
+        
+        // UI Update for cropping progress happens in the parent loop or here if needed,
+        // but since we are splitting by file, we update global counters outside usually.
+        // However, for granularity:
+        for (const detection of page.detections) {
+           if (signal.aborted) return [];
+           const boxes = normalizeBoxes(detection.boxes_2d);
+           const result = await constructQuestionCanvas(page.dataUrl, boxes, page.width, page.height, settings);
+           
+           if (result.canvas) {
               if (detection.id === 'continuation' && fileItems.length > 0) {
                  const lastIdx = fileItems.length - 1;
                  const lastQ = fileItems[lastIdx];
@@ -189,24 +214,20 @@ const App: React.FC = () => {
                    originalDataUrl: result.originalDataUrl
                  });
               }
-            }
-            setCroppingDone(prev => prev + 1);
-          }
+           }
+           setCroppingDone(prev => prev + 1);
         }
-        allConstructedItems.push(...fileItems);
       }
 
-      if (allConstructedItems.length > 0) {
-          setDetailedStatus('Analyzing image dimensions...');
-          const itemsWithTrim = allConstructedItems.map(item => ({
+      if (fileItems.length > 0) {
+          const itemsWithTrim = fileItems.map(item => ({
              ...item,
              trim: analyzeCanvasContent(item.canvas)
           }));
           const maxContentWidth = Math.max(...itemsWithTrim.map(i => i.trim.w));
-          setDetailedStatus(`Exporting aligned images (Width: ${maxContentWidth}px)...`);
-          const finalQuestions: QuestionImage[] = [];
+          
           for (const item of itemsWithTrim) {
-              if (signal.aborted) return;
+              if (signal.aborted) return [];
               const finalDataUrl = await generateAlignedImage(item.canvas, item.trim, maxContentWidth, settings);
               finalQuestions.push({
                  id: item.id,
@@ -216,69 +237,35 @@ const App: React.FC = () => {
                  originalDataUrl: item.originalDataUrl
               });
           }
-          setQuestions(finalQuestions);
-      } else {
-          setQuestions([]);
       }
-      setStatus(ProcessingStatus.COMPLETED);
-    } catch (e: any) {
-      if (signal.aborted) return;
-      setError("Cropping failed: " + e.message);
-      setStatus(ProcessingStatus.ERROR);
     }
+    return finalQuestions;
   };
 
-  const runAIDetectionAndCropping = async (pages: SourcePage[], signal: AbortSignal) => {
-    try {
-      setStatus(ProcessingStatus.DETECTING_QUESTIONS);
-      setProgress(0);
-      setCompletedCount(0);
-      setDetailedStatus(`Analyzing ${pages.length} pages...`);
-
-      const numPages = pages.length;
-      const results: DebugPageData[] = new Array(numPages);
-      
-      for (let i = 0; i < pages.length; i += concurrency) {
-        if (signal.aborted) return;
-        const batch = pages.slice(i, i + concurrency);
-        setProgress(Math.min(numPages, i + batch.length));
-
-        const batchResults = await Promise.all(batch.map(async (pageData) => {
-          try {
-            const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel);
-            setCompletedCount(prev => prev + 1);
-            return {
-              pageNumber: pageData.pageNumber,
-              fileName: pageData.fileName,
-              dataUrl: pageData.dataUrl,
-              width: pageData.width,
-              height: pageData.height,
-              detections
-            };
-          } catch (err: any) {
-            if (signal.aborted) throw err;
-            setCompletedCount(prev => prev + 1);
-            return { ...pageData, detections: [] };
-          }
-        }));
-
-        batchResults.forEach((res, idx) => { results[i + idx] = res as DebugPageData; });
-      }
-
-      setRawPages(results);
-      if (signal.aborted) return;
-      await runCroppingPhase(results, cropSettings, signal);
-    } catch (err: any) {
-       if (err.name === 'AbortError') return;
-       setError(err.message || "Processing failed.");
-       setStatus(ProcessingStatus.ERROR);
-    }
-  };
-
+  /**
+   * Helper to re-run cropping on existing raw pages (Refine button)
+   */
   const handleRecropOnly = async () => {
     if (rawPages.length === 0) return;
     abortControllerRef.current = new AbortController();
-    await runCroppingPhase(rawPages, cropSettings, abortControllerRef.current.signal);
+    setStatus(ProcessingStatus.CROPPING);
+    setStartTime(Date.now());
+    
+    const totalDetections = rawPages.reduce((acc, p) => acc + p.detections.length, 0);
+    setCroppingTotal(totalDetections);
+    setCroppingDone(0);
+    setDetailedStatus('Re-cropping images...');
+
+    try {
+       const newQuestions = await generateQuestionsFromRawPages(rawPages, cropSettings, abortControllerRef.current.signal);
+       if (!abortControllerRef.current.signal.aborted) {
+         setQuestions(newQuestions);
+         setStatus(ProcessingStatus.COMPLETED);
+       }
+    } catch (e: any) {
+       setError(e.message);
+       setStatus(ProcessingStatus.ERROR);
+    }
   };
 
   const processZipFiles = async (files: { blob: Blob, name: string }[]) => {
@@ -299,13 +286,11 @@ const App: React.FC = () => {
           const analysisFileKey = Object.keys(loadedZip.files).find(key => key.match(/(^|\/)analysis_data\.json$/i));
           if (!analysisFileKey) continue;
 
-          // Determine fallback filename from ZIP name
           const zipBaseName = file.name.replace(/\.[^/.]+$/, "");
 
           const jsonText = await loadedZip.file(analysisFileKey)!.async('text');
           const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
           for (const page of loadedRawPages) {
-            // Fix: Use ZIP filename if internal filename is missing or generic
             let rawFileName = page.fileName;
             if (!rawFileName || rawFileName === "unknown_file") {
               rawFileName = zipBaseName || "unknown_file";
@@ -351,7 +336,6 @@ const App: React.FC = () => {
                           if (parent.toLowerCase() !== 'questions') qFileName = parent;
                           else if (loadedRawPages.length > 0) qFileName = loadedRawPages[0].fileName;
                         }
-                        // If we still don't have a filename, use the zip fallback
                         if (qFileName === "unknown" && loadedRawPages.length > 0) {
                             qFileName = loadedRawPages[0].fileName;
                         }
@@ -360,7 +344,6 @@ const App: React.FC = () => {
                 }
                 if (matched) {
                     const base64 = await loadedZip.file(key)!.async('base64');
-                    // Find target page to match filenames if possible
                     const targetPage = loadedRawPages.find(p => (p.fileName === qFileName && p.detections.some(d => d.id === qId)) || p.detections.some(d => d.id === qId));
                     
                     loadedQuestions.push({
@@ -391,8 +374,6 @@ const App: React.FC = () => {
         setQuestions(allQuestions);
         setCompletedCount(allRawPages.length);
         setStatus(ProcessingStatus.COMPLETED);
-      } else if (allRawPages.length > 0) {
-         await runCroppingPhase(allRawPages, cropSettings, new AbortController().signal);
       } else {
          throw new Error("No valid data found in ZIP");
       }
@@ -405,6 +386,8 @@ const App: React.FC = () => {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []) as File[];
     if (files.length === 0) return;
+    
+    // Handle ZIPs differently
     const zipFiles = files.filter(f => f.name.toLowerCase().endsWith('.zip'));
     if (zipFiles.length > 0) {
       await processZipFiles(zipFiles.map(f => ({ blob: f, name: f.name })));
@@ -413,35 +396,106 @@ const App: React.FC = () => {
 
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
+    
+    // Reset Start
+    setStartTime(Date.now());
+    setStatus(ProcessingStatus.LOADING_PDF);
+    setError(undefined);
+    setUploadedFileNames(files.map(f => f.name.replace(/\.[^/.]+$/, "")));
+    
+    // Calculate total pages for progress bar estimation (approximate initially)
+    let totalPdfPages = 0;
+    setTotal(files.length * 3); // Rough estimate, will update as we parse
 
     try {
-      setStatus(ProcessingStatus.LOADING_PDF);
-      setError(undefined);
-      setDetailedStatus('Initializing PDF engine...');
-      const fileNames = files.map(f => f.name.replace(/\.[^/.]+$/, ""));
-      setUploadedFileNames(fileNames);
-      const allRenderedPages: SourcePage[] = [];
-      let totalPageCount = 0;
+      let cumulativePages = 0;
 
       for (let fIdx = 0; fIdx < files.length; fIdx++) {
-        if (signal.aborted) return;
-        const file = files[fIdx];
-        const loadingTask = pdfjsLib.getDocument({ data: await file.arrayBuffer() });
-        const pdf = await loadingTask.promise;
-        totalPageCount += pdf.numPages;
-
-        for (let i = 1; i <= pdf.numPages; i++) {
+         if (signal.aborted) return;
+         const file = files[fIdx];
+         const fileName = file.name.replace(/\.[^/.]+$/, "");
+         
+         // 1. Render PDF Pages
+         setDetailedStatus(`Rendering: ${file.name}...`);
+         const loadingTask = pdfjsLib.getDocument({ data: await file.arrayBuffer() });
+         const pdf = await loadingTask.promise;
+         
+         // Update total accurately now that we know one
+         totalPdfPages += pdf.numPages;
+         setTotal(totalPdfPages + (files.length - fIdx - 1) * 3); // Adjust estimate
+         
+         const currentFilePages: SourcePage[] = [];
+         for (let i = 1; i <= pdf.numPages; i++) {
             if (signal.aborted) return;
-            setDetailedStatus(`Rendering: ${file.name} (Page ${i}/${pdf.numPages})...`);
             const page = await pdf.getPage(i);
             const rendered = await renderPageToImage(page, 3);
-            allRenderedPages.push({ ...rendered, pageNumber: i, fileName: fileNames[fIdx] });
-            setCompletedCount(allRenderedPages.length);
-            setTotal(totalPageCount);
-        }
+            currentFilePages.push({ ...rendered, pageNumber: i, fileName });
+         }
+         
+         // Incremental Update: Add Source Pages
+         setSourcePages(prev => [...prev, ...currentFilePages]);
+         
+         // 2. AI Detection for this file
+         setStatus(ProcessingStatus.DETECTING_QUESTIONS);
+         setDetailedStatus(`Analyzing ${file.name}...`);
+         
+         const currentRawPages: DebugPageData[] = new Array(currentFilePages.length);
+         const numPages = currentFilePages.length;
+         
+         // Batch pages within the file for AI requests
+         for (let i = 0; i < numPages; i += concurrency) {
+            if (signal.aborted) return;
+            const batch = currentFilePages.slice(i, i + concurrency);
+            
+            // UI Progress: Total processed pages so far + current batch
+            setCompletedCount(cumulativePages + i); 
+            setProgress(cumulativePages + Math.min(numPages, i + batch.length));
+
+            const batchResults = await Promise.all(batch.map(async (pageData) => {
+              try {
+                const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel);
+                return {
+                  pageNumber: pageData.pageNumber,
+                  fileName: pageData.fileName,
+                  dataUrl: pageData.dataUrl,
+                  width: pageData.width,
+                  height: pageData.height,
+                  detections
+                };
+              } catch (err: any) {
+                if (signal.aborted) throw err;
+                console.warn(`Detection failed for ${pageData.fileName} P${pageData.pageNumber}`, err);
+                return { ...pageData, detections: [] };
+              }
+            }));
+            batchResults.forEach((res, idx) => { currentRawPages[i + idx] = res as DebugPageData; });
+         }
+
+         // Incremental Update: Add Raw Pages (Debug Data)
+         setRawPages(prev => [...prev, ...currentRawPages]);
+         
+         // 3. Cropping for this file
+         setStatus(ProcessingStatus.CROPPING);
+         setDetailedStatus(`Cropping ${file.name}...`);
+         const detectionsInFile = currentRawPages.reduce((acc, p) => acc + p.detections.length, 0);
+         
+         // Update global cropping stats
+         setCroppingTotal(prev => prev + detectionsInFile);
+         
+         const newQuestions = await generateQuestionsFromRawPages(currentRawPages, cropSettings, signal);
+         
+         // Incremental Update: Add Final Questions
+         if (!signal.aborted) {
+             setQuestions(prev => [...prev, ...newQuestions]);
+         }
+
+         cumulativePages += numPages;
       }
-      setSourcePages(allRenderedPages);
-      await runAIDetectionAndCropping(allRenderedPages, signal);
+      
+      setCompletedCount(totalPdfPages);
+      setProgress(totalPdfPages);
+      setStatus(ProcessingStatus.COMPLETED);
+
     } catch (err: any) {
       if (err.name === 'AbortError') return;
       setError(err.message || "Processing failed.");
@@ -560,7 +614,17 @@ const App: React.FC = () => {
           </div>
         )}
 
-        <ProcessingState status={status} progress={progress} total={total} completedCount={completedCount} error={error} detailedStatus={detailedStatus} croppingTotal={croppingTotal} croppingDone={croppingDone} />
+        <ProcessingState 
+          status={status} 
+          progress={progress} 
+          total={total} 
+          completedCount={completedCount} 
+          error={error} 
+          detailedStatus={detailedStatus} 
+          croppingTotal={croppingTotal} 
+          croppingDone={croppingDone} 
+          elapsedTime={elapsedTime}
+        />
         {showDebug ? <DebugRawView pages={rawPages} questions={questions} onClose={() => setShowDebug(false)} /> : (questions.length > 0 && <QuestionGrid questions={questions} rawPages={rawPages} />)}
       </main>
       
