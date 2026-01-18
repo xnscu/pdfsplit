@@ -1,0 +1,70 @@
+{
+  "name": "Cloudflare Workers Development Environment",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "Vue.volar",
+        "dbaeumer.vscode-eslint",
+        "EditorConfig.EditorConfig",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "search.exclude": {
+          "package-lock.json": true,
+          "public/**": true
+        },
+        "html.format.unformatted": "wbr,%",
+        "html.format.wrapAttributesIndentSize": 2,
+        "html.format.wrapAttributes": "force-expand-multiline", //volar format template's option
+        "html.format.wrapLineLength": 80,
+        "explorer.fileNesting.enabled": true,
+        "explorer.fileNesting.patterns": {
+          "package.json": "package-lock.json, pnpm*, .yarnrc*, yarn*, .eslint*, eslint*, .oxlint*, oxlint*, .prettier*, prettier*, .editorconfig",
+          "vite.config.mjs": "tsconfig*.json,vite*.mjs,vite*.ts",
+          ".gitignore": ".gitattributes"
+        },
+        "editor.codeActionsOnSave": {
+          "source.fixAll": "explicit",
+          "source.fixAll.eslint": "explicit"
+        },
+        "editor.formatOnPaste": true, // required
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "prettier.requireConfig": true,
+        "prettier.useEditorConfig": true,
+        "prettier.resolveGlobalModules": false,
+        "[javascript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[typescript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[vue]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[json]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[jsonc]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[css]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[scss]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[html]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        }
+      }
+    }
+  },
+  "remoteEnv": {
+    "NODE_OPTIONS": "--max-old-space-size=4096"
+  },
+  "postCreateCommand": "echo 'Development environment ready!'"
+}
