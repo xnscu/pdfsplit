@@ -184,25 +184,41 @@ export const DebugRawView: React.FC<Props> = ({ pages, questions, onClose }) => 
                         return (
                           <g 
                             key={uniqueKey} 
-                            className="cursor-pointer transition-all duration-200"
+                            className="cursor-pointer"
                             onClick={(e) => {
                               e.stopPropagation();
                               setSelectedKey(uniqueKey);
                             }}
                           >
                             {boxes.map((box, bIdx) => (
-                              <rect
-                                key={bIdx}
-                                x={box[1]}
-                                y={box[0]}
-                                width={box[3] - box[1]}
-                                height={box[2] - box[0]}
-                                fill={isSelected ? "rgba(59, 130, 246, 0.2)" : "rgba(255, 50, 50, 0.05)"}
-                                stroke={isSelected ? "#3b82f6" : "#ef4444"}
-                                strokeWidth={isSelected ? "4" : "1.5"}
-                                vectorEffect="non-scaling-stroke"
-                                className="hover:fill-[rgba(59,130,246,0.1)] hover:stroke-blue-400 hover:stroke-[3px] transition-all"
-                              />
+                              <React.Fragment key={bIdx}>
+                                {/* 1. Glow/Interaction Layer: Thicker, transparent stroke for visibility and hit-area */}
+                                <rect
+                                  x={box[1]}
+                                  y={box[0]}
+                                  width={box[3] - box[1]}
+                                  height={box[2] - box[0]}
+                                  fill={isSelected ? "rgba(59, 130, 246, 0.1)" : "transparent"} 
+                                  stroke={isSelected ? "#3b82f6" : "transparent"}
+                                  strokeWidth={isSelected ? "6" : "0"} 
+                                  strokeOpacity="0.4"
+                                  vectorEffect="non-scaling-stroke"
+                                />
+
+                                {/* 2. Precision Layer: 1px hairline stroke for exact coordinate visualization */}
+                                <rect
+                                  x={box[1]}
+                                  y={box[0]}
+                                  width={box[3] - box[1]}
+                                  height={box[2] - box[0]}
+                                  fill="none"
+                                  stroke={isSelected ? "#3b82f6" : "#ef4444"}
+                                  strokeWidth="1" // Always 1px for maximum precision
+                                  vectorEffect="non-scaling-stroke" // Keeps it 1px regardless of zoom
+                                  shapeRendering="geometricPrecision"
+                                  className="transition-colors duration-200 hover:stroke-blue-400"
+                                />
+                              </React.Fragment>
                             ))}
                             
                             {/* ID Label Tag */}
@@ -212,7 +228,7 @@ export const DebugRawView: React.FC<Props> = ({ pages, questions, onClose }) => 
                               width="40" 
                               height="25" 
                               fill={isSelected ? "#3b82f6" : "#ef4444"}
-                              className="transition-colors"
+                              className="transition-colors duration-200"
                             />
                             <text
                               x={boxes[0][3] - 20}
