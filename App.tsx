@@ -409,34 +409,71 @@ const App: React.FC = () => {
         try {
           const zip = new JSZip();
           const loadedZip = await zip.loadAsync(file.blob);
-          const analysisFileKey = Object.keys(loadedZip.files).find(key => key.match(/(^|\/)analysis_data\.json$/i));
-          if (!analysisFileKey) continue;
+          
+          // FIND ALL analysis files, not just the first one, to support multi-folder Zips
+          const analysisFileKeys = Object.keys(loadedZip.files).filter(key => key.match(/(^|\/)analysis_data\.json$/i));
+          
+          if (analysisFileKeys.length === 0) continue;
 
           const zipBaseName = file.name.replace(/\.[^/.]+$/, "");
+          const zipRawPages: DebugPageData[] = [];
 
-          const jsonText = await loadedZip.file(analysisFileKey)!.async('text');
-          const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
-          for (const page of loadedRawPages) {
-            let rawFileName = page.fileName;
-            if (!rawFileName || rawFileName === "unknown_file") {
-              rawFileName = zipBaseName || "unknown_file";
-            }
-            page.fileName = rawFileName;
-            
-            const safeFileName = rawFileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const imgKey = Object.keys(loadedZip.files).find(k => 
-                !loadedZip.files[k].dir &&
-                (k.match(new RegExp(`full_pages/${safeFileName}/Page_${page.pageNumber}\\.jpg$`, 'i')) ||
-                 k.match(new RegExp(`full_pages/Page_${page.pageNumber}\\.jpg$`, 'i')))
-            );
-            if (imgKey) {
-              const base64 = await loadedZip.file(imgKey)!.async('base64');
-              page.dataUrl = `data:image/jpeg;base64,${base64}`;
-            }
+          for (const analysisKey of analysisFileKeys) {
+              const dirPrefix = analysisKey.substring(0, analysisKey.lastIndexOf("analysis_data.json"));
+              
+              const jsonText = await loadedZip.file(analysisKey)!.async('text');
+              const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
+              
+              for (const page of loadedRawPages) {
+                let rawFileName = page.fileName;
+                if (!rawFileName || rawFileName === "unknown_file") {
+                  // Fallback: try to use directory name if available, else zip name
+                  if (dirPrefix) {
+                      // dirPrefix is like "Folder/"
+                      rawFileName = dirPrefix.replace(/\/$/, "");
+                  } else {
+                      rawFileName = zipBaseName || "unknown_file";
+                  }
+                }
+                page.fileName = rawFileName;
+                
+                // Construct path candidates relative to the analysis file directory
+                let foundKey: string | undefined = undefined;
+                const candidates = [
+                    `${dirPrefix}full_pages/Page_${page.pageNumber}.jpg`,
+                    `${dirPrefix}full_pages/Page_${page.pageNumber}.jpeg`,
+                    `${dirPrefix}full_pages/Page_${page.pageNumber}.png`
+                ];
+
+                for (const c of candidates) {
+                    if (loadedZip.files[c]) {
+                        foundKey = c;
+                        break;
+                    }
+                }
+
+                // Fallback fuzzy search within directory if exact match fails
+                if (!foundKey) {
+                    foundKey = Object.keys(loadedZip.files).find(k => 
+                        k.startsWith(dirPrefix) &&
+                        !loadedZip.files[k].dir &&
+                        (k.match(new RegExp(`full_pages/.*Page_${page.pageNumber}\\.(jpg|jpeg|png)$`, 'i')))
+                    );
+                }
+
+                if (foundKey) {
+                  const base64 = await loadedZip.file(foundKey)!.async('base64');
+                  const ext = foundKey.split('.').pop()?.toLowerCase();
+                  const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+                  page.dataUrl = `data:${mime};base64,${base64}`;
+                }
+              }
+              zipRawPages.push(...loadedRawPages);
           }
-          allRawPages.push(...loadedRawPages);
+          
+          allRawPages.push(...zipRawPages);
 
-          // Attempt to load questions if they exist in ZIP, otherwise we might regen later
+          // Attempt to load questions
           const potentialImageKeys = Object.keys(loadedZip.files).filter(k => 
             !loadedZip.files[k].dir && /\.(jpg|jpeg|png)$/i.test(k) && !k.includes('full_pages/')
           );
@@ -449,36 +486,52 @@ const App: React.FC = () => {
                 let qFileName = "unknown";
                 let qId = "0";
                 let matched = false;
+                
+                // Pattern 1: FileName_Q1.jpg
                 const flatMatch = fileNameWithExt.match(/^(.+)_Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
                 if (flatMatch) {
                     qFileName = flatMatch[1];
                     qId = flatMatch[2];
                     matched = true;
                 } else {
+                    // Pattern 2: Folder/Q1.jpg or just Q1.jpg
                     const nestedMatch = fileNameWithExt.match(/^Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
                     if (nestedMatch) {
                         qId = nestedMatch[1];
+                        // Try to infer filename from parent folder
                         if (pathParts.length >= 2) {
                           const parent = pathParts[pathParts.length - 2];
                           if (parent.toLowerCase() !== 'questions') qFileName = parent;
-                          else if (loadedRawPages.length > 0) qFileName = loadedRawPages[0].fileName;
+                          else if (zipRawPages.length > 0) qFileName = zipRawPages[0].fileName; // Fallback
                         }
-                        if (qFileName === "unknown" && loadedRawPages.length > 0) {
-                            qFileName = loadedRawPages[0].fileName;
+                        
+                        // Last resort fallback if qFileName is still "unknown" but we only have one exam in the batch
+                        if (qFileName === "unknown" && zipRawPages.length > 0) {
+                             const uniqueFiles = new Set(zipRawPages.map(p => p.fileName));
+                             if (uniqueFiles.size === 1) {
+                                 qFileName = Array.from(uniqueFiles)[0];
+                             }
                         }
                         matched = true;
                     }
                 }
+
                 if (matched) {
                     const base64 = await loadedZip.file(key)!.async('base64');
-                    const targetPage = loadedRawPages.find(p => (p.fileName === qFileName && p.detections.some(d => d.id === qId)) || p.detections.some(d => d.id === qId));
+                    const ext = key.split('.').pop()?.toLowerCase();
+                    const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
                     
-                    loadedQuestions.push({
-                      id: qId,
-                      pageNumber: targetPage?.pageNumber || 0,
-                      fileName: qFileName === "unknown" && targetPage ? targetPage.fileName : qFileName,
-                      dataUrl: `data:image/jpeg;base64,${base64}`
-                    });
+                    // Validate against loaded raw pages from the specific ZIP context
+                    const targetPage = zipRawPages.find(p => (p.fileName === qFileName && p.detections.some(d => d.id === qId)) || (p.fileName === qFileName));
+                    
+                    if (targetPage) {
+                        loadedQuestions.push({
+                            id: qId,
+                            pageNumber: targetPage.detections.find(d => d.id === qId) ? targetPage.pageNumber : targetPage.pageNumber,
+                            fileName: qFileName,
+                            dataUrl: `data:${mime};base64,${base64}`
+                        });
+                    }
                 }
             }));
             allQuestions.push(...loadedQuestions);
