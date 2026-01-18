@@ -455,7 +455,7 @@ const App: React.FC = () => {
 
   return (
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 pb-32`}>
-      <header className="max-w-6xl mx-auto py-10 text-center relative">
+      <header className="max-w-6xl mx-auto py-10 text-center relative z-50 bg-slate-50">
         <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-2 tracking-tight">
           Exam <span className="text-blue-600">Smart</span> Splitter
         </h1>
@@ -561,7 +561,7 @@ const App: React.FC = () => {
         )}
 
         <ProcessingState status={status} progress={progress} total={total} completedCount={completedCount} error={error} detailedStatus={detailedStatus} croppingTotal={croppingTotal} croppingDone={croppingDone} />
-        {showDebug ? <DebugRawView pages={rawPages} questions={questions} /> : (questions.length > 0 && <QuestionGrid questions={questions} rawPages={rawPages} />)}
+        {showDebug ? <DebugRawView pages={rawPages} questions={questions} onClose={() => setShowDebug(false)} /> : (questions.length > 0 && <QuestionGrid questions={questions} rawPages={rawPages} />)}
       </main>
       
       {/* Refinement Panel - Moved to Top Right Floating Dialog */}
