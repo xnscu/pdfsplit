@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import JSZip from 'jszip';
+import { VariableSizeList as List, ListChildComponentProps } from 'react-window';
+import AutoSizer from 'react-virtualized-auto-sizer';
 import { QuestionImage, DebugPageData } from '../types';
 
 interface Props {
@@ -9,6 +11,104 @@ interface Props {
   onDebug: (fileName: string) => void;
   onRefine: (fileName: string) => void;
 }
+
+interface RowData {
+  type: 'header' | 'grid';
+  fileName: string;
+  items: QuestionImage[]; // For 'grid' type
+  startIndex: number; // Index of the first item in this row within the file's list
+  totalInFile: number;
+}
+
+interface ItemDataProps {
+  rows: RowData[];
+  columns: number;
+  onDebug: (fileName: string) => void;
+  onRefine: (fileName: string) => void;
+  generateZip: (fileName?: string) => void;
+  zippingFile: string | null;
+  zippingProgress: string;
+  setSelectedImage: (img: QuestionImage) => void;
+}
+
+const ROW_HEIGHT_HEADER = 100;
+const ROW_HEIGHT_GRID = 360;
+
+const VirtualRow = ({ index, style, data }: ListChildComponentProps<ItemDataProps>) => {
+  const { rows, columns, onDebug, onRefine, generateZip, zippingFile, zippingProgress, setSelectedImage } = data;
+  const row = rows[index];
+
+  if (row.type === 'header') {
+    return (
+      <div style={style} className="px-4 md:px-8 py-4 z-10">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <div className="flex items-center gap-4 overflow-hidden">
+             <div className="bg-blue-50 text-blue-600 p-2 rounded-xl shrink-0">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+             </div>
+             <div className="min-w-0">
+               <h3 className="text-lg font-black text-slate-800 tracking-tight truncate">{row.fileName}</h3>
+               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{row.totalInFile} Items</p>
+             </div>
+          </div>
+          
+          <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => onDebug(row.fileName)} className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 bg-white transition-colors">Debug</button>
+              <button onClick={() => onRefine(row.fileName)} className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 bg-white transition-colors">Refine</button>
+              <button 
+                onClick={() => generateZip(row.fileName)}
+                disabled={zippingFile !== null}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:text-green-600 hover:bg-green-50 border border-slate-200 bg-white transition-colors disabled:opacity-50 w-[80px] flex justify-center"
+              >
+                 {zippingFile === row.fileName ? (
+                   <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                 ) : "ZIP"}
+              </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={style} className="px-4 md:px-8">
+      <div 
+        className="grid gap-6 h-full" 
+        style={{ 
+          gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+          paddingBottom: '20px' // Gutter
+        }}
+      >
+        {row.items.map((q, i) => (
+           <div 
+              key={`${q.fileName}-${q.id}-${i}`}
+              className="group bg-white border border-slate-200 rounded-2xl overflow-hidden hover:shadow-xl transition-all duration-300 flex flex-col h-full"
+           >
+              <div className="px-4 py-2 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Q{q.id}</span>
+                  {q.originalDataUrl && <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>}
+              </div>
+              <div 
+                  className="p-4 flex items-center justify-center flex-grow cursor-zoom-in relative bg-white"
+                  onClick={() => setSelectedImage(q)}
+              >
+                  <img 
+                    src={q.dataUrl} 
+                    alt={`Q${q.id}`} 
+                    className="max-w-full max-h-[260px] w-auto h-auto object-contain transition-transform duration-300 group-hover:scale-105"
+                    loading="lazy"
+                  />
+              </div>
+           </div>
+        ))}
+        {/* Fill empty cells to maintain grid structure visually if needed */}
+        {Array.from({ length: columns - row.items.length }).map((_, i) => (
+          <div key={`empty-${i}`} />
+        ))}
+      </div>
+    </div>
+  );
+};
 
 export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, onRefine }) => {
   const [zippingFile, setZippingFile] = useState<string | null>(null);
@@ -27,6 +127,7 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
     return groups;
   }, [questions]);
 
+  // Handle Modal Navigation
   const handleNext = useCallback(() => {
     if (!selectedImage) return;
     const currentIndex = questions.indexOf(selectedImage);
@@ -52,14 +153,13 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
       if (e.key === 'ArrowLeft') handlePrev();
       if (e.key === 'Escape') setSelectedImage(null);
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedImage, handleNext, handlePrev]);
 
+  // ZIP Generation Logic (Copied from previous implementation)
   const generateZip = async (targetFileName?: string) => {
     if (questions.length === 0) return;
-    
     const fileNames = targetFileName ? [targetFileName] : Object.keys(groupedQuestions);
     if (fileNames.length === 0) return;
 
@@ -70,22 +170,16 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
     try {
       const zip = new JSZip();
       const isBatch = fileNames.length > 1;
-
       let processedCount = 0;
       const totalCount = fileNames.length;
 
-      // Use for...of to allow awaiting promises (yielding to UI)
       for (const fileName of fileNames) {
         const fileQs = groupedQuestions[fileName];
         if (!fileQs) continue;
-
         const fileRawPages = rawPages.filter(p => p.fileName === fileName);
-        
-        // If batch download, put in folder. If single file download, put in root.
         const folder = isBatch ? zip.folder(fileName) : zip;
         if (!folder) continue;
 
-        // Add metadata/debug info
         folder.file("analysis_data.json", JSON.stringify(fileRawPages, null, 2));
         
         const fullPagesFolder = folder.folder("full_pages");
@@ -109,10 +203,8 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
         });
 
         processedCount++;
-        // Update progress for user feedback during preparation
         if (!targetFileName) {
             setZippingProgress(`Preparing ${processedCount}/${totalCount}`);
-            // Yield to main thread to allow UI render
             await new Promise(resolve => setTimeout(resolve, 0));
         }
       }
@@ -124,23 +216,13 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
         compression: "DEFLATE",
         compressionOptions: { level: 6 }
       }, (metadata) => {
-          // Update progress with percentage
           setZippingProgress(`Compressing ${metadata.percent.toFixed(0)}%`);
       });
       
       const url = window.URL.createObjectURL(content);
       const link = document.createElement('a');
       link.href = url;
-      
-      let downloadName = "exam_processed.zip";
-      if (targetFileName) {
-        downloadName = `${targetFileName}_processed.zip`;
-      } else if (isBatch) {
-        downloadName = "exam_batch_processed.zip";
-      } else if (fileNames.length === 1) {
-        // Fallback for "Download All" when only 1 file exists
-        downloadName = `${fileNames[0]}_processed.zip`;
-      }
+      let downloadName = targetFileName ? `${targetFileName}_processed.zip` : isBatch ? "exam_batch_processed.zip" : `${fileNames[0]}_processed.zip`;
 
       link.download = downloadName;
       document.body.appendChild(link);
@@ -156,124 +238,107 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
     }
   };
 
-  if (questions.length === 0) return null;
+  const hasNext = selectedImage && questions.indexOf(selectedImage) < questions.length - 1;
+  const hasPrev = selectedImage && questions.indexOf(selectedImage) > 0;
 
-  const currentIndex = selectedImage ? questions.indexOf(selectedImage) : -1;
-  const hasNext = currentIndex < questions.length - 1;
-  const hasPrev = currentIndex > 0;
+  if (questions.length === 0) return null;
 
   return (
     <>
-      <div className="mt-12 w-full animate-[fade-in_0.6s_ease-out]">
-        <div className="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-8 border-b border-slate-200 pb-10">
-          <div>
-            <h2 className="text-4xl font-black text-slate-900 mb-3 tracking-tight">Results</h2>
-            <p className="text-slate-500 font-semibold flex items-center gap-2">
-              <span className="w-2.5 h-2.5 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.4)]"></span>
-              Extracted {questions.length} questions from {Object.keys(groupedQuestions).length} source files
-            </p>
+      <div className="w-full flex flex-col h-[calc(100vh-140px)] animate-[fade-in_0.6s_ease-out]">
+        {/* Fixed Header Area */}
+        <div className="flex-none px-4 md:px-8 pb-6 border-b border-slate-200 mb-2">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div>
+              <h2 className="text-3xl font-black text-slate-900 mb-2 tracking-tight">Results</h2>
+              <p className="text-slate-500 font-semibold flex items-center gap-2 text-sm">
+                <span className="w-2 h-2 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.4)]"></span>
+                Extracted {questions.length} questions from {Object.keys(groupedQuestions).length} files
+              </p>
+            </div>
+            <button 
+                onClick={() => generateZip()}
+                disabled={zippingFile !== null}
+                className={`group px-6 py-3 rounded-xl font-black transition-all flex items-center justify-center gap-3 shadow-lg min-w-[200px] tracking-tight uppercase text-xs ${
+                zippingFile 
+                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none' 
+                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 active:scale-95'
+                }`}
+            >
+                {zippingFile === 'ALL' ? (
+                    <>
+                      <svg className="animate-spin w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span>{zippingProgress}</span>
+                    </>
+                ) : 'Download All (ZIP)'}
+            </button>
           </div>
-          <button 
-              onClick={() => generateZip()}
-              disabled={zippingFile !== null}
-              className={`group px-8 py-3 rounded-2xl font-black transition-all flex items-center justify-center gap-3 shadow-lg min-w-[200px] tracking-tight uppercase text-xs ${
-              zippingFile 
-                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none' 
-                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 active:scale-95'
-              }`}
-          >
-              {zippingFile === 'ALL' ? (
-                  <>
-                    <svg className="animate-spin w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    <span>{zippingProgress}</span>
-                  </>
-              ) : 'Download All Results (ZIP)'}
-          </button>
         </div>
 
-        {Object.entries(groupedQuestions).map(([fileName, fileQuestions]: [string, QuestionImage[]]) => (
-            <div key={fileName} className="mb-16 bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-xl shadow-slate-200/40">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 pb-6 border-b border-slate-50">
-                    <div className="flex items-center gap-4">
-                        <div className="bg-blue-50 text-blue-600 p-3 rounded-2xl border border-blue-100">
-                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                        </div>
-                        <div>
-                          <h3 className="text-2xl font-black text-slate-800 tracking-tight break-all">{fileName}</h3>
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{fileQuestions.length} Items Found</p>
-                        </div>
-                    </div>
-                    
-                    <div className="flex flex-wrap items-center gap-3">
-                        <button 
-                           onClick={() => onDebug(fileName)}
-                           className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors flex items-center gap-2 border border-slate-200 bg-white"
-                           title="View Debug Analysis"
-                        >
-                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-                           Debug
-                        </button>
-                        <button 
-                           onClick={() => onRefine(fileName)}
-                           className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors flex items-center gap-2 border border-slate-200 bg-white"
-                           title="Refine Crop Settings"
-                        >
-                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
-                           Refine
-                        </button>
-                        <button 
-                           onClick={() => generateZip(fileName)}
-                           disabled={zippingFile !== null}
-                           className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-green-600 hover:bg-green-50 transition-colors flex items-center gap-2 border border-slate-200 bg-white disabled:opacity-50 min-w-[80px] justify-center"
-                           title="Download ZIP"
-                        >
-                           {zippingFile === fileName ? (
-                             <>
-                                <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                <span className="text-[10px]">{zippingProgress.includes('%') ? zippingProgress.replace('Compressing ', '') : ''}</span>
-                             </>
-                           ) : (
-                             <>
-                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                               ZIP
-                             </>
-                           )}
-                        </button>
-                    </div>
-                </div>
+        {/* Virtualized Grid */}
+        <div className="flex-1 min-h-0 bg-slate-50/50">
+          <AutoSizer>
+            {({ height, width }) => {
+              // Determine columns based on width
+              let columns = 1;
+              if (width >= 640) columns = 2;
+              if (width >= 1024) columns = 3;
+              if (width >= 1280) columns = 4;
+              if (width >= 1536) columns = 5;
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {fileQuestions.map((q, idx) => (
-                    <div 
-                    key={`${q.fileName}-${q.pageNumber}-${q.id}-${idx}`} 
-                    className="group bg-slate-50 border border-slate-200 rounded-[1.5rem] overflow-hidden hover:shadow-xl transition-all duration-300 hover:-translate-y-1 flex flex-col"
-                    >
-                    <div className="px-5 py-3 border-b border-slate-200/50 flex justify-between items-center bg-white/50">
-                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">P{q.pageNumber} • Q{q.id}</span>
-                        {q.originalDataUrl && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" title="Refined"></span>
-                        )}
-                    </div>
-                    <div 
-                        className="p-6 flex items-center justify-center flex-grow bg-white min-h-[200px] cursor-zoom-in relative"
-                        onClick={() => setSelectedImage(q)}
-                    >
-                        <img 
-                        src={q.dataUrl} 
-                        alt={`Question ${q.id}`} 
-                        className="max-w-full h-auto rounded-md select-none transition-transform duration-500 group-hover:scale-[1.02]"
-                        />
-                    </div>
-                    </div>
-                ))}
-                </div>
-            </div>
-        ))}
+              // Compute virtual rows flattened from groups
+              const rows: RowData[] = [];
+              Object.entries(groupedQuestions).forEach(([fileName, fileQs]) => {
+                // Header Row
+                rows.push({
+                  type: 'header',
+                  fileName,
+                  items: [],
+                  startIndex: 0,
+                  totalInFile: fileQs.length
+                });
+
+                // Grid Rows
+                for (let i = 0; i < fileQs.length; i += columns) {
+                  rows.push({
+                    type: 'grid',
+                    fileName,
+                    items: fileQs.slice(i, i + columns),
+                    startIndex: i,
+                    totalInFile: fileQs.length
+                  });
+                }
+              });
+
+              return (
+                <List
+                  height={height}
+                  width={width}
+                  itemCount={rows.length}
+                  itemSize={(index) => rows[index].type === 'header' ? ROW_HEIGHT_HEADER : ROW_HEIGHT_GRID}
+                  itemData={{
+                    rows,
+                    columns,
+                    onDebug,
+                    onRefine,
+                    generateZip,
+                    zippingFile,
+                    zippingProgress,
+                    setSelectedImage
+                  }}
+                >
+                  {VirtualRow}
+                </List>
+              );
+            }}
+          </AutoSizer>
+        </div>
       </div>
 
+      {/* Full Screen Modal */}
       {selectedImage && (
         <div 
-          className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/95 backdrop-blur-md transition-opacity animate-[fade-in_0.2s_ease-out]"
+          className="fixed inset-0 z-[250] flex items-center justify-center bg-slate-950/95 backdrop-blur-md transition-opacity animate-[fade-in_0.2s_ease-out]"
           onClick={() => setSelectedImage(null)}
         >
           {hasPrev && (
@@ -310,16 +375,14 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
                  <h2 className="text-3xl font-black tracking-tight">Question {selectedImage.id}</h2>
                  <p className="text-xs font-bold text-white/40 uppercase tracking-[0.2em]">{selectedImage.fileName}</p>
                </div>
-               <div className="flex gap-6">
-                  <button 
-                    className="text-white/40 hover:text-white p-3 transition-colors bg-white/5 rounded-2xl hover:bg-white/10"
-                    onClick={() => setSelectedImage(null)}
-                  >
-                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-               </div>
+               <button 
+                  className="text-white/40 hover:text-white p-3 transition-colors bg-white/5 rounded-2xl hover:bg-white/10"
+                  onClick={() => setSelectedImage(null)}
+                >
+                  <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
             </div>
             
             <div className="flex-1 w-full bg-white rounded-3xl overflow-hidden shadow-2xl relative flex flex-col">
@@ -344,7 +407,6 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
                     </button>
                   </div>
                 )}
-
                 <img 
                   src={showOriginal && selectedImage.originalDataUrl ? selectedImage.originalDataUrl : selectedImage.dataUrl} 
                   alt={`Full size Question ${selectedImage.id}`} 
