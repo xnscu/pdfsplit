@@ -44,30 +44,30 @@ export const DebugRawView: React.FC<Props> = ({
   const [dynamicRawUrl, setDynamicRawUrl] = useState<string | null>(null);
   const [isGeneratingRaw, setIsGeneratingRaw] = useState(false);
 
-  // Dragging State for Column Adjustment
-  const [draggingSide, setDraggingSide] = useState<'left' | 'right' | null>(null);
+  // Dragging State
+  const [draggingSide, setDraggingSide] = useState<'left' | 'right' | 'top' | 'bottom' | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const [dragX, setDragX] = useState<number | null>(null);
+  const [dragValue, setDragValue] = useState<number | null>(null);
 
   // Reset selected key when the file changes
   useEffect(() => {
     setSelectedKey(null);
     setDraggingSide(null);
-    setDragX(null);
+    setDragValue(null);
   }, [pages[0]?.fileName]);
 
-  const { selectedImage, selectedDetection, pageDetections } = useMemo(() => {
-    if (!selectedKey) return { selectedImage: null, selectedDetection: null, pageDetections: [] };
+  const { selectedImage, selectedDetection, pageDetections, selectedIndex } = useMemo(() => {
+    if (!selectedKey) return { selectedImage: null, selectedDetection: null, pageDetections: [], selectedIndex: -1 };
     
     const parts = selectedKey.split('||');
-    if (parts.length !== 3) return { selectedImage: null, selectedDetection: null, pageDetections: [] };
+    if (parts.length !== 3) return { selectedImage: null, selectedDetection: null, pageDetections: [], selectedIndex: -1 };
 
     const fileName = parts[0];
     const pageNum = parseInt(parts[1], 10);
     const detIdx = parseInt(parts[2], 10);
 
     const page = pages.find(p => p.fileName === fileName && p.pageNumber === pageNum);
-    if (!page) return { selectedImage: null, selectedDetection: null, pageDetections: [] };
+    if (!page) return { selectedImage: null, selectedDetection: null, pageDetections: [], selectedIndex: -1 };
 
     const detectionRaw = page.detections[detIdx];
     const detection = detectionRaw ? { ...detectionRaw, pageNumber: pageNum, fileName } : null;
@@ -91,7 +91,7 @@ export const DebugRawView: React.FC<Props> = ({
 
     const image = effectiveId ? questions.find(q => q.fileName === fileName && q.id === effectiveId) || null : null;
 
-    return { selectedImage: image, selectedDetection: detection, pageDetections: page.detections };
+    return { selectedImage: image, selectedDetection: detection, pageDetections: page.detections, selectedIndex: detIdx };
   }, [selectedKey, pages, questions]);
 
   // Column Group Logic: Find all detections in the same "column" as the selected one
@@ -122,6 +122,18 @@ export const DebugRawView: React.FC<Props> = ({
 
     return { indices: columnIndices, initialLeft: minX, initialRight: maxX };
   }, [selectedDetection, pageDetections]);
+
+  // Get current Box coords for vertical lines
+  const selectedBoxCoords = useMemo(() => {
+    if (!selectedDetection) return null;
+    const boxes = (Array.isArray(selectedDetection.boxes_2d[0]) ? selectedDetection.boxes_2d[0] : selectedDetection.boxes_2d) as [number, number, number, number];
+    return {
+        ymin: boxes[0],
+        xmin: boxes[1],
+        ymax: boxes[2],
+        xmax: boxes[3]
+    };
+  }, [selectedDetection]);
 
   // Effect: Generate raw view
   useEffect(() => {
@@ -172,37 +184,48 @@ export const DebugRawView: React.FC<Props> = ({
   const displayRawUrl = dynamicRawUrl;
 
   // Drag Handlers
-  const handleSvgMouseDown = useCallback((e: React.MouseEvent, side: 'left' | 'right') => {
-      if (!columnInfo) return;
+  const handleSvgMouseDown = useCallback((e: React.MouseEvent, side: 'left' | 'right' | 'top' | 'bottom') => {
       e.stopPropagation();
       e.preventDefault();
+      
       setDraggingSide(side);
-      setDragX(side === 'left' ? columnInfo.initialLeft : columnInfo.initialRight);
-  }, [columnInfo]);
+
+      // Initialize drag value based on type
+      if (side === 'left') setDragValue(columnInfo?.initialLeft || 0);
+      if (side === 'right') setDragValue(columnInfo?.initialRight || 1000);
+      if (side === 'top') setDragValue(selectedBoxCoords?.ymin || 0);
+      if (side === 'bottom') setDragValue(selectedBoxCoords?.ymax || 1000);
+
+  }, [columnInfo, selectedBoxCoords]);
 
   const handleGlobalMouseMove = useCallback((e: MouseEvent) => {
       if (!draggingSide || !svgRef.current) return;
       
       const rect = svgRef.current.getBoundingClientRect();
-      // Map clientX to SVG viewBox coordinate (0-1000)
-      // viewBox="0 0 1000 1000"
       const scaleX = 1000 / rect.width;
-      let newX = (e.clientX - rect.left) * scaleX;
+      const scaleY = 1000 / rect.height;
+
+      let newVal = 0;
+
+      if (draggingSide === 'left' || draggingSide === 'right') {
+          newVal = (e.clientX - rect.left) * scaleX;
+      } else {
+          newVal = (e.clientY - rect.top) * scaleY;
+      }
       
       // Clamp values (0-1000)
-      newX = Math.max(0, Math.min(1000, newX));
+      newVal = Math.max(0, Math.min(1000, newVal));
       
-      setDragX(newX);
+      setDragValue(newVal);
   }, [draggingSide]);
 
   const handleGlobalMouseUp = useCallback(async () => {
-      if (!draggingSide || dragX === null || !columnInfo || !selectedDetection || !onUpdateDetections) {
+      if (!draggingSide || dragValue === null || !selectedDetection || !onUpdateDetections) {
           setDraggingSide(null);
-          setDragX(null);
+          setDragValue(null);
           return;
       }
 
-      // Commit changes
       const parts = selectedKey!.split('||');
       const fileName = parts[0];
       const pageNum = parseInt(parts[1], 10);
@@ -210,33 +233,41 @@ export const DebugRawView: React.FC<Props> = ({
       // Clone existing detections
       const newDetections = JSON.parse(JSON.stringify(pageDetections)) as DetectedQuestion[];
       
-      // Update all in column group
-      columnInfo.indices.forEach(idx => {
-          const det = newDetections[idx];
-          // Handle both single and multi-box format. We assume box[0] is the main box to adjust for column.
-          if (Array.isArray(det.boxes_2d[0])) {
-              // Multi-box: Update first box logic
-              if (draggingSide === 'left') {
-                  (det.boxes_2d[0] as any)[1] = Math.round(dragX);
+      if (draggingSide === 'left' || draggingSide === 'right') {
+          // BATCH UPDATE: Columns
+          if (columnInfo) {
+            columnInfo.indices.forEach(idx => {
+                const det = newDetections[idx];
+                if (Array.isArray(det.boxes_2d[0])) {
+                    if (draggingSide === 'left') (det.boxes_2d[0] as any)[1] = Math.round(dragValue);
+                    else (det.boxes_2d[0] as any)[3] = Math.round(dragValue);
+                } else {
+                    if (draggingSide === 'left') (det.boxes_2d as any)[1] = Math.round(dragValue);
+                    else (det.boxes_2d as any)[3] = Math.round(dragValue);
+                }
+            });
+          }
+      } else {
+          // SINGLE UPDATE: Top/Bottom
+          const det = newDetections[selectedIndex];
+          if (det) {
+              if (Array.isArray(det.boxes_2d[0])) {
+                  if (draggingSide === 'top') (det.boxes_2d[0] as any)[0] = Math.round(dragValue);
+                  else (det.boxes_2d[0] as any)[2] = Math.round(dragValue);
               } else {
-                  (det.boxes_2d[0] as any)[3] = Math.round(dragX);
-              }
-          } else {
-              // Single box
-              if (draggingSide === 'left') {
-                  (det.boxes_2d as any)[1] = Math.round(dragX);
-              } else {
-                  (det.boxes_2d as any)[3] = Math.round(dragX);
+                  if (draggingSide === 'top') (det.boxes_2d as any)[0] = Math.round(dragValue);
+                  else (det.boxes_2d as any)[2] = Math.round(dragValue);
               }
           }
-      });
+      }
 
       setDraggingSide(null);
+      setDragValue(null);
       
       // Call parent update
       onUpdateDetections(fileName, pageNum, newDetections);
       
-  }, [draggingSide, dragX, columnInfo, selectedDetection, pageDetections, selectedKey, onUpdateDetections]);
+  }, [draggingSide, dragValue, columnInfo, selectedDetection, pageDetections, selectedKey, onUpdateDetections, selectedIndex]);
 
   // Attach global listeners for dragging
   useEffect(() => {
@@ -401,62 +432,91 @@ export const DebugRawView: React.FC<Props> = ({
                         );
                       })}
 
-                      {/* Interactive Drag Handles - Only for selected page and active column */}
-                      {selectedDetection && selectedDetection.pageNumber === page.pageNumber && columnInfo && !isProcessing && (
+                      {/* Interactive Drag Handles - Only for selected page */}
+                      {selectedDetection && selectedDetection.pageNumber === page.pageNumber && selectedBoxCoords && !isProcessing && (
                         <>
-                          {/* Left Line */}
-                          <line 
-                            x1={draggingSide === 'left' && dragX !== null ? dragX : columnInfo.initialLeft} 
-                            y1="0" 
-                            x2={draggingSide === 'left' && dragX !== null ? dragX : columnInfo.initialLeft} 
-                            y2="1000" 
-                            stroke="#3b82f6" 
-                            strokeWidth="2" 
-                            strokeDasharray="5,5"
-                            vectorEffect="non-scaling-stroke"
-                          />
-                          {/* Right Line */}
-                          <line 
-                            x1={draggingSide === 'right' && dragX !== null ? dragX : columnInfo.initialRight} 
-                            y1="0" 
-                            x2={draggingSide === 'right' && dragX !== null ? dragX : columnInfo.initialRight} 
-                            y2="1000" 
-                            stroke="#3b82f6" 
-                            strokeWidth="2" 
-                            strokeDasharray="5,5"
-                            vectorEffect="non-scaling-stroke"
-                          />
+                          {/* Left Line (Column) */}
+                          {columnInfo && (
+                            <>
+                                <line 
+                                    x1={draggingSide === 'left' && dragValue !== null ? dragValue : columnInfo.initialLeft} y1="0" 
+                                    x2={draggingSide === 'left' && dragValue !== null ? dragValue : columnInfo.initialLeft} y2="1000" 
+                                    stroke="#3b82f6" strokeWidth="2" strokeDasharray="5,5" vectorEffect="non-scaling-stroke"
+                                />
+                                <line 
+                                    className="cursor-col-resize hover:stroke-blue-400/50"
+                                    x1={draggingSide === 'left' && dragValue !== null ? dragValue : columnInfo.initialLeft} y1="0" 
+                                    x2={draggingSide === 'left' && dragValue !== null ? dragValue : columnInfo.initialLeft} y2="1000" 
+                                    stroke="transparent" strokeWidth="40" vectorEffect="non-scaling-stroke"
+                                    onMouseDown={(e) => handleSvgMouseDown(e, 'left')}
+                                />
+                            </>
+                          )}
+                          
+                          {/* Right Line (Column) */}
+                          {columnInfo && (
+                            <>
+                                <line 
+                                    x1={draggingSide === 'right' && dragValue !== null ? dragValue : columnInfo.initialRight} y1="0" 
+                                    x2={draggingSide === 'right' && dragValue !== null ? dragValue : columnInfo.initialRight} y2="1000" 
+                                    stroke="#3b82f6" strokeWidth="2" strokeDasharray="5,5" vectorEffect="non-scaling-stroke"
+                                />
+                                <line 
+                                    className="cursor-col-resize hover:stroke-blue-400/50"
+                                    x1={draggingSide === 'right' && dragValue !== null ? dragValue : columnInfo.initialRight} y1="0" 
+                                    x2={draggingSide === 'right' && dragValue !== null ? dragValue : columnInfo.initialRight} y2="1000" 
+                                    stroke="transparent" strokeWidth="40" vectorEffect="non-scaling-stroke"
+                                    onMouseDown={(e) => handleSvgMouseDown(e, 'right')}
+                                />
+                            </>
+                          )}
 
-                          {/* Hit Areas (Invisible but wide) */}
-                          <line 
-                            className="cursor-col-resize hover:stroke-blue-400/50"
-                            x1={draggingSide === 'left' && dragX !== null ? dragX : columnInfo.initialLeft} 
-                            y1="0" 
-                            x2={draggingSide === 'left' && dragX !== null ? dragX : columnInfo.initialLeft} 
-                            y2="1000" 
-                            stroke="transparent" 
-                            strokeWidth="40" 
-                            vectorEffect="non-scaling-stroke"
-                            onMouseDown={(e) => handleSvgMouseDown(e, 'left')}
-                          />
-                          <line 
-                            className="cursor-col-resize hover:stroke-blue-400/50"
-                            x1={draggingSide === 'right' && dragX !== null ? dragX : columnInfo.initialRight} 
-                            y1="0" 
-                            x2={draggingSide === 'right' && dragX !== null ? dragX : columnInfo.initialRight} 
-                            y2="1000" 
-                            stroke="transparent" 
-                            strokeWidth="40" 
-                            vectorEffect="non-scaling-stroke"
-                            onMouseDown={(e) => handleSvgMouseDown(e, 'right')}
-                          />
+                          {/* Top Line (Individual) */}
+                          <>
+                             <line 
+                                x1={selectedBoxCoords.xmin - 20} y1={draggingSide === 'top' && dragValue !== null ? dragValue : selectedBoxCoords.ymin} 
+                                x2={selectedBoxCoords.xmax + 20} y2={draggingSide === 'top' && dragValue !== null ? dragValue : selectedBoxCoords.ymin} 
+                                stroke="#10b981" strokeWidth="2" strokeDasharray="5,5" vectorEffect="non-scaling-stroke"
+                             />
+                             <line 
+                                className="cursor-row-resize hover:stroke-emerald-400/50"
+                                x1={selectedBoxCoords.xmin - 20} y1={draggingSide === 'top' && dragValue !== null ? dragValue : selectedBoxCoords.ymin} 
+                                x2={selectedBoxCoords.xmax + 20} y2={draggingSide === 'top' && dragValue !== null ? dragValue : selectedBoxCoords.ymin} 
+                                stroke="transparent" strokeWidth="40" vectorEffect="non-scaling-stroke"
+                                onMouseDown={(e) => handleSvgMouseDown(e, 'top')}
+                             />
+                          </>
+
+                          {/* Bottom Line (Individual) */}
+                          <>
+                             <line 
+                                x1={selectedBoxCoords.xmin - 20} y1={draggingSide === 'bottom' && dragValue !== null ? dragValue : selectedBoxCoords.ymax} 
+                                x2={selectedBoxCoords.xmax + 20} y2={draggingSide === 'bottom' && dragValue !== null ? dragValue : selectedBoxCoords.ymax} 
+                                stroke="#10b981" strokeWidth="2" strokeDasharray="5,5" vectorEffect="non-scaling-stroke"
+                             />
+                             <line 
+                                className="cursor-row-resize hover:stroke-emerald-400/50"
+                                x1={selectedBoxCoords.xmin - 20} y1={draggingSide === 'bottom' && dragValue !== null ? dragValue : selectedBoxCoords.ymax} 
+                                x2={selectedBoxCoords.xmax + 20} y2={draggingSide === 'bottom' && dragValue !== null ? dragValue : selectedBoxCoords.ymax} 
+                                stroke="transparent" strokeWidth="40" vectorEffect="non-scaling-stroke"
+                                onMouseDown={(e) => handleSvgMouseDown(e, 'bottom')}
+                             />
+                          </>
 
                           {/* Adjustment Tooltip */}
-                          {draggingSide && dragX !== null && (
+                          {draggingSide && dragValue !== null && (
                               <g>
-                                  <rect x={dragX + 10} y={50} width="120" height="30" rx="6" fill="rgba(0,0,0,0.8)" />
-                                  <text x={dragX + 70} y={70} fill="white" fontSize="14" fontWeight="bold" textAnchor="middle">
-                                      X: {Math.round(dragX)}
+                                  <rect 
+                                    x={draggingSide === 'left' || draggingSide === 'right' ? dragValue + 10 : 500} 
+                                    y={draggingSide === 'top' || draggingSide === 'bottom' ? dragValue + 10 : 50} 
+                                    width="120" height="30" rx="6" fill="rgba(0,0,0,0.8)" 
+                                  />
+                                  <text 
+                                    x={draggingSide === 'left' || draggingSide === 'right' ? dragValue + 70 : 560} 
+                                    y={draggingSide === 'top' || draggingSide === 'bottom' ? dragValue + 30 : 70} 
+                                    fill="white" fontSize="14" fontWeight="bold" textAnchor="middle"
+                                  >
+                                      {draggingSide === 'left' || draggingSide === 'right' ? 'X: ' : 'Y: '}{Math.round(dragValue)}
                                   </text>
                               </g>
                           )}
@@ -558,7 +618,7 @@ export const DebugRawView: React.FC<Props> = ({
                                 Raw Gemini Detection (No Trim)
                             </h4>
                             <span className="text-[10px] text-slate-500 font-black uppercase">
-                                Drag Blue Dashed Lines on Left to Adjust
+                                Drag Lines to Adjust Crop
                             </span>
                        </div>
 
@@ -595,10 +655,13 @@ export const DebugRawView: React.FC<Props> = ({
 
                   {/* Technical Data */}
                   <div className="space-y-4 pt-6 border-t border-slate-800">
-                    <h4 className="text-slate-500 font-bold text-xs uppercase tracking-widest">Bounding Box Coordinates</h4>
+                    <div className="flex justify-between items-center">
+                        <h4 className="text-slate-500 font-bold text-xs uppercase tracking-widest">Bounding Box Coordinates</h4>
+                        <span className="text-blue-500 text-[10px] uppercase font-bold">Y-Axis (Green) • X-Axis (Blue)</span>
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-slate-800/30 p-3 rounded-lg border border-slate-800">
-                          <span className="block text-[9px] text-slate-500 uppercase font-black mb-1">Y-Min</span>
+                        <div className={`bg-slate-800/30 p-3 rounded-lg border transition-colors ${draggingSide === 'top' ? 'bg-emerald-900/30 border-emerald-500' : 'bg-slate-800/30 border-slate-800'}`}>
+                          <span className="block text-[9px] text-slate-500 uppercase font-black mb-1">Y-Min (Top)</span>
                           <span className="text-white font-mono text-sm">
                               {selectedDetection ? Math.round((Array.isArray(selectedDetection.boxes_2d[0]) ? selectedDetection.boxes_2d[0][0] : selectedDetection.boxes_2d[0]) as number) : '-'}
                           </span>
@@ -609,8 +672,8 @@ export const DebugRawView: React.FC<Props> = ({
                               {selectedDetection ? Math.round((Array.isArray(selectedDetection.boxes_2d[0]) ? selectedDetection.boxes_2d[0][1] : selectedDetection.boxes_2d[1]) as number) : '-'}
                           </span>
                         </div>
-                        <div className="bg-slate-800/30 p-3 rounded-lg border border-slate-800">
-                          <span className="block text-[9px] text-slate-500 uppercase font-black mb-1">Y-Max</span>
+                        <div className={`bg-slate-800/30 p-3 rounded-lg border transition-colors ${draggingSide === 'bottom' ? 'bg-emerald-900/30 border-emerald-500' : 'bg-slate-800/30 border-slate-800'}`}>
+                          <span className="block text-[9px] text-slate-500 uppercase font-black mb-1">Y-Max (Bottom)</span>
                           <span className="text-white font-mono text-sm">
                               {selectedDetection ? Math.round((Array.isArray(selectedDetection.boxes_2d[0]) ? selectedDetection.boxes_2d[0][2] : selectedDetection.boxes_2d[2]) as number) : '-'}
                           </span>
