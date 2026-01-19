@@ -876,6 +876,11 @@ const App: React.FC = () => {
       setRefiningFile(fileName);
   };
 
+  // Determine unique file names for navigation
+  const uniqueFileNames = useMemo(() => {
+    return Array.from(new Set(rawPages.map(p => p.fileName)));
+  }, [rawPages]);
+
   const debugPages = useMemo(() => {
     if (!debugFile) return [];
     return rawPages.filter(p => p.fileName === debugFile);
@@ -885,6 +890,19 @@ const App: React.FC = () => {
     if (!debugFile) return [];
     return questions.filter(q => q.fileName === debugFile);
   }, [questions, debugFile]);
+
+  // Navigation handlers
+  const currentFileIndex = uniqueFileNames.indexOf(debugFile || '');
+  const hasNextFile = currentFileIndex !== -1 && currentFileIndex < uniqueFileNames.length - 1;
+  const hasPrevFile = currentFileIndex > 0;
+
+  const handleNextFile = () => {
+    if (hasNextFile) setDebugFile(uniqueFileNames[currentFileIndex + 1]);
+  };
+
+  const handlePrevFile = () => {
+    if (hasPrevFile) setDebugFile(uniqueFileNames[currentFileIndex - 1]);
+  };
 
   const isWideLayout = debugFile !== null || questions.length > 0 || sourcePages.length > 0;
   const isProcessing = status === ProcessingStatus.LOADING_PDF || status === ProcessingStatus.DETECTING_QUESTIONS || status === ProcessingStatus.CROPPING;
@@ -937,6 +955,10 @@ const App: React.FC = () => {
                 questions={debugQuestions} 
                 onClose={() => setDebugFile(null)} 
                 title={debugFile}
+                onNextFile={handleNextFile}
+                onPrevFile={handlePrevFile}
+                hasNextFile={hasNextFile}
+                hasPrevFile={hasPrevFile}
             />
         )}
 

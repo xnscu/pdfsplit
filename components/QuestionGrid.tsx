@@ -271,22 +271,36 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
                 Extracted {questions.length} questions from {Object.keys(groupedQuestions).length} files
               </p>
             </div>
-            <button 
-                onClick={() => generateZip()}
-                disabled={zippingFile !== null}
-                className={`group px-6 py-3 rounded-xl font-black transition-all flex items-center justify-center gap-3 shadow-lg min-w-[200px] tracking-tight uppercase text-xs ${
-                zippingFile 
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none' 
-                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 active:scale-95'
-                }`}
-            >
-                {zippingFile === 'ALL' ? (
-                    <>
-                      <svg className="animate-spin w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                      <span>{zippingProgress}</span>
-                    </>
-                ) : 'Download All (ZIP)'}
-            </button>
+            <div className="flex gap-3">
+              <button 
+                  onClick={() => {
+                     // Get the first available file to start debugging
+                     const files = Object.keys(groupedQuestions);
+                     if (files.length > 0) onDebug(files[0]);
+                  }}
+                  className="group px-6 py-3 rounded-xl font-black transition-all flex items-center justify-center gap-2 shadow-lg min-w-[160px] tracking-tight uppercase text-xs bg-slate-800 text-white hover:bg-slate-700 active:scale-95"
+              >
+                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                 Inspect All
+              </button>
+              
+              <button 
+                  onClick={() => generateZip()}
+                  disabled={zippingFile !== null}
+                  className={`group px-6 py-3 rounded-xl font-black transition-all flex items-center justify-center gap-3 shadow-lg min-w-[200px] tracking-tight uppercase text-xs ${
+                  zippingFile 
+                      ? 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none' 
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 active:scale-95'
+                  }`}
+              >
+                  {zippingFile === 'ALL' ? (
+                      <>
+                        <svg className="animate-spin w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        <span>{zippingProgress}</span>
+                      </>
+                  ) : 'Download All (ZIP)'}
+              </button>
+            </div>
           </div>
         </div>
 

@@ -8,6 +8,10 @@ interface Props {
   questions: QuestionImage[];
   onClose: () => void;
   title?: string;
+  onNextFile?: () => void;
+  onPrevFile?: () => void;
+  hasNextFile?: boolean;
+  hasPrevFile?: boolean;
 }
 
 // Default settings for debug visualization - STRICT mode
@@ -21,13 +25,27 @@ const DEBUG_CROP_SETTINGS: CropSettings = {
   debugExportPadding: 0 // New setting to remove the white border
 };
 
-export const DebugRawView: React.FC<Props> = ({ pages, questions, onClose, title }) => {
+export const DebugRawView: React.FC<Props> = ({ 
+  pages, 
+  questions, 
+  onClose, 
+  title,
+  onNextFile,
+  onPrevFile,
+  hasNextFile,
+  hasPrevFile
+}) => {
   // Key format: "fileName||pageNumber||detIndex"
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   
   // State for dynamically generated raw view (for ZIP loaded data)
   const [dynamicRawUrl, setDynamicRawUrl] = useState<string | null>(null);
   const [isGeneratingRaw, setIsGeneratingRaw] = useState(false);
+
+  // Reset selected key when the file changes (pages prop changes)
+  useEffect(() => {
+    setSelectedKey(null);
+  }, [pages[0]?.fileName]);
 
   const { selectedImage, selectedDetection } = useMemo(() => {
     if (!selectedKey) return { selectedImage: null, selectedDetection: null };
@@ -135,23 +153,47 @@ export const DebugRawView: React.FC<Props> = ({ pages, questions, onClose, title
     <div className="fixed inset-0 z-[100] flex flex-col bg-slate-950 animate-[fade-in_0.2s_ease-out]">
       {/* Top Toolbar */}
       <div className="flex-none h-16 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6 shadow-xl z-50">
-         <div className="flex items-center gap-4">
-            <h2 className="text-white font-black text-xl tracking-tight">Debug Inspector</h2>
+         <div className="flex items-center gap-4 min-w-0">
+            <h2 className="text-white font-black text-xl tracking-tight hidden sm:block">Debug Inspector</h2>
             {title && (
-                 <span className="text-slate-500 font-bold text-sm bg-slate-800 px-3 py-1 rounded-lg border border-slate-700 max-w-[300px] truncate">{title}</span>
+                 <span className="text-slate-500 font-bold text-sm bg-slate-800 px-3 py-1 rounded-lg border border-slate-700 truncate max-w-[200px] sm:max-w-[300px]">{title}</span>
             )}
-            <div className="hidden sm:flex px-3 py-1 bg-slate-800 rounded-lg border border-slate-700 items-center gap-2">
+            <div className="hidden lg:flex px-3 py-1 bg-slate-800 rounded-lg border border-slate-700 items-center gap-2">
                <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
                <span className="text-slate-400 text-xs font-bold uppercase tracking-wider">{pages.length} Pages</span>
             </div>
          </div>
-         <button 
-           onClick={onClose}
-           className="bg-white text-slate-900 px-5 py-2 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors flex items-center gap-2 shadow-lg shadow-white/5"
-         >
-           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-           Back to Results
-         </button>
+         
+         <div className="flex items-center gap-3">
+             {/* File Navigation Controls */}
+             <div className="flex items-center mr-4 bg-slate-800 rounded-lg p-1 border border-slate-700">
+               <button 
+                  onClick={onPrevFile} 
+                  disabled={!hasPrevFile}
+                  className={`p-1.5 rounded-md transition-colors ${hasPrevFile ? 'text-white hover:bg-slate-700' : 'text-slate-600 cursor-not-allowed'}`}
+                  title="Previous PDF File"
+               >
+                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+               </button>
+               <span className="text-slate-500 text-xs font-bold uppercase px-2 select-none">PDF File</span>
+               <button 
+                  onClick={onNextFile} 
+                  disabled={!hasNextFile}
+                  className={`p-1.5 rounded-md transition-colors ${hasNextFile ? 'text-white hover:bg-slate-700' : 'text-slate-600 cursor-not-allowed'}`}
+                  title="Next PDF File"
+               >
+                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+               </button>
+             </div>
+
+             <button 
+               onClick={onClose}
+               className="bg-white text-slate-900 px-4 py-2 rounded-xl font-bold text-sm hover:bg-slate-200 transition-colors flex items-center gap-2 shadow-lg shadow-white/5"
+             >
+               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+               Back to Grid
+             </button>
+         </div>
       </div>
 
       {/* Main Content Area */}
