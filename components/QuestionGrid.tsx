@@ -1,9 +1,10 @@
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, CSSProperties } from 'react';
 import JSZip from 'jszip';
-import { VariableSizeList as List, ListChildComponentProps } from 'react-window';
+import * as ReactWindow from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { QuestionImage, DebugPageData } from '../types';
+import { VariableSizeList } from 'react-window';
 
 interface Props {
   questions: QuestionImage[];
@@ -31,10 +32,18 @@ interface ItemDataProps {
   setSelectedImage: (img: QuestionImage) => void;
 }
 
+// Manually define ListChildComponentProps to avoid import errors
+interface ListChildComponentProps {
+  index: number;
+  style: CSSProperties;
+  data: ItemDataProps;
+  isScrolling?: boolean;
+}
+
 const ROW_HEIGHT_HEADER = 100;
 const ROW_HEIGHT_GRID = 360;
 
-const VirtualRow = ({ index, style, data }: ListChildComponentProps<ItemDataProps>) => {
+const VirtualRow = ({ index, style, data }: ListChildComponentProps) => {
   const { rows, columns, onDebug, onRefine, generateZip, zippingFile, zippingProgress, setSelectedImage } = data;
   const row = rows[index];
 
@@ -116,6 +125,10 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
   const [selectedImage, setSelectedImage] = useState<QuestionImage | null>(null);
   const [showOriginal, setShowOriginal] = useState(false); 
 
+  // Cast imports to any to bypass type errors in some environments
+  const List = ReactWindow.VariableSizeList || (ReactWindow as any).default?.VariableSizeList || VariableSizeList;
+  const AutoSizerAny = AutoSizer as any;
+
   const groupedQuestions = useMemo(() => {
     const groups: Record<string, QuestionImage[]> = {};
     questions.forEach(q => {
@@ -157,7 +170,7 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedImage, handleNext, handlePrev]);
 
-  // ZIP Generation Logic (Copied from previous implementation)
+  // ZIP Generation Logic
   const generateZip = async (targetFileName?: string) => {
     if (questions.length === 0) return;
     const fileNames = targetFileName ? [targetFileName] : Object.keys(groupedQuestions);
@@ -180,7 +193,10 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
         const folder = isBatch ? zip.folder(fileName) : zip;
         if (!folder) continue;
 
-        folder.file("analysis_data.json", JSON.stringify(fileRawPages, null, 2));
+        // OPTIMIZATION: Create a lightweight copy of rawPages for JSON without the Base64 images
+        // The images are stored in "full_pages/" folder anyway.
+        const lightweightRawPages = fileRawPages.map(({ dataUrl, ...rest }) => rest);
+        folder.file("analysis_data.json", JSON.stringify(lightweightRawPages, null, 2));
         
         const fullPagesFolder = folder.folder("full_pages");
         fileRawPages.forEach((page) => {
@@ -277,8 +293,8 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
 
         {/* Virtualized Grid */}
         <div className="flex-1 min-h-0 bg-slate-50/50">
-          <AutoSizer>
-            {({ height, width }) => {
+          <AutoSizerAny>
+            {({ height, width }: { height: number; width: number }) => {
               // Determine columns based on width
               let columns = 1;
               if (width >= 640) columns = 2;
@@ -315,7 +331,7 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
                   height={height}
                   width={width}
                   itemCount={rows.length}
-                  itemSize={(index) => rows[index].type === 'header' ? ROW_HEIGHT_HEADER : ROW_HEIGHT_GRID}
+                  itemSize={(index: number) => rows[index].type === 'header' ? ROW_HEIGHT_HEADER : ROW_HEIGHT_GRID}
                   itemData={{
                     rows,
                     columns,
@@ -331,7 +347,7 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
                 </List>
               );
             }}
-          </AutoSizer>
+          </AutoSizerAny>
         </div>
       </div>
 

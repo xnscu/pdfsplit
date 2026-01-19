@@ -145,3 +145,57 @@ export const deleteExamResults = async (ids: string[]): Promise<void> => {
     transaction.onerror = () => reject(transaction.error);
   });
 };
+
+/**
+ * Clean up a history item by removing duplicate pages
+ */
+export const cleanupHistoryItem = async (id: string): Promise<void> => {
+  const db = await openDB();
+  
+  // 1. Get the record
+  const record: any = await new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], "readonly");
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.get(id);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+
+  if (!record || !record.rawPages) return;
+
+  // 2. De-duplicate based on pageNumber
+  const originalCount = record.rawPages.length;
+  const uniqueMap = new Map();
+  
+  record.rawPages.forEach((p: DebugPageData) => {
+      if (!uniqueMap.has(p.pageNumber)) {
+          uniqueMap.set(p.pageNumber, p);
+      } else {
+          // If we have a duplicate, we can optionally keep the one with more detections
+          // But usually, they are identical. Keep first for stability.
+          const existing = uniqueMap.get(p.pageNumber);
+          if (p.detections.length > existing.detections.length) {
+              uniqueMap.set(p.pageNumber, p);
+          }
+      }
+  });
+  
+  const uniquePages = Array.from(uniqueMap.values());
+  uniquePages.sort((a: any, b: any) => a.pageNumber - b.pageNumber);
+
+  // If no change, exit
+  if (uniquePages.length === originalCount) return;
+
+  // 3. Update the record
+  record.rawPages = uniquePages;
+  record.pageCount = uniquePages.length;
+
+  return new Promise((resolve, reject) => {
+     const transaction = db.transaction([STORE_NAME], "readwrite");
+     const store = transaction.objectStore(STORE_NAME);
+     const request = store.put(record);
+     
+     request.onsuccess = () => resolve();
+     request.onerror = () => reject(request.error);
+  });
+};

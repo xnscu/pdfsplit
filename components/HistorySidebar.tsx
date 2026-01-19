@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { HistoryMetadata } from '../types';
-import { deleteExamResult, deleteExamResults } from '../services/storageService';
+import { deleteExamResult, deleteExamResults, cleanupHistoryItem } from '../services/storageService';
 
 interface Props {
   isOpen: boolean;
@@ -24,6 +25,7 @@ export const HistorySidebar: React.FC<Props> = ({
   onRefreshList 
 }) => {
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
+  const [isCleaning, setIsCleaning] = useState<string | null>(null);
 
   const handleToggleHistorySelection = (id: string) => {
     const newSet = new Set(selectedHistoryIds);
@@ -63,6 +65,20 @@ export const HistorySidebar: React.FC<Props> = ({
       });
       onRefreshList();
     }
+  };
+
+  const handleCleanupItem = async (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setIsCleaning(id);
+      try {
+          await cleanupHistoryItem(id);
+          onRefreshList();
+      } catch (error) {
+          console.error("Cleanup failed", error);
+          alert("Cleanup failed.");
+      } finally {
+          setIsCleaning(null);
+      }
   };
 
   if (!isOpen) return null;
@@ -136,13 +152,23 @@ export const HistorySidebar: React.FC<Props> = ({
                           <span className="text-[10px] text-slate-400">{formatDate(item.timestamp)}</span>
                         </div>
                       </div>
-                      <button 
-                          onClick={(e) => deleteHistoryItem(item.id, e)}
-                          className="text-slate-300 hover:text-red-500 p-1.5 rounded-lg hover:bg-red-50 transition-colors"
-                          title="Delete"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                      </button>
+                      <div className="flex items-center gap-1">
+                          <button 
+                            onClick={(e) => handleCleanupItem(item.id, e)}
+                            disabled={isCleaning === item.id}
+                            className={`text-slate-300 hover:text-orange-500 p-1.5 rounded-lg hover:bg-orange-50 transition-colors ${isCleaning === item.id ? 'animate-pulse text-orange-400' : ''}`}
+                            title="Clean Duplicates"
+                          >
+                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                          </button>
+                          <button 
+                              onClick={(e) => deleteHistoryItem(item.id, e)}
+                              className="text-slate-300 hover:text-red-500 p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                              title="Delete"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                      </div>
                     </div>
                     <button 
                       onClick={() => onLoadHistory(item.id)}
