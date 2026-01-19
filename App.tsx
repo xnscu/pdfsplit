@@ -265,6 +265,80 @@ const App: React.FC = () => {
     }
   };
 
+  const handleBatchLoadHistory = async (ids: string[]) => {
+    handleReset();
+    setShowHistory(false);
+    setIsLoadingHistory(true);
+    setStatus(ProcessingStatus.LOADING_PDF);
+    setDetailedStatus(`Restoring ${ids.length} exams from history...`);
+
+    try {
+      const loadPromises = ids.map(id => loadExamResult(id));
+      const results = await Promise.all(loadPromises);
+      
+      const combinedPages: DebugPageData[] = [];
+      
+      results.forEach(res => {
+        if (res && res.rawPages) {
+            combinedPages.push(...res.rawPages);
+        }
+      });
+
+      if (combinedPages.length === 0) {
+        throw new Error("No valid data found in selected items.");
+      }
+
+      // Deduplicate based on fileName + pageNumber
+      const uniqueMap = new Map<string, DebugPageData>();
+      combinedPages.forEach(p => {
+          const key = `${p.fileName}#${p.pageNumber}`;
+          uniqueMap.set(key, p);
+      });
+
+      const uniquePages = Array.from(uniqueMap.values());
+      uniquePages.sort((a, b) => {
+         if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
+         return a.pageNumber - b.pageNumber;
+      });
+
+      setRawPages(uniquePages);
+
+      const recoveredSourcePages = uniquePages.map(rp => ({
+        dataUrl: rp.dataUrl,
+        width: rp.width,
+        height: rp.height,
+        pageNumber: rp.pageNumber,
+        fileName: rp.fileName
+      }));
+      setSourcePages(recoveredSourcePages);
+
+      setStatus(ProcessingStatus.CROPPING);
+      setDetailedStatus('Applying current crop settings to batch...');
+
+      const totalDetections = uniquePages.reduce((acc, p) => acc + p.detections.length, 0);
+      setCroppingTotal(totalDetections);
+      setCroppingDone(0);
+      setTotal(uniquePages.length);
+      setCompletedCount(uniquePages.length);
+
+      abortControllerRef.current = new AbortController();
+      const generatedQuestions = await generateQuestionsFromRawPages(
+        uniquePages, 
+        cropSettings, 
+        abortControllerRef.current.signal
+      );
+
+      setQuestions(generatedQuestions);
+      setStatus(ProcessingStatus.COMPLETED);
+
+    } catch (e: any) {
+      setError("Batch load failed: " + e.message);
+      setStatus(ProcessingStatus.ERROR);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
   /**
    * Generates processed questions from raw debug data.
    */
@@ -728,10 +802,6 @@ const App: React.FC = () => {
                                  
                                  setRawPages(current => {
                                      // FILTER CURRENT RAW PAGES FOR THIS FILE
-                                     // Fix: Previously we did [...current.filter, resultPage] here.
-                                     // But setRawPages(prev => [...prev, resultPage]) was already called above.
-                                     // Because functional updates queue, 'current' ALREADY contains 'resultPage'.
-                                     // Adding it again created a duplicate.
                                      const filePages = current.filter(p => p.fileName === pageData.fileName);
                                      filePages.sort((a,b) => a.pageNumber - b.pageNumber);
                                      
@@ -872,6 +942,7 @@ const App: React.FC = () => {
         historyList={historyList}
         isLoading={isLoadingHistory}
         onLoadHistory={handleLoadHistory}
+        onBatchLoadHistory={handleBatchLoadHistory}
         onRefreshList={loadHistoryList}
       />
       

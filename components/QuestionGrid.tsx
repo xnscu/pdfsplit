@@ -4,7 +4,6 @@ import JSZip from 'jszip';
 import * as ReactWindow from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { QuestionImage, DebugPageData } from '../types';
-import { VariableSizeList } from 'react-window';
 
 interface Props {
   questions: QuestionImage[];
@@ -126,7 +125,7 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
   const [showOriginal, setShowOriginal] = useState(false); 
 
   // Cast imports to any to bypass type errors in some environments
-  const List = ReactWindow.VariableSizeList || (ReactWindow as any).default?.VariableSizeList || VariableSizeList;
+  const List = (ReactWindow as any).VariableSizeList || (ReactWindow as any).default?.VariableSizeList;
   const AutoSizerAny = AutoSizer as any;
 
   const groupedQuestions = useMemo(() => {
