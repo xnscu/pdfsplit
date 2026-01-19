@@ -11,13 +11,16 @@ interface Props {
   setCropSettings: React.Dispatch<React.SetStateAction<CropSettings>>;
   useHistoryCache: boolean;
   setUseHistoryCache: (b: boolean) => void;
+  batchSize?: number;
+  setBatchSize?: (b: number) => void;
 }
 
 export const ConfigurationPanel: React.FC<Props> = ({
   selectedModel, setSelectedModel,
   concurrency, setConcurrency,
   cropSettings, setCropSettings,
-  useHistoryCache, setUseHistoryCache
+  useHistoryCache, setUseHistoryCache,
+  batchSize, setBatchSize
 }) => {
   return (
     <section className="bg-white rounded-[2rem] p-8 md:p-10 border border-slate-200 shadow-xl shadow-slate-200/50">
@@ -46,6 +49,19 @@ export const ConfigurationPanel: React.FC<Props> = ({
               <input type="range" min="1" max="10" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} className="w-full accent-blue-600 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
             </div>
           </div>
+
+          {batchSize !== undefined && setBatchSize && (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Batch Load Size</label>
+                <span className="text-xs font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">{batchSize} Items</span>
+              </div>
+              <div className="pt-2 px-1">
+                <input type="range" min="5" max="100" step="5" value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))} className="w-full accent-emerald-500 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
+              </div>
+              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">Higher = Faster, but uses more RAM.</p>
+            </div>
+          )}
 
           <div className="space-y-4">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Crop Padding</label>

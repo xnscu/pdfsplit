@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
@@ -25,7 +24,8 @@ const STORAGE_KEYS = {
   CROP_SETTINGS: 'exam_splitter_crop_settings_v3',
   CONCURRENCY: 'exam_splitter_concurrency_v3',
   MODEL: 'exam_splitter_selected_model_v3',
-  USE_HISTORY_CACHE: 'exam_splitter_use_history_cache_v1'
+  USE_HISTORY_CACHE: 'exam_splitter_use_history_cache_v1',
+  BATCH_SIZE: 'exam_splitter_batch_size_v1'
 };
 
 interface SourcePage {
@@ -48,6 +48,22 @@ const formatTime = (seconds: number): string => {
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
   return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
+
+// Helper for auto-detect batch size based on RAM
+const getAutoBatchSize = (): number => {
+  if (typeof navigator !== 'undefined' && 'deviceMemory' in navigator) {
+    // @ts-ignore
+    const ram = navigator.deviceMemory as number; 
+    // Conservative scaling: 
+    // <= 4GB: 10 items
+    // <= 8GB: 25 items
+    // > 8GB: 50 items
+    if (ram <= 4) return 10;
+    if (ram <= 8) return 25;
+    return 50;
+  }
+  return 20; // Default fallback
 };
 
 // Helper for parallel processing with concurrency control
@@ -121,6 +137,15 @@ const App: React.FC = () => {
     }
   });
 
+  const [batchSize, setBatchSize] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.BATCH_SIZE);
+      return saved ? Math.max(1, parseInt(saved, 10)) : getAutoBatchSize();
+    } catch {
+      return 20;
+    }
+  });
+
   const [selectedModel, setSelectedModel] = useState(() => {
     return localStorage.getItem(STORAGE_KEYS.MODEL) || 'gemini-3-flash-preview';
   });
@@ -157,6 +182,10 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.CONCURRENCY, concurrency.toString());
   }, [concurrency]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.BATCH_SIZE, batchSize.toString());
+  }, [batchSize]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.MODEL, selectedModel);
@@ -325,8 +354,8 @@ const App: React.FC = () => {
 
     try {
       // Chunk loading to prevent Memory Spikes and UI freeze when loading massive data from IDB
-      // Browser memory can handle ~500 items, but loading them all via Promise.all is unsafe.
-      const CHUNK_SIZE = 10;
+      // Using user-configured batch size
+      const CHUNK_SIZE = batchSize;
       const combinedPages: DebugPageData[] = [];
       
       for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
@@ -1098,6 +1127,8 @@ const App: React.FC = () => {
               setCropSettings={setCropSettings}
               useHistoryCache={useHistoryCache}
               setUseHistoryCache={setUseHistoryCache}
+              batchSize={batchSize}
+              setBatchSize={setBatchSize}
             />
           </div>
         )}
