@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { CropSettings } from '../services/pdfService';
 import { ProcessingStatus } from '../types';
@@ -49,7 +50,7 @@ export const RefinementModal: React.FC<Props> = ({
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Inner Padding</label>
             <div className="flex items-center gap-3 relative group">
-              <input type="number" value={localSettings.canvasPaddingLeft} onChange={(e) => { const v = Number(e.target.value); setLocalSettings(p => ({ ...p, canvasPaddingLeft: v, canvasPaddingRight: v, canvasPaddingY: v })); }} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-base" />
+              <input type="number" value={localSettings.canvasPadding} onChange={(e) => { const v = Number(e.target.value); setLocalSettings(p => ({ ...p, canvasPadding: v })); }} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-base" />
               <span className="absolute right-5 text-xs text-slate-400 font-black uppercase select-none">px</span>
             </div>
              <p className="text-[10px] text-slate-400">Aesthetic whitespace added to the final image.</p>

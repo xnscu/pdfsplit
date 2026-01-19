@@ -20,9 +20,7 @@ interface Props {
 // No padding, no border, exact coordinate match.
 const DEBUG_CROP_SETTINGS: CropSettings = {
   cropPadding: 10,
-  canvasPaddingLeft: 0,
-  canvasPaddingRight: 0,
-  canvasPaddingY: 0,
+  canvasPadding: 0,
   mergeOverlap: -5,
   debugExportPadding: 0
 };

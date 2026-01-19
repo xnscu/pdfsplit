@@ -7,9 +7,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 
 export interface CropSettings {
   cropPadding: number; // Raw crop buffer (unified for X and Y)
-  canvasPaddingLeft: number; // Final aesthetic padding
-  canvasPaddingRight: number;
-  canvasPaddingY: number;
+  canvasPadding: number; // Final aesthetic padding (unified for all sides)
   mergeOverlap: number;
   debugExportPadding?: number; // Optional: Padding for the debug 'raw' image export
 }
@@ -339,8 +337,9 @@ export const generateAlignedImage = async (
     settings: CropSettings
 ): Promise<string> => {
     // Final dimensions
-    const finalWidth = targetContentWidth + settings.canvasPaddingLeft + settings.canvasPaddingRight;
-    const finalHeight = trimBounds.h + (settings.canvasPaddingY * 2);
+    const padding = settings.canvasPadding;
+    const finalWidth = targetContentWidth + (padding * 2);
+    const finalHeight = trimBounds.h + (padding * 2);
     
     const { canvas, context: ctx } = createSmartCanvas(finalWidth, finalHeight);
     ctx.fillStyle = '#ffffff';
@@ -350,7 +349,7 @@ export const generateAlignedImage = async (
     ctx.drawImage(
         sourceCanvas as any,
         trimBounds.x, trimBounds.y, trimBounds.w, trimBounds.h, // Source Slice
-        settings.canvasPaddingLeft, settings.canvasPaddingY, trimBounds.w, trimBounds.h // Dest Rect
+        padding, padding, trimBounds.w, trimBounds.h // Dest Rect
     );
     
     if ('toDataURL' in canvas) {

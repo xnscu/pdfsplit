@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { CropSettings } from '../services/pdfService';
 
@@ -65,9 +66,9 @@ export const ConfigurationPanel: React.FC<Props> = ({
           <div className="space-y-4">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Inner Padding</label>
             <div className="relative group">
-              <input type="number" value={cropSettings.canvasPaddingLeft} onChange={(e) => {
+              <input type="number" value={cropSettings.canvasPadding} onChange={(e) => {
                   const v = Number(e.target.value);
-                  setCropSettings(s => ({...s, canvasPaddingLeft: v, canvasPaddingRight: v, canvasPaddingY: v}));
+                  setCropSettings(s => ({...s, canvasPadding: v}));
               }} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
               <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-300 uppercase select-none group-focus-within:text-blue-400 transition-colors">px</div>
             </div>

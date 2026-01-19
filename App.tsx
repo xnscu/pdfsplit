@@ -17,10 +17,8 @@ import { saveExamResult, getHistoryList, loadExamResult, cleanupAllHistory, upda
 
 const DEFAULT_SETTINGS: CropSettings = {
   cropPadding: 25,
-  canvasPaddingLeft: 0,
-  canvasPaddingRight: 0,
-  canvasPaddingY: 0,
-  mergeOverlap: 0
+  canvasPadding: 10,
+  mergeOverlap: -5
 };
 
 const STORAGE_KEYS = {
@@ -70,7 +68,15 @@ const App: React.FC = () => {
   const [cropSettings, setCropSettings] = useState<CropSettings>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CROP_SETTINGS);
-      return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Migration support for old format
+        if (parsed.canvasPadding === undefined && parsed.canvasPaddingLeft !== undefined) {
+             parsed.canvasPadding = parsed.canvasPaddingLeft;
+        }
+        return { ...DEFAULT_SETTINGS, ...parsed };
+      }
+      return DEFAULT_SETTINGS;
     } catch {
       return DEFAULT_SETTINGS;
     }
