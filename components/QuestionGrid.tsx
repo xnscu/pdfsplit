@@ -193,14 +193,17 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
         if (!folder) continue;
 
         // OPTIMIZATION: Create a lightweight copy of rawPages for JSON without the Base64 images
-        // The images are stored in "full_pages/" folder anyway.
         const lightweightRawPages = fileRawPages.map(({ dataUrl, ...rest }) => rest);
         folder.file("analysis_data.json", JSON.stringify(lightweightRawPages, null, 2));
         
         const fullPagesFolder = folder.folder("full_pages");
         fileRawPages.forEach((page) => {
           const base64Data = page.dataUrl.split(',')[1];
-          fullPagesFolder?.file(`Page_${page.pageNumber}.jpg`, base64Data, { base64: true });
+          // OPTIMIZATION: Use STORE compression for JPEGs to avoid CPU waste
+          fullPagesFolder?.file(`Page_${page.pageNumber}.jpg`, base64Data, { 
+              base64: true,
+              compression: "STORE" 
+          });
         });
 
         const usedNames = new Set<string>();
@@ -214,25 +217,35 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
              finalName = `${baseName}_${counter}.jpg`;
           }
           usedNames.add(finalName);
-          folder.file(finalName, base64Data, { base64: true });
+          // OPTIMIZATION: Use STORE compression for JPEGs
+          folder.file(finalName, base64Data, { 
+              base64: true,
+              compression: "STORE" 
+          });
         });
 
         processedCount++;
         if (!targetFileName) {
             setZippingProgress(`Preparing ${processedCount}/${totalCount}`);
+            // Yield to main thread briefly
             await new Promise(resolve => setTimeout(resolve, 0));
         }
       }
 
-      setZippingProgress(targetFileName ? 'Compressing...' : 'Compressing 0%');
+      setZippingProgress(targetFileName ? 'Packaging...' : 'Packaging 0%');
 
+      // OPTIMIZATION: Use STORE compression globally for speed (10-50x faster for JPEGs)
+      // JSZip is single-threaded, avoiding DEFLATE calculation is the only way to "parallel-like" speeds.
       const content = await zip.generateAsync({ 
         type: "blob",
-        compression: "DEFLATE",
-        compressionOptions: { level: 6 }
+        compression: "STORE"
       }, (metadata) => {
-          setZippingProgress(`Compressing ${metadata.percent.toFixed(0)}%`);
+          setZippingProgress(`Packaging ${metadata.percent.toFixed(0)}%`);
       });
+      
+      // FIX: Phase 3 Handoff Lag
+      // The button used to reset immediately here, confusing users while browser prepared the download.
+      setZippingProgress('Browser preparing download...');
       
       const url = window.URL.createObjectURL(content);
       const link = document.createElement('a');
@@ -242,6 +255,11 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
       link.download = downloadName;
       document.body.appendChild(link);
       link.click();
+      
+      // Give visual feedback that the action was taken, preventing premature reset
+      setZippingProgress('Download starting...');
+      await new Promise(resolve => setTimeout(resolve, 4000));
+
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (err) {
