@@ -10,6 +10,7 @@ interface Props {
   title?: string;
   onNextFile?: () => void;
   onPrevFile?: () => void;
+  onJumpToIndex?: (index: number) => void;
   hasNextFile?: boolean;
   hasPrevFile?: boolean;
   onUpdateDetections?: (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => void;
@@ -34,6 +35,7 @@ export const DebugRawView: React.FC<Props> = ({
   title,
   onNextFile,
   onPrevFile,
+  onJumpToIndex,
   hasNextFile,
   hasPrevFile,
   onUpdateDetections,
@@ -66,6 +68,9 @@ export const DebugRawView: React.FC<Props> = ({
   const [isResizingPanel, setIsResizingPanel] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Input state for file index jump
+  const [fileIndexInput, setFileIndexInput] = useState(currentFileIndex.toString());
+
   // Reset selected key and scroll when the file changes
   useEffect(() => {
     setSelectedKey(null);
@@ -73,11 +78,32 @@ export const DebugRawView: React.FC<Props> = ({
     setDragValue(null);
     setPullDelta(0);
     
+    // Sync input value
+    setFileIndexInput(currentFileIndex.toString());
+    
     // Reset scroll to top when file changes
     if (scrollContainerRef.current) {
         scrollContainerRef.current.scrollTop = 0;
     }
-  }, [pages[0]?.fileName]);
+  }, [pages[0]?.fileName, currentFileIndex]);
+
+  const handleIndexSubmit = () => {
+      if (!onJumpToIndex) return;
+      let val = parseInt(fileIndexInput, 10);
+      if (isNaN(val)) {
+          setFileIndexInput(currentFileIndex.toString());
+          return;
+      }
+      val = Math.max(1, Math.min(totalFiles, val));
+      onJumpToIndex(val);
+  };
+
+  const handleIndexKeyDown = (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+          handleIndexSubmit();
+          (e.target as HTMLInputElement).blur();
+      }
+  };
 
   // Trigger navigation when threshold reached
   useEffect(() => {
@@ -482,7 +508,21 @@ export const DebugRawView: React.FC<Props> = ({
                >
                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
                </button>
-               <span className="text-white font-bold text-sm px-4 select-none tabular-nums tracking-wider">{currentFileIndex} <span className="text-slate-500 text-xs">/</span> {totalFiles}</span>
+               
+               <div className="flex items-center gap-1.5 px-3">
+                  <input 
+                      type="number"
+                      value={fileIndexInput}
+                      onChange={(e) => setFileIndexInput(e.target.value)}
+                      onKeyDown={handleIndexKeyDown}
+                      onBlur={handleIndexSubmit}
+                      className="w-10 bg-transparent text-white font-bold text-center border-b border-slate-500 focus:border-blue-500 outline-none text-sm appearance-none p-0"
+                      min={1}
+                      max={totalFiles}
+                  />
+                  <span className="text-slate-500 text-xs font-bold">/ {totalFiles}</span>
+               </div>
+
                <button 
                   onClick={onNextFile} 
                   disabled={!hasNextFile}

@@ -10,6 +10,7 @@ interface Props {
   rawPages: DebugPageData[];
   onDebug: (fileName: string) => void;
   onRefine: (fileName: string) => void;
+  lastViewedFile?: string | null;
 }
 
 interface RowData {
@@ -118,7 +119,7 @@ const VirtualRow = ({ index, style, data }: ListChildComponentProps) => {
   );
 };
 
-export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, onRefine }) => {
+export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, onRefine, lastViewedFile }) => {
   const [zippingFile, setZippingFile] = useState<string | null>(null);
   const [zippingProgress, setZippingProgress] = useState<string>('');
   const [selectedImage, setSelectedImage] = useState<QuestionImage | null>(null);
@@ -292,6 +293,12 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
             <div className="flex gap-3">
               <button 
                   onClick={() => {
+                     // Prioritize lastViewedFile if available
+                     if (lastViewedFile) {
+                         onDebug(lastViewedFile);
+                         return;
+                     }
+
                      // Get the first available file to start debugging
                      const files = Object.keys(groupedQuestions);
                      if (files.length > 0) onDebug(files[0]);
@@ -299,7 +306,7 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
                   className="group px-6 py-3 rounded-xl font-black transition-all flex items-center justify-center gap-2 shadow-lg min-w-[160px] tracking-tight uppercase text-xs bg-slate-800 text-white hover:bg-slate-700 active:scale-95"
               >
                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-                 Inspect All
+                 {lastViewedFile ? 'Resume Inspection' : 'Inspect All'}
               </button>
               
               <button 
