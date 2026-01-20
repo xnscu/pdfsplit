@@ -16,6 +16,7 @@ interface Props {
   hasNextFile?: boolean;
   hasPrevFile?: boolean;
   onUpdateDetections?: (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => void;
+  onReanalyzeFile?: (fileName: string) => void;
   isProcessing?: boolean;
   currentFileIndex: number;
   totalFiles: number;
@@ -32,6 +33,7 @@ export const DebugRawView: React.FC<Props> = ({
   hasNextFile,
   hasPrevFile,
   onUpdateDetections,
+  onReanalyzeFile,
   isProcessing = false,
   currentFileIndex,
   totalFiles
@@ -265,6 +267,7 @@ export const DebugRawView: React.FC<Props> = ({
          onNextFile={onNextFile}
          onJumpToIndex={onJumpToIndex}
          onClose={onClose}
+         onReanalyze={onReanalyzeFile && title ? () => onReanalyzeFile(title) : undefined}
          hasNextFile={hasNextFile}
          hasPrevFile={hasPrevFile}
       />

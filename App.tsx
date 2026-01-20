@@ -13,7 +13,7 @@ import { HistorySidebar } from './components/HistorySidebar';
 import { RefinementModal } from './components/RefinementModal';
 import { renderPageToImage, constructQuestionCanvas, mergeCanvasesVertical, analyzeCanvasContent, generateAlignedImage, CropSettings } from './services/pdfService';
 import { detectQuestionsOnPage } from './services/geminiService';
-import { saveExamResult, getHistoryList, loadExamResult, cleanupAllHistory, updatePageDetections } from './services/storageService';
+import { saveExamResult, getHistoryList, loadExamResult, cleanupAllHistory, updatePageDetections, reSaveExamResult } from './services/storageService';
 
 const DEFAULT_SETTINGS: CropSettings = {
   cropPadding: 25,
@@ -610,6 +610,101 @@ const App: React.FC = () => {
   };
 
   /**
+   * Fully re-process a file (AI Detection + Crop)
+   */
+  const handleReanalyzeFile = async (fileName: string) => {
+    const filePages = rawPages.filter(p => p.fileName === fileName).sort((a,b) => a.pageNumber - b.pageNumber);
+    if (filePages.length === 0) return;
+
+    if (!window.confirm(`Are you sure you want to re-analyze "${fileName}"?\n\nThis will consume AI quota and overwrite any manual edits for this file.`)) {
+        return;
+    }
+
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+    stopRequestedRef.current = false;
+
+    setStatus(ProcessingStatus.DETECTING_QUESTIONS);
+    setDetailedStatus("Re-analyzing file with AI...");
+    setStartTime(Date.now());
+    
+    setTotal(filePages.length);
+    setCompletedCount(0);
+    setCroppingTotal(0);
+    setCroppingDone(0);
+
+    try {
+        const updatedRawPages = [...rawPages];
+        
+        // 1. Detection Phase (Chunked)
+        const chunks = [];
+        for (let i = 0; i < filePages.length; i += concurrency) {
+            chunks.push(filePages.slice(i, i + concurrency));
+        }
+
+        let processedCount = 0;
+        const newResults: DebugPageData[] = [];
+
+        for (const chunk of chunks) {
+            if (signal.aborted) break;
+            
+            await Promise.all(chunk.map(async (page) => {
+                const detections = await detectQuestionsOnPage(page.dataUrl, selectedModel);
+                
+                // Keep detections
+                const newPage = { ...page, detections };
+                newResults.push(newPage);
+                
+                // Update local state copy immediately for UI feedback if feasible, though complex in chunks
+                processedCount++;
+                setCompletedCount(processedCount);
+            }));
+        }
+
+        if (signal.aborted) return;
+
+        // Merge new results back into global state
+        const mergedRawPages = updatedRawPages.map(p => {
+             const match = newResults.find(n => n.fileName === p.fileName && n.pageNumber === p.pageNumber);
+             return match ? match : p;
+        });
+        
+        setRawPages(mergedRawPages);
+        
+        // Save to DB (update existing record)
+        const finalFilePages = mergedRawPages.filter(p => p.fileName === fileName);
+        await reSaveExamResult(fileName, finalFilePages);
+
+        // 2. Cropping Phase
+        setStatus(ProcessingStatus.CROPPING);
+        setDetailedStatus("Regenerating images...");
+        const totalDetections = finalFilePages.reduce((acc, p) => acc + p.detections.length, 0);
+        setCroppingTotal(totalDetections);
+        
+        const newQuestions = await generateQuestionsFromRawPages(finalFilePages, cropSettings, signal);
+        
+        if (!signal.aborted) {
+             setQuestions(prev => {
+                const others = prev.filter(q => q.fileName !== fileName);
+                const combined = [...others, ...newQuestions];
+                 return combined.sort((a,b) => {
+                     if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
+                     if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+                     return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
+                  });
+             });
+             setStatus(ProcessingStatus.COMPLETED);
+             loadHistoryList(); // Refresh history list
+        }
+
+    } catch (error: any) {
+        console.error(error);
+        setError(error.message);
+        setStatus(ProcessingStatus.ERROR);
+    }
+  };
+
+  /**
    * Updates detections for a specific page via Debug View (Drag & Drop column adjustment).
    */
   const handleUpdateDetections = async (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => {
@@ -1182,6 +1277,7 @@ const App: React.FC = () => {
                 hasNextFile={hasNextFile}
                 hasPrevFile={hasPrevFile}
                 onUpdateDetections={handleUpdateDetections}
+                onReanalyzeFile={handleReanalyzeFile}
                 isProcessing={isProcessing}
                 currentFileIndex={currentFileIndex + 1}
                 totalFiles={uniqueFileNames.length}

@@ -10,6 +10,7 @@ interface Props {
   onNextFile?: () => void;
   onJumpToIndex?: (index: number) => void;
   onClose: () => void;
+  onReanalyze?: () => void;
   hasNextFile?: boolean;
   hasPrevFile?: boolean;
 }
@@ -23,6 +24,7 @@ export const DebugToolbar: React.FC<Props> = ({
   onNextFile,
   onJumpToIndex,
   onClose,
+  onReanalyze,
   hasNextFile,
   hasPrevFile
 }) => {
@@ -67,6 +69,17 @@ export const DebugToolbar: React.FC<Props> = ({
       </div>
 
       <div className="flex items-center gap-3">
+        {onReanalyze && (
+           <button
+             onClick={onReanalyze}
+             className="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-blue-500 transition-colors flex items-center gap-2 shadow-lg shadow-blue-900/20 mr-2"
+             title="Re-run AI detection for this file"
+           >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              <span className="hidden sm:inline">Re-analyze</span>
+           </button>
+        )}
+
         <div className="flex items-center mr-4 bg-slate-800 rounded-lg p-1 border border-slate-700">
           <button
             onClick={onPrevFile}

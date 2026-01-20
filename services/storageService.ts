@@ -60,6 +60,47 @@ export const saveExamResult = async (fileName: string, rawPages: DebugPageData[]
 };
 
 /**
+ * Updates an existing exam result if it exists (by name), otherwise saves a new one.
+ * Used for re-analysis.
+ */
+export const reSaveExamResult = async (fileName: string, rawPages: DebugPageData[]): Promise<void> => {
+  const list = await getHistoryList();
+  const targetItem = list.find(h => h.name === fileName);
+
+  if (!targetItem) {
+    await saveExamResult(fileName, rawPages);
+    return;
+  }
+
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    const getReq = store.get(targetItem.id);
+
+    getReq.onsuccess = () => {
+      const record = getReq.result;
+      if (record) {
+        // Dedup pages
+        const uniquePages = Array.from(new Map(rawPages.map(item => [item.pageNumber, item])).values());
+        uniquePages.sort((a, b) => a.pageNumber - b.pageNumber);
+
+        record.rawPages = uniquePages;
+        record.pageCount = uniquePages.length;
+        record.timestamp = Date.now();
+
+        const putReq = store.put(record);
+        putReq.onsuccess = () => resolve();
+        putReq.onerror = () => reject(putReq.error);
+      } else {
+        saveExamResult(fileName, rawPages).then(() => resolve()).catch(reject);
+      }
+    };
+    getReq.onerror = () => reject(getReq.error);
+  });
+};
+
+/**
  * Update detections for a specific page in an existing exam record.
  * Used for manual refinement/calibration.
  */
