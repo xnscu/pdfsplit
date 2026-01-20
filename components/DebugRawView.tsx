@@ -48,7 +48,7 @@ export const DebugRawView: React.FC<Props> = ({
   const [dynamicRawUrl, setDynamicRawUrl] = useState<string | null>(null);
   const [isGeneratingRaw, setIsGeneratingRaw] = useState(false);
 
-  // Dragging State
+  // Dragging State for Crop Lines
   const [draggingSide, setDraggingSide] = useState<'left' | 'right' | 'top' | 'bottom' | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [dragValue, setDragValue] = useState<number | null>(null);
@@ -60,6 +60,11 @@ export const DebugRawView: React.FC<Props> = ({
   const touchStartY = useRef<number | null>(null);
   const lastTriggerTime = useRef<number>(0);
   const PULL_THRESHOLD = 150;
+
+  // Panel Resizing State
+  const [leftPanelWidth, setLeftPanelWidth] = useState(70); // Initial 70%
+  const [isResizingPanel, setIsResizingPanel] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Reset selected key and scroll when the file changes
   useEffect(() => {
@@ -288,8 +293,48 @@ export const DebugRawView: React.FC<Props> = ({
       touchStartY.current = null;
   };
 
+  // --- Resizing Logic ---
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent text selection
+    setIsResizingPanel(true);
+  }, []);
 
-  // Drag Handlers for Boxes (unchanged logic)
+  const handlePanelResize = useCallback((e: MouseEvent) => {
+    if (!isResizingPanel || !containerRef.current) return;
+    
+    const rect = containerRef.current.getBoundingClientRect();
+    const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
+    
+    // Clamp between 20% and 80% to prevent layout breaking
+    setLeftPanelWidth(Math.max(20, Math.min(80, newWidth)));
+  }, [isResizingPanel]);
+
+  const stopResizing = useCallback(() => {
+    setIsResizingPanel(false);
+  }, []);
+
+  useEffect(() => {
+    if (isResizingPanel) {
+      window.addEventListener('mousemove', handlePanelResize);
+      window.addEventListener('mouseup', stopResizing);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    } else {
+      window.removeEventListener('mousemove', handlePanelResize);
+      window.removeEventListener('mouseup', stopResizing);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    return () => {
+      window.removeEventListener('mousemove', handlePanelResize);
+      window.removeEventListener('mouseup', stopResizing);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizingPanel, handlePanelResize, stopResizing]);
+
+
+  // Drag Handlers for Boxes (Crop Adjustment)
   const handleSvgMouseDown = useCallback((e: React.MouseEvent, side: 'left' | 'right' | 'top' | 'bottom') => {
       e.stopPropagation();
       e.preventDefault();
@@ -375,7 +420,7 @@ export const DebugRawView: React.FC<Props> = ({
       
   }, [draggingSide, dragValue, columnInfo, selectedDetection, pageDetections, selectedKey, onUpdateDetections, selectedIndex]);
 
-  // Attach global listeners for dragging
+  // Attach global listeners for dragging crop lines
   useEffect(() => {
       if (draggingSide) {
           window.addEventListener('mousemove', handleGlobalMouseMove);
@@ -458,9 +503,12 @@ export const DebugRawView: React.FC<Props> = ({
          </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* Left: 50% Width, Scrollable Paper View */}
-        <div className="relative w-1/2 flex flex-col bg-slate-950 border-r border-slate-800">
+      <div className="flex-1 flex overflow-hidden relative" ref={containerRef}>
+        {/* Left: Dynamic Width, Scrollable Paper View */}
+        <div 
+          className="relative flex flex-col bg-slate-950" 
+          style={{ width: `${leftPanelWidth}%` }}
+        >
             {/* Visual Indicators for Pull-to-Switch */}
             <div 
                 className={`absolute top-0 left-0 w-full flex items-center justify-center pointer-events-none transition-all duration-200 z-50 bg-slate-800/80 backdrop-blur border-b border-blue-500/50 ${pullDelta < 0 ? 'opacity-100 h-16' : 'opacity-0 h-0'}`}
@@ -701,8 +749,19 @@ export const DebugRawView: React.FC<Props> = ({
             </div>
         </div>
 
-        {/* Right: 50% Width, Inspector Sidebar */}
-        <div className="w-1/2 bg-slate-900 flex flex-col shadow-2xl relative z-20">
+        {/* Resizer Handle */}
+        <div
+            className={`w-2 bg-slate-950 hover:bg-blue-600 cursor-col-resize relative z-[60] flex items-center justify-center transition-colors border-l border-r border-slate-800 flex-none select-none ${isResizingPanel ? 'bg-blue-600' : ''}`}
+            onMouseDown={startResizing}
+        >
+            <div className="w-0.5 h-8 bg-slate-600 rounded-full pointer-events-none"></div>
+        </div>
+
+        {/* Right: Dynamic Width, Inspector Sidebar */}
+        <div 
+            className="bg-slate-900 flex flex-col shadow-2xl relative z-20"
+            style={{ width: `${100 - leftPanelWidth}%` }}
+        >
           <div className="p-6 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md">
             <h3 className="text-slate-400 font-bold text-xs uppercase tracking-[0.2em]">Inspector</h3>
           </div>
