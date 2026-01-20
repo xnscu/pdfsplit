@@ -11,6 +11,7 @@ import { UploadSection } from './components/UploadSection';
 import { ConfigurationPanel } from './components/ConfigurationPanel';
 import { HistorySidebar } from './components/HistorySidebar';
 import { RefinementModal } from './components/RefinementModal';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { renderPageToImage, constructQuestionCanvas, mergeCanvasesVertical, analyzeCanvasContent, generateAlignedImage, CropSettings } from './services/pdfService';
 import { detectQuestionsOnPage } from './services/geminiService';
 import { saveExamResult, getHistoryList, loadExamResult, cleanupAllHistory, updatePageDetections, reSaveExamResult } from './services/storageService';
@@ -112,6 +113,21 @@ const App: React.FC = () => {
   const [showHistory, setShowHistory] = useState(false);
   const [historyList, setHistoryList] = useState<HistoryMetadata[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  // General Confirmation Dialog State
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    action: () => void;
+    isDestructive: boolean;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    action: () => {},
+    isDestructive: false
+  });
 
   const [cropSettings, setCropSettings] = useState<CropSettings>(() => {
     try {
@@ -610,15 +626,11 @@ const App: React.FC = () => {
   };
 
   /**
-   * Fully re-process a file (AI Detection + Crop)
+   * Execute actual logic for re-analysis
    */
-  const handleReanalyzeFile = async (fileName: string) => {
+  const executeReanalysis = async (fileName: string) => {
     const filePages = rawPages.filter(p => p.fileName === fileName).sort((a,b) => a.pageNumber - b.pageNumber);
     if (filePages.length === 0) return;
-
-    if (!window.confirm(`Are you sure you want to re-analyze "${fileName}"?\n\nThis will consume AI quota and overwrite any manual edits for this file.`)) {
-        return;
-    }
 
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
@@ -702,6 +714,22 @@ const App: React.FC = () => {
         setError(error.message);
         setStatus(ProcessingStatus.ERROR);
     }
+  };
+
+  /**
+   * Fully re-process a file (AI Detection + Crop) - Wrapper for Confirmation
+   */
+  const handleReanalyzeFile = (fileName: string) => {
+    const filePages = rawPages.filter(p => p.fileName === fileName);
+    if (filePages.length === 0) return;
+
+    setConfirmState({
+      isOpen: true,
+      title: "Re-analyze File?",
+      message: `Are you sure you want to re-analyze "${fileName}"?\n\nThis will consume AI quota and overwrite any manual edits for this file.`,
+      action: () => executeReanalysis(fileName),
+      isDestructive: true
+    });
   };
 
   /**
@@ -1334,6 +1362,19 @@ const App: React.FC = () => {
           onApply={handleRecropFile}
         />
       )}
+
+      {/* Confirmation Dialog for all generic confirms in App level */}
+      <ConfirmDialog 
+        isOpen={confirmState.isOpen}
+        title={confirmState.title}
+        message={confirmState.message}
+        onConfirm={() => {
+            confirmState.action();
+            setConfirmState(prev => ({ ...prev, isOpen: false }));
+        }}
+        onCancel={() => setConfirmState(prev => ({ ...prev, isOpen: false }))}
+        isDestructive={confirmState.isDestructive}
+      />
 
       <footer className="mt-24 text-center text-slate-400 text-xs py-12 border-t border-slate-100 font-bold tracking-widest uppercase">
         <p>© 2025 AI Exam Splitter | Precision Tooling</p>
