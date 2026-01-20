@@ -22,7 +22,7 @@ interface Props {
 // Default settings for debug visualization - STRICT mode
 // No padding, no border, exact coordinate match.
 const DEBUG_CROP_SETTINGS: CropSettings = {
-  cropPadding: 10,
+  cropPadding: 0, // CHANGED: Set to 0 to match the red box overlay exactly
   canvasPadding: 0,
   mergeOverlap: -5,
   debugExportPadding: 0
