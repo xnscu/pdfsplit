@@ -390,6 +390,25 @@ export const DebugRawView: React.FC<Props> = ({
       };
   }, [draggingSide, handleGlobalMouseMove, handleGlobalMouseUp]);
 
+  // Handle Escape key to deselect or close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (draggingSide) {
+            setDraggingSide(null);
+            setDragValue(null);
+        } else if (selectedKey) {
+            setSelectedKey(null);
+        } else {
+            onClose();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [draggingSide, selectedKey, onClose]);
+
 
   if (pages.length === 0) return null;
 
