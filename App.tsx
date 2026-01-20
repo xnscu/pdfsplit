@@ -597,9 +597,10 @@ const App: React.FC = () => {
                 task.pageObj.height,
                 settings
             );
-            if (status === ProcessingStatus.CROPPING) {
-               setCroppingDone(prev => prev + 1);
-            }
+            
+            // Always update progress regardless of status closure staleness
+            setCroppingDone(prev => prev + 1);
+            
             return { ...result, task };
         }));
 
