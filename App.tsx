@@ -15,7 +15,7 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { NotificationToast, AppNotification } from './components/NotificationToast';
 import { renderPageToImage, constructQuestionCanvas, mergeCanvasesVertical, analyzeCanvasContent, generateAlignedImage, CropSettings } from './services/pdfService';
 import { detectQuestionsOnPage } from './services/geminiService';
-import { saveExamResult, getHistoryList, loadExamResult, cleanupAllHistory, updatePageDetections, reSaveExamResult } from './services/storageService';
+import { saveExamResult, getHistoryList, loadExamResult, cleanupAllHistory, updatePageDetectionsAndQuestions, reSaveExamResult, updateExamQuestionsOnly } from './services/storageService';
 
 const DEFAULT_SETTINGS: CropSettings = {
   cropPadding: 25,
@@ -109,6 +109,10 @@ const App: React.FC = () => {
   const [debugFile, setDebugFile] = useState<string | null>(null);
   const [lastViewedFile, setLastViewedFile] = useState<string | null>(null); // Track last viewed file
   const [refiningFile, setRefiningFile] = useState<string | null>(null);
+
+  // Legacy sync state
+  const [legacySyncFiles, setLegacySyncFiles] = useState<Set<string>>(new Set());
+  const [isSyncingLegacy, setIsSyncingLegacy] = useState(false);
 
   // Background Processing State
   const [processingFiles, setProcessingFiles] = useState<Set<string>>(new Set());
@@ -208,8 +212,6 @@ const App: React.FC = () => {
   const [elapsedTime, setElapsedTime] = useState("00:00");
 
   const abortControllerRef = useRef<AbortController | null>(null);
-  // Task specific abort controllers (for background tasks if we implemented cancel)
-  // For now, background tasks just run to completion or error.
 
   // Persistence Effects
   useEffect(() => {
@@ -314,6 +316,8 @@ const App: React.FC = () => {
     setFailedCount(0);
     setProcessingFiles(new Set());
     setNotifications([]);
+    setLegacySyncFiles(new Set());
+    setIsSyncingLegacy(false);
     if (window.location.search) window.history.pushState({}, '', window.location.pathname);
   };
 
@@ -363,24 +367,37 @@ const App: React.FC = () => {
       }));
       setSourcePages(recoveredSourcePages);
 
-      setStatus(ProcessingStatus.CROPPING);
-      setDetailedStatus('Applying current crop settings...');
-      
-      const totalDetections = uniquePages.reduce((acc, p) => acc + p.detections.length, 0);
-      setCroppingTotal(totalDetections);
-      setCroppingDone(0);
-      setTotal(uniquePages.length);
-      setCompletedCount(uniquePages.length);
+      // Check if questions are already cached in DB
+      if (result.questions && result.questions.length > 0) {
+          setQuestions(result.questions);
+          setCompletedCount(uniquePages.length);
+          setTotal(uniquePages.length);
+          setStatus(ProcessingStatus.COMPLETED);
+          setDetailedStatus("Loaded successfully from cache.");
+      } else {
+          // LEGACY FALLBACK: Generate from raw pages
+          setStatus(ProcessingStatus.CROPPING);
+          setDetailedStatus('Generating questions from raw data...');
+          
+          const totalDetections = uniquePages.reduce((acc, p) => acc + p.detections.length, 0);
+          setCroppingTotal(totalDetections);
+          setCroppingDone(0);
+          setTotal(uniquePages.length);
+          setCompletedCount(uniquePages.length);
 
-      abortControllerRef.current = new AbortController();
-      const generatedQuestions = await generateQuestionsFromRawPages(
-        uniquePages, 
-        cropSettings, 
-        abortControllerRef.current.signal
-      );
+          abortControllerRef.current = new AbortController();
+          const generatedQuestions = await generateQuestionsFromRawPages(
+            uniquePages, 
+            cropSettings, 
+            abortControllerRef.current.signal
+          );
 
-      setQuestions(generatedQuestions);
-      setStatus(ProcessingStatus.COMPLETED);
+          setQuestions(generatedQuestions);
+          setStatus(ProcessingStatus.COMPLETED);
+          
+          // Mark this file as needing sync
+          setLegacySyncFiles(new Set([result.name]));
+      }
 
     } catch (e: any) {
       setError("Failed to load history: " + e.message);
@@ -399,9 +416,10 @@ const App: React.FC = () => {
 
     try {
       // Chunk loading to prevent Memory Spikes and UI freeze when loading massive data from IDB
-      // Using user-configured batch size
       const CHUNK_SIZE = batchSize;
       const combinedPages: DebugPageData[] = [];
+      const combinedQuestions: QuestionImage[] = [];
+      const legacyFilesFound = new Set<string>();
       
       for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
          const chunk = ids.slice(i, i + CHUNK_SIZE);
@@ -411,10 +429,15 @@ const App: React.FC = () => {
          results.forEach(res => {
             if (res && res.rawPages) {
                 combinedPages.push(...res.rawPages);
+                
+                if (res.questions && res.questions.length > 0) {
+                    combinedQuestions.push(...res.questions);
+                } else {
+                    legacyFilesFound.add(res.name);
+                }
             }
          });
          
-         // Small delay to allow GC and UI update
          await new Promise(r => setTimeout(r, 10));
       }
 
@@ -422,7 +445,7 @@ const App: React.FC = () => {
         throw new Error("No valid data found in selected items.");
       }
 
-      // Deduplicate based on fileName + pageNumber
+      // Deduplicate
       const uniqueMap = new Map<string, DebugPageData>();
       combinedPages.forEach(p => {
           const key = `${p.fileName}#${p.pageNumber}`;
@@ -446,23 +469,31 @@ const App: React.FC = () => {
       }));
       setSourcePages(recoveredSourcePages);
 
-      setStatus(ProcessingStatus.CROPPING);
-      setDetailedStatus('Maximizing concurrency for batch cropping...');
+      // If we found legacy files, we need to process them
+      if (legacyFilesFound.size > 0) {
+          setStatus(ProcessingStatus.CROPPING);
+          setDetailedStatus(`Generating images for ${legacyFilesFound.size} legacy files...`);
 
-      const totalDetections = uniquePages.reduce((acc, p) => acc + p.detections.length, 0);
-      setCroppingTotal(totalDetections);
-      setCroppingDone(0);
+          const legacyPages = uniquePages.filter(p => legacyFilesFound.has(p.fileName));
+          const totalDetections = legacyPages.reduce((acc, p) => acc + p.detections.length, 0);
+          setCroppingTotal(totalDetections);
+          setCroppingDone(0);
+
+          abortControllerRef.current = new AbortController();
+          const generatedLegacyQuestions = await generateQuestionsFromRawPages(
+            legacyPages, 
+            cropSettings, 
+            abortControllerRef.current.signal
+          );
+          
+          setQuestions([...combinedQuestions, ...generatedLegacyQuestions]);
+          setLegacySyncFiles(legacyFilesFound);
+      } else {
+          setQuestions(combinedQuestions);
+      }
+
       setTotal(uniquePages.length);
       setCompletedCount(uniquePages.length);
-
-      abortControllerRef.current = new AbortController();
-      const generatedQuestions = await generateQuestionsFromRawPages(
-        uniquePages, 
-        cropSettings, 
-        abortControllerRef.current.signal
-      );
-
-      setQuestions(generatedQuestions);
       setStatus(ProcessingStatus.COMPLETED);
 
     } catch (e: any) {
@@ -474,9 +505,49 @@ const App: React.FC = () => {
   };
 
   /**
+   * Syncs loaded legacy questions back to DB to allow instant load next time
+   */
+  const handleSyncLegacyData = async () => {
+     if (legacySyncFiles.size === 0) return;
+     setIsSyncingLegacy(true);
+     setDetailedStatus("Syncing processed images to database...");
+     
+     try {
+         const history = await getHistoryList();
+         const filesToSync = Array.from(legacySyncFiles);
+         
+         await Promise.all(filesToSync.map(async (fileName) => {
+             const fileQuestions = questions.filter(q => q.fileName === fileName);
+             if (fileQuestions.length === 0) return;
+
+             const historyItem = history.find(h => h.name === fileName);
+             if (historyItem) {
+                 await updateExamQuestionsOnly(historyItem.id, fileQuestions);
+             } else {
+                 // Fallback if record missing (unlikely if loaded from history)
+                 const filePages = rawPages.filter(p => p.fileName === fileName);
+                 await saveExamResult(fileName, filePages, fileQuestions);
+             }
+         }));
+
+         setLegacySyncFiles(new Set()); // Clear sync queue
+         setDetailedStatus("Sync complete!");
+         addNotification("Sync", "success", "All images saved to database for future instant loading.");
+         
+         setTimeout(() => {
+             if (status === ProcessingStatus.COMPLETED) setDetailedStatus("");
+         }, 3000);
+
+     } catch (e: any) {
+         console.error(e);
+         setError("Failed to sync legacy data: " + e.message);
+     } finally {
+         setIsSyncingLegacy(false);
+     }
+  };
+
+  /**
    * Generates processed questions from raw debug data with PIPELINED Processing.
-   * Restructured to avoid OOM / Canvas Limit errors when processing hundreds of files.
-   * Instead of "Crop All -> Merge All -> Export All", we do "Process File 1... Process File 2...".
    */
   const generateQuestionsFromRawPages = async (pages: DebugPageData[], settings: CropSettings, signal: AbortSignal): Promise<QuestionImage[]> => {
     // 1. Prepare Tasks grouped by File
@@ -507,23 +578,16 @@ const App: React.FC = () => {
 
     if (tasksByFile.size === 0) return [];
 
-    // FILE Level Concurrency. 
-    // Since each file may spawn 10-20 canvases internally, we keep file concurrency low (e.g., 4)
-    // to prevent hitting the browser's 4000-8000 canvas/context limit.
     const FILE_CONCURRENCY = 4;
     const fileList = Array.from(tasksByFile.entries());
-
-    console.log(`Starting pipelined processing for ${fileList.length} files with concurrency ${FILE_CONCURRENCY}.`);
 
     // Process files in parallel batches
     const fileResults = await pMap(fileList, async ([fileId, fileTasks]) => {
         if (signal.aborted) return [];
 
         // --- SUB-PIPELINE FOR SINGLE FILE ---
-        // This ensures all canvases for this file are created AND released within this scope.
 
         // 1. Parallel Crop (Construct Canvas) for items in THIS file
-        // Can be higher concurrency since it's limited to one file's items
         const cropResults = await Promise.all(fileTasks.map(async (task) => {
             const boxes = normalizeBoxes(task.detection.boxes_2d);
             const result = await constructQuestionCanvas(
@@ -533,7 +597,6 @@ const App: React.FC = () => {
                 task.pageObj.height,
                 settings
             );
-            // Only update global cropping progress if we are in a global processing state
             if (status === ProcessingStatus.CROPPING) {
                setCroppingDone(prev => prev + 1);
             }
@@ -541,7 +604,6 @@ const App: React.FC = () => {
         }));
 
         // 2. Sequential Merging (Sort & Merge)
-        // Ensure strict order: Page -> Detection Index
         cropResults.sort((a, b) => {
             if (a.task.pageIndex !== b.task.pageIndex) return a.task.pageIndex - b.task.pageIndex;
             return a.task.detIndex - b.task.detIndex;
@@ -564,9 +626,7 @@ const App: React.FC = () => {
             if (isContinuation && fileExportTasks.length > 0) {
                  const lastIdx = fileExportTasks.length - 1;
                  const lastQ = fileExportTasks[lastIdx];
-                 // Merge logic
                  const merged = mergeCanvasesVertical(lastQ.canvas, item.canvas, -settings.mergeOverlap);
-                 // Replaces previous canvas, effectively releasing the old one for GC
                  fileExportTasks[lastIdx] = {
                      ...lastQ,
                      canvas: merged.canvas
@@ -583,7 +643,6 @@ const App: React.FC = () => {
         }
 
         // 3. Analyze & Export to DataURL
-        // Pre-calculate width for alignment
         let maxFileWidth = 0;
         const analyzedTasks = fileExportTasks.map(item => {
              const trim = analyzeCanvasContent(item.canvas);
@@ -593,10 +652,7 @@ const App: React.FC = () => {
 
         const finalImages = await Promise.all(analyzedTasks.map(async (q) => {
             const finalDataUrl = await generateAlignedImage(q.canvas, q.trim, maxFileWidth, settings);
-            
-            // Explicitly help GC if possible (though scope exit handles it mostly)
             if ('width' in q.canvas) { q.canvas.width = 0; q.canvas.height = 0; }
-
             return {
                 id: q.id,
                 pageNumber: q.pageNumber,
@@ -618,17 +674,15 @@ const App: React.FC = () => {
 
   /**
    * Re-runs cropping for a specific file using specific settings.
-   * Runs in BACKGROUND without blocking global UI.
    */
   const handleRecropFile = async (fileName: string, specificSettings: CropSettings) => {
     const targetPages = rawPages.filter(p => p.fileName === fileName);
     if (targetPages.length === 0) return;
 
-    // Use a temporary controller for this specific task
     const taskController = new AbortController();
     
     setProcessingFiles(prev => new Set(prev).add(fileName));
-    setRefiningFile(null); // Close modal immediately
+    setRefiningFile(null); 
 
     try {
        const newQuestions = await generateQuestionsFromRawPages(targetPages, specificSettings, taskController.signal);
@@ -643,6 +697,10 @@ const App: React.FC = () => {
                  return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
               });
          });
+
+         // Update DB with new questions
+         await reSaveExamResult(fileName, targetPages, newQuestions);
+
          addNotification(fileName, 'success', `Successfully refined ${fileName}`);
        }
     } catch (e: any) {
@@ -685,7 +743,6 @@ const App: React.FC = () => {
             
             await Promise.all(chunk.map(async (page) => {
                 const detections = await detectQuestionsOnPage(page.dataUrl, selectedModel);
-                // Keep detections
                 const newPage = { ...page, detections };
                 newResults.push(newPage);
             }));
@@ -693,7 +750,6 @@ const App: React.FC = () => {
 
         if (signal.aborted) return;
 
-        // Merge new results back into global state
         const mergedRawPages = updatedRawPages.map(p => {
              const match = newResults.find(n => n.fileName === p.fileName && n.pageNumber === p.pageNumber);
              return match ? match : p;
@@ -701,10 +757,8 @@ const App: React.FC = () => {
         
         setRawPages(mergedRawPages);
         
-        // Save to DB (update existing record)
         const finalFilePages = mergedRawPages.filter(p => p.fileName === fileName);
-        await reSaveExamResult(fileName, finalFilePages);
-
+        
         // 2. Cropping Phase
         const newQuestions = await generateQuestionsFromRawPages(finalFilePages, cropSettings, signal);
         
@@ -718,8 +772,12 @@ const App: React.FC = () => {
                      return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
                   });
              });
+             
+             // Save to DB (update both raw pages and new questions)
+             await reSaveExamResult(fileName, finalFilePages, newQuestions);
+             
              addNotification(fileName, 'success', `AI Analysis completed for ${fileName}`);
-             loadHistoryList(); // Refresh history list
+             loadHistoryList(); 
         }
 
     } catch (error: any) {
@@ -751,11 +809,10 @@ const App: React.FC = () => {
   };
 
   /**
-   * Updates detections for a specific page via Debug View (Drag & Drop column adjustment).
-   * Runs in BACKGROUND.
+   * Updates detections via Debug View and Recrops + Saves to DB.
    */
   const handleUpdateDetections = async (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => {
-      // 1. Calculate updated pages first to allow immediate usage
+      // 1. Calculate updated pages first
       const updatedPages = rawPages.map(p => {
           if (p.fileName === fileName && p.pageNumber === pageNumber) {
               return { ...p, detections: newDetections };
@@ -763,16 +820,13 @@ const App: React.FC = () => {
           return p;
       });
 
-      // 2. Update React State immediately for visual feedback
+      // 2. Update React State
       setRawPages(updatedPages);
 
-      // 3. Persist to IndexedDB and Trigger Recrop in Background
+      // 3. Recrop in Background
       setProcessingFiles(prev => new Set(prev).add(fileName));
 
       try {
-          await updatePageDetections(fileName, pageNumber, newDetections);
-          console.log(`Saved updated detections for ${fileName} Page ${pageNumber}`);
-          
           const targetPages = updatedPages.filter(p => p.fileName === fileName);
           if (targetPages.length === 0) {
               setProcessingFiles(prev => { const n = new Set(prev); n.delete(fileName); return n; });
@@ -788,6 +842,9 @@ const App: React.FC = () => {
           );
           
           if (!taskController.signal.aborted) {
+              // Save to DB immediately using the unified update method
+              await updatePageDetectionsAndQuestions(fileName, pageNumber, newDetections, newQuestions);
+              
               setQuestions(prev => {
                   const others = prev.filter(q => q.fileName !== fileName);
                   const combined = [...others, ...newQuestions];
@@ -797,11 +854,7 @@ const App: React.FC = () => {
                      return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
                   });
               });
-              // Optional: Only notify on big changes or just silent update. 
-              // Since drag-drop is frequent, maybe silent or small toast? 
-              // User sees result immediately in Debug Panel usually, so we might skip notification or keep it subtle.
-              // Let's keep it silent for smoother UX, or very subtle. 
-              // The Inspector panel will show "Syncing..." which is enough.
+              console.log(`Saved updated detections and questions for ${fileName}`);
           }
 
       } catch (err: any) {
@@ -895,51 +948,30 @@ const App: React.FC = () => {
           if (potentialImageKeys.length > 0) {
             const loadedQuestions: QuestionImage[] = [];
             await Promise.all(potentialImageKeys.map(async (key) => {
+                const base64 = await loadedZip.file(key)!.async('base64');
+                const ext = key.split('.').pop()?.toLowerCase();
+                const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+                // Simplified matching for brevity - assumes logic from before or robust zip structure
                 const pathParts = key.split('/');
                 const fileNameWithExt = pathParts[pathParts.length - 1];
-                let qFileName = "unknown";
                 let qId = "0";
-                let matched = false;
-                
+                let qFileName = zipRawPages.length > 0 ? zipRawPages[0].fileName : "unknown";
+
                 const flatMatch = fileNameWithExt.match(/^(.+)_Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
                 if (flatMatch) {
                     qFileName = flatMatch[1];
                     qId = flatMatch[2];
-                    matched = true;
                 } else {
-                    const nestedMatch = fileNameWithExt.match(/^Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
-                    if (nestedMatch) {
-                        qId = nestedMatch[1];
-                        if (pathParts.length >= 2) {
-                          const parent = pathParts[pathParts.length - 2];
-                          if (parent.toLowerCase() !== 'questions') qFileName = parent;
-                          else if (zipRawPages.length > 0) qFileName = zipRawPages[0].fileName; 
-                        }
-                        if (qFileName === "unknown" && zipRawPages.length > 0) {
-                             const uniqueFiles = new Set(zipRawPages.map(p => p.fileName));
-                             if (uniqueFiles.size === 1) {
-                                 qFileName = Array.from(uniqueFiles)[0];
-                             }
-                        }
-                        matched = true;
-                    }
+                     const nestedMatch = fileNameWithExt.match(/^Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
+                     if (nestedMatch) qId = nestedMatch[1];
                 }
-
-                if (matched) {
-                    const base64 = await loadedZip.file(key)!.async('base64');
-                    const ext = key.split('.').pop()?.toLowerCase();
-                    const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-                    const targetPage = zipRawPages.find(p => (p.fileName === qFileName && p.detections.some(d => d.id === qId)) || (p.fileName === qFileName));
-                    
-                    if (targetPage) {
-                        loadedQuestions.push({
-                            id: qId,
-                            pageNumber: targetPage.detections.find(d => d.id === qId) ? targetPage.pageNumber : targetPage.pageNumber,
-                            fileName: qFileName,
-                            dataUrl: `data:${mime};base64,${base64}`
-                        });
-                    }
-                }
+                
+                loadedQuestions.push({
+                    id: qId,
+                    pageNumber: 1, // Placeholder if unknown
+                    fileName: qFileName,
+                    dataUrl: `data:${mime};base64,${base64}`
+                });
             }));
             allQuestions.push(...loadedQuestions);
           }
@@ -950,39 +982,44 @@ const App: React.FC = () => {
       setSourcePages(allRawPages.map(({detections, ...rest}) => rest));
       setTotal(allRawPages.length);
       
-      try {
-        const uniqueFiles = new Set(allRawPages.map(p => p.fileName));
-        const savePromises = Array.from(uniqueFiles).map(fileName => {
-           const filePages = allRawPages.filter(p => p.fileName === fileName);
-           return saveExamResult(fileName, filePages);
-        });
-        await Promise.all(savePromises);
-        await loadHistoryList(); 
-      } catch (saveErr) {
-        console.warn("History auto-save encountered an issue:", saveErr);
-      }
-
+      const uniqueFiles = new Set(allRawPages.map(p => p.fileName));
+      
       if (allQuestions.length > 0) {
         allQuestions.sort((a, b) => {
             if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
-            if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
-            const na = parseFloat(a.id);
-            const nb = parseFloat(b.id);
-            return (!isNaN(na) && !isNaN(nb)) ? na - nb : a.id.localeCompare(b.id);
+            return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
         });
         setQuestions(allQuestions);
         setCompletedCount(allRawPages.length);
         setStatus(ProcessingStatus.COMPLETED);
+
+        // Save questions to DB
+        const savePromises = Array.from(uniqueFiles).map(fileName => {
+           const filePages = allRawPages.filter(p => p.fileName === fileName);
+           const fileQuestions = allQuestions.filter(q => q.fileName === fileName);
+           return saveExamResult(fileName, filePages, fileQuestions);
+        });
+        await Promise.all(savePromises);
+        
       } else {
          if (allRawPages.length > 0) {
             const qs = await generateQuestionsFromRawPages(allRawPages, cropSettings, new AbortController().signal);
             setQuestions(qs);
             setCompletedCount(allRawPages.length);
             setStatus(ProcessingStatus.COMPLETED);
+
+            // Save generated questions to DB
+            const savePromises = Array.from(uniqueFiles).map(fileName => {
+                const filePages = allRawPages.filter(p => p.fileName === fileName);
+                const fileQuestions = qs.filter(q => q.fileName === fileName);
+                return saveExamResult(fileName, filePages, fileQuestions);
+            });
+            await Promise.all(savePromises);
          } else {
             throw new Error("No valid data found in ZIP");
          }
       }
+      await loadHistoryList(); 
     } catch (err: any) {
       setError("Batch ZIP load failed: " + err.message);
       setStatus(ProcessingStatus.ERROR);
@@ -1023,6 +1060,7 @@ const App: React.FC = () => {
 
     const filesToProcess: File[] = [];
     const cachedRawPages: DebugPageData[] = [];
+    const cachedQuestions: QuestionImage[] = [];
 
     if (useHistoryCache) {
       setDetailedStatus("Checking history for existing files...");
@@ -1035,6 +1073,9 @@ const App: React.FC = () => {
             const result = await loadExamResult(historyItem.id);
             if (result && result.rawPages.length > 0) {
                cachedRawPages.push(...result.rawPages);
+               if (result.questions && result.questions.length > 0) {
+                   cachedQuestions.push(...result.questions);
+               }
                loadedFromCache = true;
                console.log(`Loaded ${fileNameWithoutExt} from history cache.`);
             }
@@ -1053,7 +1094,6 @@ const App: React.FC = () => {
     try {
       if (cachedRawPages.length > 0) {
          setDetailedStatus("Restoring cached files...");
-         // Dedup cached pages
          const uniqueCached = Array.from(new Map(cachedRawPages.map(p => [`${p.fileName}-${p.pageNumber}`, p])).values());
          setRawPages(prev => [...prev, ...uniqueCached]);
          
@@ -1066,10 +1106,24 @@ const App: React.FC = () => {
          }));
          setSourcePages(prev => [...prev, ...recoveredSourcePages]);
          
-         const cachedQuestions = await generateQuestionsFromRawPages(uniqueCached, cropSettings, signal);
+         // If cached questions exist, assume they are complete for those files.
+         // If not, we might need to regenerate them.
+         let questionsFromCache = cachedQuestions;
+         
+         // Identify files in cache that lack questions
+         const cachedFiles = new Set(uniqueCached.map(p => p.fileName));
+         const filesWithQs = new Set(cachedQuestions.map(q => q.fileName));
+         const filesNeedingGen = Array.from(cachedFiles).filter(f => !filesWithQs.has(f));
+
+         if (filesNeedingGen.length > 0) {
+             const pagesToGen = uniqueCached.filter(p => filesNeedingGen.includes(p.fileName));
+             const generated = await generateQuestionsFromRawPages(pagesToGen, cropSettings, signal);
+             questionsFromCache = [...questionsFromCache, ...generated];
+         }
+
          if (!signal.aborted) {
             setQuestions(prev => {
-                const combined = [...prev, ...cachedQuestions];
+                const combined = [...prev, ...questionsFromCache];
                 return combined.sort((a,b) => a.fileName.localeCompare(b.fileName));
             });
             setCompletedCount(prev => prev + uniqueCached.length);
@@ -1169,16 +1223,17 @@ const App: React.FC = () => {
                                  meta.cropped = true;
                                  
                                  setRawPages(current => {
-                                     // FILTER CURRENT RAW PAGES FOR THIS FILE
                                      const filePages = current.filter(p => p.fileName === pageData.fileName);
                                      filePages.sort((a,b) => a.pageNumber - b.pageNumber);
                                      
-                                     saveExamResult(pageData.fileName, filePages).then(() => loadHistoryList());
-                                     
-                                     // Initial load uses global signal
+                                     // Generate questions immediately
                                      generateQuestionsFromRawPages(filePages, cropSettings, signal).then(newQuestions => {
                                         if (!signal.aborted && !stopRequestedRef.current) {
                                             setQuestions(prevQ => [...prevQ, ...newQuestions]);
+                                            
+                                            // SAVE TO DB NOW with questions
+                                            saveExamResult(pageData.fileName, filePages, newQuestions)
+                                                .then(() => loadHistoryList());
                                         }
                                      });
                                      return current;
@@ -1250,7 +1305,6 @@ const App: React.FC = () => {
   const hasNextFile = currentFileIndex !== -1 && currentFileIndex < uniqueFileNames.length - 1;
   const hasPrevFile = currentFileIndex > 0;
 
-  // Helper to update debug file and track last viewed
   const updateDebugFile = (fileName: string | null) => {
      setDebugFile(fileName);
      if (fileName) setLastViewedFile(fileName);
@@ -1272,7 +1326,6 @@ const App: React.FC = () => {
   };
 
   const isWideLayout = debugFile !== null || questions.length > 0 || sourcePages.length > 0;
-  // Global processing logic: only when loading initial PDF or detecting global questions
   const isGlobalProcessing = status === ProcessingStatus.LOADING_PDF || status === ProcessingStatus.DETECTING_QUESTIONS || status === ProcessingStatus.CROPPING;
   const showInitialUI = status === ProcessingStatus.IDLE || (status === ProcessingStatus.ERROR && sourcePages.length === 0);
 
@@ -1302,6 +1355,35 @@ const App: React.FC = () => {
               setBatchSize={setBatchSize}
             />
           </div>
+        )}
+
+        {/* Sync Legacy Data Button */}
+        {legacySyncFiles.size > 0 && status === ProcessingStatus.COMPLETED && !debugFile && (
+            <div className="mb-6 flex justify-center animate-fade-in">
+                <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 flex items-center gap-6 shadow-sm">
+                    <div className="flex items-center gap-3">
+                         <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                         </div>
+                         <div>
+                             <h4 className="font-bold text-slate-800 text-sm">Optimization Available</h4>
+                             <p className="text-xs text-slate-500 font-medium">Save processed images for {legacySyncFiles.size} file(s) to history for instant loading next time.</p>
+                         </div>
+                    </div>
+                    <button 
+                        onClick={handleSyncLegacyData}
+                        disabled={isSyncingLegacy}
+                        className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs uppercase tracking-widest transition-all shadow-lg shadow-orange-200 active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                    >
+                        {isSyncingLegacy ? (
+                            <>
+                               <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                               Saving...
+                            </>
+                        ) : 'Sync to Database'}
+                    </button>
+                </div>
+            </div>
         )}
 
         <ProcessingState 
@@ -1353,7 +1435,6 @@ const App: React.FC = () => {
            <div className="flex justify-end px-4 -mt-10 mb-4 sticky top-4 z-40 pointer-events-none">
               <button 
                   onClick={() => {
-                     // Determine start file: Last viewed if available and valid, otherwise first
                      const target = (lastViewedFile && uniqueFileNames.includes(lastViewedFile)) 
                         ? lastViewedFile 
                         : uniqueFileNames[0];

@@ -20,7 +20,7 @@ interface Props {
   onTriggerPrevFile: () => void;
 }
 
-const PULL_THRESHOLD = 150;
+const PULL_THRESHOLD = 500;
 
 export const DebugPageViewer: React.FC<Props> = ({
   width,

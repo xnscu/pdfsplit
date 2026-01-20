@@ -1,5 +1,5 @@
 
-import { DebugPageData, HistoryMetadata, DetectedQuestion } from "../types";
+import { DebugPageData, HistoryMetadata, DetectedQuestion, QuestionImage } from "../types";
 
 const DB_NAME = "MathSplitterDB";
 const STORE_NAME = "exams";
@@ -31,10 +31,15 @@ const openDB = (): Promise<IDBDatabase> => {
 
 /**
  * Save an exam result to history
+ * NOW SUPPORTS SAVING PROCESSED QUESTIONS
  */
-export const saveExamResult = async (fileName: string, rawPages: DebugPageData[]): Promise<string> => {
+export const saveExamResult = async (fileName: string, rawPages: DebugPageData[], questions: QuestionImage[] = []): Promise<string> => {
   const db = await openDB();
-  const id = crypto.randomUUID();
+  
+  // Try to find existing record by name to update it instead of creating duplicate entries for same file name
+  const list = await getHistoryList();
+  const existing = list.find(h => h.name === fileName);
+  const id = existing ? existing.id : crypto.randomUUID();
   const timestamp = Date.now();
 
   // Safety: Deduplicate pages by pageNumber before saving to prevent DB corruption
@@ -46,7 +51,8 @@ export const saveExamResult = async (fileName: string, rawPages: DebugPageData[]
     name: fileName,
     timestamp,
     pageCount: uniquePages.length,
-    rawPages: uniquePages // This includes the heavy Base64 images
+    rawPages: uniquePages, // This includes the heavy Base64 images
+    questions: questions // Store the cut images
   };
 
   return new Promise((resolve, reject) => {
@@ -61,14 +67,14 @@ export const saveExamResult = async (fileName: string, rawPages: DebugPageData[]
 
 /**
  * Updates an existing exam result if it exists (by name), otherwise saves a new one.
- * Used for re-analysis.
+ * Used for re-analysis. Updates both raw pages and result questions.
  */
-export const reSaveExamResult = async (fileName: string, rawPages: DebugPageData[]): Promise<void> => {
+export const reSaveExamResult = async (fileName: string, rawPages: DebugPageData[], questions?: QuestionImage[]): Promise<void> => {
   const list = await getHistoryList();
   const targetItem = list.find(h => h.name === fileName);
 
   if (!targetItem) {
-    await saveExamResult(fileName, rawPages);
+    await saveExamResult(fileName, rawPages, questions || []);
     return;
   }
 
@@ -88,12 +94,21 @@ export const reSaveExamResult = async (fileName: string, rawPages: DebugPageData
         record.rawPages = uniquePages;
         record.pageCount = uniquePages.length;
         record.timestamp = Date.now();
+        
+        // Update questions if provided. 
+        // If we are just re-saving rawPages (e.g. intermediate step), we might want to keep old questions?
+        // Usually re-save implies new state. If questions is undefined, we assume we keep old ones OR 
+        // if this is a full re-analysis, the caller should pass the new empty/partial array.
+        // For safety here: if questions is passed, overwrite.
+        if (questions !== undefined) {
+          record.questions = questions;
+        }
 
         const putReq = store.put(record);
         putReq.onsuccess = () => resolve();
         putReq.onerror = () => reject(putReq.error);
       } else {
-        saveExamResult(fileName, rawPages).then(() => resolve()).catch(reject);
+        saveExamResult(fileName, rawPages, questions).then(() => resolve()).catch(reject);
       }
     };
     getReq.onerror = () => reject(getReq.error);
@@ -101,24 +116,24 @@ export const reSaveExamResult = async (fileName: string, rawPages: DebugPageData
 };
 
 /**
- * Update detections for a specific page in an existing exam record.
+ * Update detections for a specific page AND update the question images for that file.
  * Used for manual refinement/calibration.
  */
-export const updatePageDetections = async (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]): Promise<void> => {
-  const db = await openDB();
-  
-  // 1. Find the record by name (we have to search, as we might not have the UUID handy in all contexts, 
-  // or we scan the most recent one matching fileName. Ideally we pass UUID, but fileName is the app's primary key logic currently)
-  
-  // Get all metadata to find the ID
+export const updatePageDetectionsAndQuestions = async (
+    fileName: string, 
+    pageNumber: number, 
+    newDetections: DetectedQuestion[], 
+    newFileQuestions: QuestionImage[]
+): Promise<void> => {
   const list = await getHistoryList();
-  const targetItem = list.find(h => h.name === fileName); // Assuming unique filenames for active session
+  const targetItem = list.find(h => h.name === fileName);
   
   if (!targetItem) {
      console.warn("Could not find history record to update for", fileName);
      return;
   }
 
+  const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], "readwrite");
     const store = transaction.objectStore(STORE_NAME);
@@ -133,22 +148,62 @@ export const updatePageDetections = async (fileName: string, pageNumber: number,
             return;
         }
 
-        // Update the specific page
+        // 1. Update the specific page detections
         const pageIndex = record.rawPages.findIndex((p: DebugPageData) => p.pageNumber === pageNumber);
         if (pageIndex !== -1) {
             record.rawPages[pageIndex].detections = newDetections;
-            
-            // Save back
+        }
+
+        // 2. Update the stored questions for this file (Replacing old ones for this file)
+        // We need to merge. If record.questions has questions from OTHER files (batch), keep them.
+        // If record.questions only has this file, replace.
+        // CURRENT DESIGN: A record usually maps 1-to-1 with a fileName if created via upload, 
+        // but if batch processed they might be distinct records.
+        // The saveExamResult usually creates one record per filename.
+        
+        // Since we save per filename in `saveExamResult` logic in App.tsx:
+        record.questions = newFileQuestions;
+
+        // Save back
+        const putReq = store.put(record);
+        putReq.onsuccess = () => resolve();
+        putReq.onerror = () => reject(putReq.error);
+    };
+    getReq.onerror = () => reject(getReq.error);
+  });
+};
+
+// Legacy support alias
+export const updatePageDetections = async (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => {
+    return updatePageDetectionsAndQuestions(fileName, pageNumber, newDetections, []); 
+};
+
+/**
+ * Update ONLY questions for a specific exam ID.
+ * Used for the "Sync Legacy" feature.
+ */
+export const updateExamQuestionsOnly = async (id: string, questions: QuestionImage[]): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    const getReq = store.get(id);
+
+    getReq.onsuccess = () => {
+        const record = getReq.result;
+        if (record) {
+            record.questions = questions;
             const putReq = store.put(record);
             putReq.onsuccess = () => resolve();
             putReq.onerror = () => reject(putReq.error);
         } else {
-            resolve();
+            resolve(); // Or reject if strict
         }
     };
     getReq.onerror = () => reject(getReq.error);
   });
 };
+
 
 /**
  * Get a list of all history items (Metadata only, no images) to display in the list
@@ -158,9 +213,6 @@ export const getHistoryList = async (): Promise<HistoryMetadata[]> => {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], "readonly");
     const store = transaction.objectStore(STORE_NAME);
-    // getting all is fine for metadata because we will strip heavy data before returning,
-    // but cleaner is to use a cursor. For simplicity in this app, getAll is usually okay unless 100s of items.
-    // However, store contains heavy images. Using cursor is safer to avoid loading all images into memory.
     
     const request = store.openCursor();
     const results: HistoryMetadata[] = [];
@@ -168,6 +220,7 @@ export const getHistoryList = async (): Promise<HistoryMetadata[]> => {
     request.onsuccess = (event) => {
       const cursor = (event.target as IDBRequest).result;
       if (cursor) {
+        // Destructure ONLY metadata to avoid loading heavy image arrays into memory
         const { id, name, timestamp, pageCount } = cursor.value;
         results.push({ id, name, timestamp, pageCount });
         cursor.continue();
@@ -183,7 +236,7 @@ export const getHistoryList = async (): Promise<HistoryMetadata[]> => {
 /**
  * Load full data for a specific history item
  */
-export const loadExamResult = async (id: string): Promise<{ rawPages: DebugPageData[], name: string } | null> => {
+export const loadExamResult = async (id: string): Promise<{ rawPages: DebugPageData[], questions?: QuestionImage[], name: string } | null> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], "readonly");
@@ -194,7 +247,8 @@ export const loadExamResult = async (id: string): Promise<{ rawPages: DebugPageD
       if (request.result) {
         resolve({
           rawPages: request.result.rawPages,
-          name: request.result.name
+          name: request.result.name,
+          questions: request.result.questions // Return stored questions
         });
       } else {
         resolve(null);
