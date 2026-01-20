@@ -283,13 +283,18 @@ const App: React.FC = () => {
           const removedCount = await cleanupAllHistory();
           await loadHistoryList();
           if (removedCount > 0) {
-              alert(`Maintenance complete. Cleaned ${removedCount} duplicate pages across your history.`);
+              setDetailedStatus(`Maintenance complete. Cleaned ${removedCount} duplicate pages.`);
           } else {
-              alert(`Maintenance complete. No duplicate pages found.`);
+              setDetailedStatus(`Maintenance complete. No duplicate pages found.`);
           }
+          // Reset status after a delay
+          setTimeout(() => {
+             if (status === ProcessingStatus.IDLE) setDetailedStatus('');
+          }, 4000);
       } catch (e) {
           console.error(e);
-          alert("Failed to cleanup history.");
+          setError("Failed to cleanup history.");
+          setStatus(ProcessingStatus.ERROR);
       }
   };
 
@@ -657,7 +662,8 @@ const App: React.FC = () => {
 
       } catch (err) {
           console.error("Failed to save or recrop", err);
-          alert("Warning: Failed to apply changes completely.");
+          // Removed alert to avoid sandbox errors
+          setDetailedStatus("Warning: Failed to apply changes completely.");
           setStatus(ProcessingStatus.ERROR);
       }
   };

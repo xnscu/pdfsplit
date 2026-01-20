@@ -264,7 +264,7 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error("ZIP Error:", err);
-      alert("Error creating ZIP.");
+      // Alert removed to prevent sandbox errors
     } finally {
       setZippingFile(null);
       setZippingProgress('');
