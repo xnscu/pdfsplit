@@ -46,133 +46,143 @@ export const pMap = async <T, R>(
   return results;
 };
 
+interface LogicalQuestion {
+  id: string;
+  fileId: string;
+  parts: {
+    pageObj: DebugPageData;
+    detection: DetectedQuestion;
+    indexInFile: number;
+  }[];
+}
+
 /**
- * Generates processed questions from raw debug data with PIPELINED Processing.
+ * Generates processed questions from raw debug data with ITEM-LEVEL Concurrency.
  */
 export const generateQuestionsFromRawPages = async (
   pages: DebugPageData[], 
   settings: CropSettings, 
   signal: AbortSignal,
-  onProgress?: () => void
+  callbacks?: {
+    onProgress?: () => void;
+    onResult?: (image: QuestionImage) => void;
+  },
+  concurrency: number = 3
 ): Promise<QuestionImage[]> => {
-  // 1. Prepare Tasks grouped by File
-  type CropTask = {
-      pageIndex: number;
-      detIndex: number;
-      fileId: string;
-      pageObj: DebugPageData;
-      detection: DetectedQuestion;
-  };
-
-  const tasksByFile = new Map<string, CropTask[]>();
-
-  pages.forEach((page, pIdx) => {
-      page.detections.forEach((det, dIdx) => {
-          if (!tasksByFile.has(page.fileName)) {
-              tasksByFile.set(page.fileName, []);
-          }
-          tasksByFile.get(page.fileName)!.push({
-              pageIndex: pIdx,
-              detIndex: dIdx,
-              fileId: page.fileName,
-              pageObj: page,
-              detection: det
-          });
-      });
+  
+  // 1. Group by file to handle continuations order correctly
+  const files = new Map<string, DebugPageData[]>();
+  pages.forEach(p => {
+    if (!files.has(p.fileName)) files.set(p.fileName, []);
+    files.get(p.fileName)!.push(p);
   });
 
-  if (tasksByFile.size === 0) return [];
+  const logicalQuestions: LogicalQuestion[] = [];
 
-  const FILE_CONCURRENCY = 4;
-  const fileList = Array.from(tasksByFile.entries());
-
-  // Process files in parallel batches
-  const fileResults = await pMap(fileList, async ([fileId, fileTasks]) => {
-      if (signal.aborted) return [];
-
-      // --- SUB-PIPELINE FOR SINGLE FILE ---
-
-      // 1. Parallel Crop (Construct Canvas) for items in THIS file
-      const cropResults = await Promise.all(fileTasks.map(async (task) => {
-          const boxes = normalizeBoxes(task.detection.boxes_2d);
-          const result = await constructQuestionCanvas(
-              task.pageObj.dataUrl,
-              boxes,
-              task.pageObj.width,
-              task.pageObj.height,
-              settings
-          );
-          
-          if (onProgress) onProgress();
-          
-          return { ...result, task };
-      }));
-
-      // 2. Sequential Merging (Sort & Merge)
-      cropResults.sort((a, b) => {
-          if (a.task.pageIndex !== b.task.pageIndex) return a.task.pageIndex - b.task.pageIndex;
-          return a.task.detIndex - b.task.detIndex;
-      });
-
-      type ExportTask = {
-          canvas: HTMLCanvasElement | OffscreenCanvas;
-          id: string;
-          pageNumber: number;
-          fileName: string;
-          originalDataUrl?: string;
-      };
+  for (const [fileId, filePages] of files) {
+      // Sort pages
+      filePages.sort((a,b) => a.pageNumber - b.pageNumber);
       
-      const fileExportTasks: ExportTask[] = [];
+      let currentQ: LogicalQuestion | null = null;
 
-      for (const item of cropResults) {
-          if (!item.canvas) continue;
-          const isContinuation = item.task.detection.id === 'continuation';
-          
-          if (isContinuation && fileExportTasks.length > 0) {
-               const lastIdx = fileExportTasks.length - 1;
-               const lastQ = fileExportTasks[lastIdx];
-               const merged = mergeCanvasesVertical(lastQ.canvas, item.canvas, -settings.mergeOverlap);
-               fileExportTasks[lastIdx] = {
-                   ...lastQ,
-                   canvas: merged.canvas
-               };
-          } else {
-              fileExportTasks.push({
-                  canvas: item.canvas,
-                  id: item.task.detection.id,
-                  pageNumber: item.task.pageObj.pageNumber,
-                  fileName: fileId,
-                  originalDataUrl: item.originalDataUrl
-              });
+      for (const page of filePages) {
+          for (const [idx, det] of page.detections.entries()) {
+               if (det.id === 'continuation') {
+                   if (currentQ) {
+                       currentQ.parts.push({ pageObj: page, detection: det, indexInFile: idx });
+                   } else {
+                       // Orphan continuation: Treat as separate or skip.
+                       // Creating separate to ensure visibility.
+                       currentQ = {
+                           id: `cont_${page.pageNumber}_${idx}`,
+                           fileId,
+                           parts: [{ pageObj: page, detection: det, indexInFile: idx }]
+                       };
+                       logicalQuestions.push(currentQ);
+                   }
+               } else {
+                   currentQ = {
+                       id: det.id,
+                       fileId,
+                       parts: [{ pageObj: page, detection: det, indexInFile: idx }]
+                   };
+                   logicalQuestions.push(currentQ);
+               }
           }
       }
+  }
 
-      // 3. Analyze & Export to DataURL
-      let maxFileWidth = 0;
-      const analyzedTasks = fileExportTasks.map(item => {
-           const trim = analyzeCanvasContent(item.canvas);
-           if (trim.w > maxFileWidth) maxFileWidth = trim.w;
-           return { ...item, trim };
-      });
+  if (logicalQuestions.length === 0) return [];
 
-      const finalImages = await Promise.all(analyzedTasks.map(async (q) => {
-          const finalDataUrl = await generateAlignedImage(q.canvas, q.trim, maxFileWidth, settings);
-          if ('width' in q.canvas) { q.canvas.width = 0; q.canvas.height = 0; }
-          return {
-              id: q.id,
-              pageNumber: q.pageNumber,
-              fileName: q.fileName,
-              dataUrl: finalDataUrl,
-              originalDataUrl: q.originalDataUrl
-          };
-      }));
+  // 2. Process Logical Questions in Parallel
+  const results = await pMap(logicalQuestions, async (task, i) => {
+     if (signal.aborted) return null;
+     
+     console.log(`[Start Task] Processing Question ${task.id} from ${task.fileId}`);
 
-      return finalImages;
+     try {
+         // A. Crop Parts
+         const partsCanvas = [];
+         for (const part of task.parts) {
+             const boxes = normalizeBoxes(part.detection.boxes_2d);
+             const res = await constructQuestionCanvas(
+                 part.pageObj.dataUrl,
+                 boxes,
+                 part.pageObj.width,
+                 part.pageObj.height,
+                 settings
+             );
+             if (res.canvas) partsCanvas.push({ canvas: res.canvas, originalDataUrl: res.originalDataUrl });
+         }
 
-  }, FILE_CONCURRENCY, signal);
+         if (partsCanvas.length === 0) {
+            console.log(`[End Task] Processing Question ${task.id} - No content`);
+            return null;
+         }
 
-  if (signal.aborted) return [];
+         // B. Merge (Sequential Vertical)
+         let finalCanvas = partsCanvas[0].canvas;
+         // Use first part's original as the "main" reference for Before/After view
+         const originalDataUrl = partsCanvas[0].originalDataUrl;
 
-  // Flatten results
-  return fileResults.flat();
+         for (let k = 1; k < partsCanvas.length; k++) {
+             const next = partsCanvas[k];
+             const merged = mergeCanvasesVertical(finalCanvas, next.canvas, -settings.mergeOverlap);
+             finalCanvas = merged.canvas;
+         }
+
+         // C. Export
+         // Note: We use intrinsic trim width to allow independent parallel processing 
+         // without waiting for full-file analysis.
+         const trim = analyzeCanvasContent(finalCanvas);
+         const finalDataUrl = await generateAlignedImage(finalCanvas, trim, trim.w, settings);
+         
+         const qImage: QuestionImage = {
+             id: task.id,
+             pageNumber: task.parts[0].pageObj.pageNumber,
+             fileName: task.fileId,
+             dataUrl: finalDataUrl,
+             originalDataUrl: originalDataUrl
+         };
+
+         // Real-time updates
+         if (callbacks?.onResult) callbacks.onResult(qImage);
+         if (callbacks?.onProgress) callbacks.onProgress();
+
+         console.log(`[End Task] Processing Question ${task.id} from ${task.fileId}`);
+         
+         // Help GC
+         if ('width' in finalCanvas) { finalCanvas.width = 0; finalCanvas.height = 0; }
+
+         return qImage;
+
+     } catch (e) {
+         console.error(`Error processing question ${task.id}`, e);
+         console.log(`[End Task] Processing Question ${task.id} - Failed`);
+         return null;
+     }
+
+  }, concurrency, signal);
+
+  return results.filter((r): r is QuestionImage => r !== null);
 };

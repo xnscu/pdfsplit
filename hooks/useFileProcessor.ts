@@ -163,7 +163,18 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
         
       } else {
          if (allRawPages.length > 0) {
-            const qs = await generateQuestionsFromRawPages(allRawPages, cropSettings, new AbortController().signal);
+            // Auto-detect safe concurrency for ZIP processing (pure CPU task)
+            const cpuCores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
+            const safeHardwareLimit = Math.max(1, Math.min(cpuCores - 1, 8));
+
+            // Updated to use concurrency
+            const qs = await generateQuestionsFromRawPages(
+                allRawPages, 
+                cropSettings, 
+                new AbortController().signal,
+                undefined, // no callback for zip load needed usually, or add if wanted
+                safeHardwareLimit
+            );
             setQuestions(qs);
             setCompletedCount(allRawPages.length);
             setStatus(ProcessingStatus.COMPLETED);
@@ -276,7 +287,14 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
 
          if (filesNeedingGen.length > 0) {
              const pagesToGen = uniqueCached.filter(p => filesNeedingGen.includes(p.fileName));
-             const generated = await generateQuestionsFromRawPages(pagesToGen, cropSettings, signal);
+             // Updated usage
+             const generated = await generateQuestionsFromRawPages(
+                 pagesToGen, 
+                 cropSettings, 
+                 signal,
+                 undefined, 
+                 concurrency
+             );
              questionsFromCache = [...questionsFromCache, ...generated];
          }
 
@@ -385,10 +403,29 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                                      const filePages = current.filter((p: any) => p.fileName === pageData.fileName);
                                      filePages.sort((a: any,b: any) => a.pageNumber - b.pageNumber);
                                      
-                                     generateQuestionsFromRawPages(filePages, cropSettings, signal).then(newQuestions => {
+                                     // Use callback to update questions in real-time
+                                     generateQuestionsFromRawPages(
+                                        filePages, 
+                                        cropSettings, 
+                                        signal,
+                                        {
+                                            onProgress: () => setCroppingDone((p: number) => p + 1),
+                                            onResult: (img) => {
+                                                setQuestions((prevQ: any) => {
+                                                    const next = [...prevQ, img];
+                                                    // Basic sort to keep sanity
+                                                    return next.sort((a: any,b: any) => {
+                                                        if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
+                                                        // Fallback sort
+                                                        return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
+                                                    });
+                                                });
+                                            }
+                                        },
+                                        concurrency
+                                     ).then(newQuestions => {
                                         if (!signal.aborted && !stopRequestedRef.current) {
-                                            setQuestions((prevQ: any) => [...prevQ, ...newQuestions]);
-                                            
+                                            // Final save (questions already in state)
                                             saveExamResult(pageData.fileName, filePages, newQuestions)
                                                 .then(() => refreshHistoryList());
                                         }

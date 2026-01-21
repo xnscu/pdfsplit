@@ -58,24 +58,24 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       // 1. Get Logical CPU Cores (Default to 4 if API unavailable)
       const cpuCores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
       
-      // 2. Calculate Safe Limit:
+      // 2. Calculate Safe Limit for Image Operations:
       //    - Reserve 1 core for the UI thread (prevents freezing).
-      //    - Cap at 8 to prevent memory exhaustion (Canvas operations are memory intensive).
-      //    - Ensure at least 1 worker.
+      //    - Cap at 8 to prevent memory exhaustion.
+      //    - Ensure at least 2 workers if possible for speed.
       const safeHardwareLimit = Math.max(1, Math.min(cpuCores - 1, 8));
 
-      // 3. Determine Final Concurrency:
-      //    Use the user's batchSize setting as a "hint", but clamp it to the hardware limit.
-      //    This prevents users from accidentally setting 100 and crashing the browser.
-      const userSetting = state.batchSize || 5;
-      const runConcurrency = Math.min(userSetting, safeHardwareLimit);
+      // 3. Concurrency Strategy:
+      //    - Process FILES sequentially (concurrency=1) to allow the UI to update "1/6, 2/6" smoothly.
+      //    - Process QUESTIONS within each file in parallel using the full safe hardware limit.
+      const fileConcurrency = 1;
+      const internalItemConcurrency = safeHardwareLimit;
 
-      console.log(`Batch Processing: CPU Cores=${cpuCores}. User Setting=${userSetting}. Optimized Concurrency=${runConcurrency}`);
+      console.log(`Batch Processing: CPU Cores=${cpuCores}. Strategy: Sequential Files (1) x Parallel Items (${internalItemConcurrency}).`);
 
       try {
          const getStatusMsg = (processed: number) => {
              const percent = totalFiles > 0 ? Math.round((processed / totalFiles) * 100) : 0;
-             return `Batch Reprocessing: ${percent}% (${processed}/${totalFiles}) · Threads: ${runConcurrency}`;
+             return `Batch Reprocessing: ${percent}% (${processed}/${totalFiles}) · Threads: ${internalItemConcurrency}`;
          };
 
          setDetailedStatus(getStatusMsg(0));
@@ -87,10 +87,13 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
 
             // 2. Recrop with current settings
             // We use a non-cancellable controller for atomic operations inside the parallel worker
+            // We pass 'internalItemConcurrency' to use full CPU power for this single file.
             const newQuestions = await generateQuestionsFromRawPages(
                record.rawPages,
                cropSettings,
-               new AbortController().signal 
+               new AbortController().signal,
+               undefined, // No UI callback updates for batch background job
+               internalItemConcurrency
             );
 
             // 3. Count changes
@@ -124,10 +127,9 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
             setDetailedStatus(getStatusMsg(processedFiles));
             
             // Critical: Yield to event loop to allow UI render between items in the concurrency pool.
-            // This ensures "Real-time" updates even when CPU is busy.
             await new Promise(resolve => setTimeout(resolve, 0));
 
-         }, runConcurrency);
+         }, fileConcurrency);
 
          addNotification(null, "success", `Reprocessed ${processedFiles} files. ${changedImagesCount} images changed.`);
          await refreshHistoryList(); // Refreshes metadata if any counts changed
@@ -182,12 +184,18 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           setTotal(uniquePages.length);
           setCompletedCount(uniquePages.length);
 
+          const cpuCores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
+          const safeLimit = Math.max(1, Math.min(cpuCores - 1, 8));
+
           abortControllerRef.current = new AbortController();
           const generatedQuestions = await generateQuestionsFromRawPages(
             uniquePages, 
             cropSettings, 
             abortControllerRef.current.signal,
-            () => setCroppingDone((p: number) => p + 1)
+            {
+                onProgress: () => setCroppingDone((p: number) => p + 1)
+            },
+            safeLimit
           );
 
           setQuestions(generatedQuestions);
@@ -273,12 +281,18 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           setCroppingTotal(totalDetections);
           setCroppingDone(0);
 
+          const cpuCores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
+          const safeLimit = Math.max(1, Math.min(cpuCores - 1, 8));
+
           abortControllerRef.current = new AbortController();
           const generatedLegacyQuestions = await generateQuestionsFromRawPages(
             legacyPages, 
             cropSettings, 
             abortControllerRef.current.signal,
-            () => setCroppingDone((p: number) => p + 1)
+            {
+                onProgress: () => setCroppingDone((p: number) => p + 1)
+            },
+            safeLimit
           );
           
           setQuestions([...combinedQuestions, ...generatedLegacyQuestions]);

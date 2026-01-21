@@ -31,7 +31,10 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
          targetPages, 
          specificSettings, 
          taskController.signal,
-         () => setCroppingDone((p: number) => p + 1)
+         {
+             onProgress: () => setCroppingDone((p: number) => p + 1)
+         },
+         concurrency
         );
        
        if (!taskController.signal.aborted) {
@@ -105,7 +108,10 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
             finalFilePages, 
             cropSettings, 
             signal,
-            () => setCroppingDone((p: number) => p + 1)
+            {
+                onProgress: () => setCroppingDone((p: number) => p + 1)
+            },
+            concurrency
         );
         
         if (!signal.aborted) {
@@ -160,7 +166,10 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
               targetPages, 
               cropSettings, 
               taskController.signal,
-              () => setCroppingDone((p: number) => p + 1)
+              {
+                  onProgress: () => setCroppingDone((p: number) => p + 1)
+              },
+              concurrency
           );
           
           if (!taskController.signal.aborted) {
