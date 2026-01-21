@@ -46,6 +46,14 @@ export interface HistoryMetadata {
   pageCount: number;
 }
 
+export interface SourcePage {
+  dataUrl: string;
+  width: number;
+  height: number;
+  pageNumber: number;
+  fileName: string;
+}
+
 export enum ProcessingStatus {
   IDLE = 'IDLE',
   LOADING_PDF = 'LOADING_PDF',

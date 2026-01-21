@@ -1,8 +1,7 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import JSZip from 'jszip';
-import { ProcessingStatus, QuestionImage, DebugPageData, ProcessedCanvas, HistoryMetadata, DetectedQuestion } from './types';
+import { ProcessingStatus } from './types';
 import { ProcessingState } from './components/ProcessingState';
 import { QuestionGrid } from './components/QuestionGrid';
 import { DebugRawView } from './components/DebugRawView';
@@ -12,130 +11,27 @@ import { ConfigurationPanel } from './components/ConfigurationPanel';
 import { HistorySidebar } from './components/HistorySidebar';
 import { RefinementModal } from './components/RefinementModal';
 import { ConfirmDialog } from './components/ConfirmDialog';
-import { NotificationToast, AppNotification } from './components/NotificationToast';
-import { renderPageToImage, constructQuestionCanvas, mergeCanvasesVertical, analyzeCanvasContent, generateAlignedImage, CropSettings } from './services/pdfService';
-import { detectQuestionsOnPage } from './services/geminiService';
-import { saveExamResult, getHistoryList, loadExamResult, cleanupAllHistory, updatePageDetectionsAndQuestions, reSaveExamResult, updateExamQuestionsOnly } from './services/storageService';
+import { NotificationToast } from './components/NotificationToast';
 
-const DEFAULT_SETTINGS: CropSettings = {
-  cropPadding: 25,
-  canvasPadding: 10,
-  mergeOverlap: -5
-};
+// Hooks
+import { useExamState } from './hooks/useExamState';
+import { useFileProcessor } from './hooks/useFileProcessor';
+import { useHistoryActions } from './hooks/useHistoryActions';
+import { useRefinementActions } from './hooks/useRefinementActions';
 
-const STORAGE_KEYS = {
-  CROP_SETTINGS: 'exam_splitter_crop_settings_v3',
-  CONCURRENCY: 'exam_splitter_concurrency_v3',
-  MODEL: 'exam_splitter_selected_model_v3',
-  USE_HISTORY_CACHE: 'exam_splitter_use_history_cache_v1',
-  BATCH_SIZE: 'exam_splitter_batch_size_v1'
-};
-
-interface SourcePage {
-  dataUrl: string;
-  width: number;
-  height: number;
-  pageNumber: number;
-  fileName: string;
-}
-
-const normalizeBoxes = (boxes2d: any): [number, number, number, number][] => {
-  if (Array.isArray(boxes2d[0])) {
-    return boxes2d as [number, number, number, number][];
-  }
-  return [boxes2d] as [number, number, number, number][];
-};
-
-const formatTime = (seconds: number): string => {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-};
-
-// Helper for auto-detect batch size based on RAM
-const getAutoBatchSize = (): number => {
-  if (typeof navigator !== 'undefined' && 'deviceMemory' in navigator) {
-    // @ts-ignore
-    const ram = navigator.deviceMemory as number; 
-    // Conservative scaling: 
-    // <= 4GB: 10 items
-    // <= 8GB: 25 items
-    // > 8GB: 50 items
-    if (ram <= 4) return 10;
-    if (ram <= 8) return 25;
-    return 50;
-  }
-  return 20; // Default fallback
-};
-
-// Helper for parallel processing with concurrency control
-const pMap = async <T, R>(
-  items: T[],
-  mapper: (item: T, index: number) => Promise<R>,
-  concurrency: number,
-  signal?: AbortSignal
-): Promise<R[]> => {
-  const results = new Array<R>(items.length);
-  let currentIndex = 0;
-  
-  const worker = async () => {
-    while (currentIndex < items.length) {
-      if (signal?.aborted) return;
-      const index = currentIndex++;
-      try {
-        results[index] = await mapper(items[index], index);
-      } catch (err) {
-        if (signal?.aborted) return;
-        throw err;
-      }
-    }
-  };
-
-  const workers = Array(Math.min(items.length, concurrency)).fill(null).map(worker);
-  await Promise.all(workers);
-  
-  if (signal?.aborted) throw new Error("Aborted");
-  return results;
-};
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
 
 const App: React.FC = () => {
-  const [status, setStatus] = useState<ProcessingStatus>(ProcessingStatus.IDLE);
-  const [questions, setQuestions] = useState<QuestionImage[]>([]);
-  const [rawPages, setRawPages] = useState<DebugPageData[]>([]);
-  const [sourcePages, setSourcePages] = useState<SourcePage[]>([]);
+  // 1. State Hook
+  const { state, setters, refs, actions } = useExamState();
   
-  // State for specific file interactions
-  const [debugFile, setDebugFile] = useState<string | null>(null);
-  const [lastViewedFile, setLastViewedFile] = useState<string | null>(null); // Track last viewed file
-  const [refiningFile, setRefiningFile] = useState<string | null>(null);
+  // 2. Logic Hooks
+  // Extract refreshHistoryList first as it is needed for useFileProcessor
+  const { handleCleanupAllHistory, handleLoadHistory, handleBatchLoadHistory, handleSyncLegacyData, refreshHistoryList } = useHistoryActions({ state, setters, refs, actions });
+  const { processZipFiles, handleFileChange } = useFileProcessor({ state, setters, refs, actions, refreshHistoryList });
+  const { handleRecropFile, executeReanalysis, handleUpdateDetections } = useRefinementActions({ state, setters, actions });
 
-  // Legacy sync state
-  const [legacySyncFiles, setLegacySyncFiles] = useState<Set<string>>(new Set());
-  const [isSyncingLegacy, setIsSyncingLegacy] = useState(false);
-
-  // Background Processing State
-  const [processingFiles, setProcessingFiles] = useState<Set<string>>(new Set());
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  
-  const addNotification = (fileName: string, type: 'success' | 'error', message: string) => {
-      const id = Date.now().toString() + Math.random().toString();
-      setNotifications(prev => [...prev, { id, fileName, type, message }]);
-      
-      // Auto dismiss success after 8 seconds
-      if (type === 'success') {
-          setTimeout(() => {
-              setNotifications(current => current.filter(n => n.id !== id));
-          }, 8000);
-      }
-  };
-
-  // History State
-  const [showHistory, setShowHistory] = useState(false);
-  const [historyList, setHistoryList] = useState<HistoryMetadata[]>([]);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-
-  // General Confirmation Dialog State
+  // 3. Local UI State
   const [confirmState, setConfirmState] = useState<{
     isOpen: boolean;
     title: string;
@@ -150,118 +46,30 @@ const App: React.FC = () => {
     isDestructive: false
   });
 
-  const [cropSettings, setCropSettings] = useState<CropSettings>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.CROP_SETTINGS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Migration support for old format
-        if (parsed.canvasPadding === undefined && parsed.canvasPaddingLeft !== undefined) {
-             parsed.canvasPadding = parsed.canvasPaddingLeft;
-        }
-        return { ...DEFAULT_SETTINGS, ...parsed };
-      }
-      return DEFAULT_SETTINGS;
-    } catch {
-      return DEFAULT_SETTINGS;
-    }
-  });
-  
-  const [concurrency, setConcurrency] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.CONCURRENCY);
-      return saved ? Math.min(10, Math.max(1, parseInt(saved, 10))) : 5;
-    } catch {
-      return 5;
-    }
-  });
-
-  const [batchSize, setBatchSize] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.BATCH_SIZE);
-      return saved ? Math.max(1, parseInt(saved, 10)) : getAutoBatchSize();
-    } catch {
-      return 20;
-    }
-  });
-
-  const [selectedModel, setSelectedModel] = useState(() => {
-    return localStorage.getItem(STORAGE_KEYS.MODEL) || 'gemini-3-flash-preview';
-  });
-
-  const [useHistoryCache, setUseHistoryCache] = useState(() => {
-    return localStorage.getItem(STORAGE_KEYS.USE_HISTORY_CACHE) === 'true';
-  });
-
-  // Progress States (Global)
-  const [progress, setProgress] = useState(0); 
-  const [total, setTotal] = useState(0);
-  const [completedCount, setCompletedCount] = useState(0); 
-  const [error, setError] = useState<string | undefined>();
-  const [detailedStatus, setDetailedStatus] = useState<string>('');
-  const [croppingTotal, setCroppingTotal] = useState(0);
-  const [croppingDone, setCroppingDone] = useState(0);
-  
-  // Retry / Round States
-  const [currentRound, setCurrentRound] = useState(1);
-  const [failedCount, setFailedCount] = useState(0);
-  const stopRequestedRef = useRef(false);
-
-  // Timer State
-  const [startTime, setStartTime] = useState<number | null>(null);
-  const [elapsedTime, setElapsedTime] = useState("00:00");
-
-  const abortControllerRef = useRef<AbortController | null>(null);
-
-  // Persistence Effects
+  // Load History List on Mount using the hook action
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CROP_SETTINGS, JSON.stringify(cropSettings));
-  }, [cropSettings]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CONCURRENCY, concurrency.toString());
-  }, [concurrency]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.BATCH_SIZE, batchSize.toString());
-  }, [batchSize]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.MODEL, selectedModel);
-  }, [selectedModel]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.USE_HISTORY_CACHE, String(useHistoryCache));
-  }, [useHistoryCache]);
-
-  // Load History List on Mount
-  useEffect(() => {
-    loadHistoryList();
+    refreshHistoryList();
   }, []);
-
-  const loadHistoryList = async () => {
-    try {
-      const list = await getHistoryList();
-      setHistoryList(list);
-    } catch (e) {
-      console.error("Failed to load history list", e);
-    }
-  };
 
   // Timer Effect
   useEffect(() => {
     let interval: number;
     const activeStates = [ProcessingStatus.LOADING_PDF, ProcessingStatus.DETECTING_QUESTIONS, ProcessingStatus.CROPPING];
-    if (activeStates.includes(status) && startTime) {
+    if (activeStates.includes(state.status) && state.startTime) {
       interval = window.setInterval(() => {
         const now = Date.now();
-        const diff = Math.floor((now - startTime) / 1000);
-        setElapsedTime(formatTime(diff));
+        const diff = Math.floor((now - state.startTime!) / 1000);
+        const h = Math.floor(diff / 3600);
+        const m = Math.floor((diff % 3600) / 60);
+        const s = diff % 60;
+        const timeStr = `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        setters.setElapsedTime(timeStr);
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [status, startTime]);
+  }, [state.status, state.startTime]);
 
+  // Handle URL Params for ZIP
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const zipUrl = params.get('zip');
@@ -269,1046 +77,45 @@ const App: React.FC = () => {
     if (zipUrl) {
       const loadRemoteZip = async () => {
         try {
-          setStatus(ProcessingStatus.LOADING_PDF);
-          setDetailedStatus(`Downloading: ${zipUrl}`);
+          setters.setStatus(ProcessingStatus.LOADING_PDF);
+          setters.setDetailedStatus(`Downloading: ${zipUrl}`);
           const response = await fetch(zipUrl);
           if (!response.ok) throw new Error(`Fetch failed (Status: ${response.status})`);
           const blob = await response.blob();
           const fileName = zipUrl.split('/').pop() || 'remote_debug.zip';
           await processZipFiles([{ blob, name: fileName }]);
         } catch (err: any) {
-          setError(err.message || "Remote ZIP download failed");
-          setStatus(ProcessingStatus.ERROR);
+          setters.setError(err.message || "Remote ZIP download failed");
+          setters.setStatus(ProcessingStatus.ERROR);
         }
       };
       loadRemoteZip();
     }
   }, []);
 
-  const handleStop = () => {
-    stopRequestedRef.current = true;
-    if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-    }
-    setDetailedStatus("Stopping... Current requests will finish.");
-  };
-
-  const handleReset = () => {
-    if (abortControllerRef.current) abortControllerRef.current.abort();
-    stopRequestedRef.current = false;
-    setStatus(ProcessingStatus.IDLE);
-    setQuestions([]);
-    setRawPages([]);
-    setSourcePages([]);
-    setProgress(0);
-    setTotal(0);
-    setCompletedCount(0);
-    setCroppingTotal(0);
-    setCroppingDone(0);
-    setError(undefined);
-    setDetailedStatus('');
-    setDebugFile(null);
-    setLastViewedFile(null);
-    setRefiningFile(null);
-    setStartTime(null);
-    setElapsedTime("00:00");
-    setCurrentRound(1);
-    setFailedCount(0);
-    setProcessingFiles(new Set());
-    setNotifications([]);
-    setLegacySyncFiles(new Set());
-    setIsSyncingLegacy(false);
-    if (window.location.search) window.history.pushState({}, '', window.location.pathname);
-  };
-
-  const handleCleanupAllHistory = async () => {
-      try {
-          const removedCount = await cleanupAllHistory();
-          await loadHistoryList();
-          if (removedCount > 0) {
-              setDetailedStatus(`Maintenance complete. Cleaned ${removedCount} duplicate pages.`);
-          } else {
-              setDetailedStatus(`Maintenance complete. No duplicate pages found.`);
-          }
-          // Reset status after a delay
-          setTimeout(() => {
-             if (status === ProcessingStatus.IDLE) setDetailedStatus('');
-          }, 4000);
-      } catch (e) {
-          console.error(e);
-          setError("Failed to cleanup history.");
-          setStatus(ProcessingStatus.ERROR);
-      }
-  };
-
-  const handleLoadHistory = async (id: string) => {
-    handleReset();
-    setShowHistory(false);
-    setIsLoadingHistory(true);
-    setStatus(ProcessingStatus.LOADING_PDF);
-    setDetailedStatus('Restoring from history...');
-
-    try {
-      const result = await loadExamResult(id);
-      if (!result) throw new Error("History record not found.");
-
-      // Cleanse loaded data for unique pages (in case loaded history is corrupted from before)
-      const uniquePages = Array.from(new Map(result.rawPages.map(p => [p.pageNumber, p])).values());
-      uniquePages.sort((a, b) => a.pageNumber - b.pageNumber);
-
-      setRawPages(uniquePages);
-      
-      const recoveredSourcePages = uniquePages.map(rp => ({
-        dataUrl: rp.dataUrl,
-        width: rp.width,
-        height: rp.height,
-        pageNumber: rp.pageNumber,
-        fileName: rp.fileName
-      }));
-      setSourcePages(recoveredSourcePages);
-
-      // Check if questions are already cached in DB
-      if (result.questions && result.questions.length > 0) {
-          setQuestions(result.questions);
-          setCompletedCount(uniquePages.length);
-          setTotal(uniquePages.length);
-          setStatus(ProcessingStatus.COMPLETED);
-          setDetailedStatus("Loaded successfully from cache.");
-      } else {
-          // LEGACY FALLBACK: Generate from raw pages
-          setStatus(ProcessingStatus.CROPPING);
-          setDetailedStatus('Generating questions from raw data...');
-          
-          const totalDetections = uniquePages.reduce((acc, p) => acc + p.detections.length, 0);
-          setCroppingTotal(totalDetections);
-          setCroppingDone(0);
-          setTotal(uniquePages.length);
-          setCompletedCount(uniquePages.length);
-
-          abortControllerRef.current = new AbortController();
-          const generatedQuestions = await generateQuestionsFromRawPages(
-            uniquePages, 
-            cropSettings, 
-            abortControllerRef.current.signal
-          );
-
-          setQuestions(generatedQuestions);
-          setStatus(ProcessingStatus.COMPLETED);
-          
-          // Mark this file as needing sync
-          setLegacySyncFiles(new Set([result.name]));
-      }
-
-    } catch (e: any) {
-      setError("Failed to load history: " + e.message);
-      setStatus(ProcessingStatus.ERROR);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
-
-  const handleBatchLoadHistory = async (ids: string[]) => {
-    handleReset();
-    setShowHistory(false);
-    setIsLoadingHistory(true);
-    setStatus(ProcessingStatus.LOADING_PDF);
-    setDetailedStatus(`Queuing ${ids.length} exams from history...`);
-
-    try {
-      // Chunk loading to prevent Memory Spikes and UI freeze when loading massive data from IDB
-      const CHUNK_SIZE = batchSize;
-      const combinedPages: DebugPageData[] = [];
-      const combinedQuestions: QuestionImage[] = [];
-      const legacyFilesFound = new Set<string>();
-      
-      for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
-         const chunk = ids.slice(i, i + CHUNK_SIZE);
-         setDetailedStatus(`Restoring data batch ${Math.min(i + CHUNK_SIZE, ids.length)}/${ids.length}...`);
-         
-         const results = await Promise.all(chunk.map(id => loadExamResult(id)));
-         results.forEach(res => {
-            if (res && res.rawPages) {
-                combinedPages.push(...res.rawPages);
-                
-                if (res.questions && res.questions.length > 0) {
-                    combinedQuestions.push(...res.questions);
-                } else {
-                    legacyFilesFound.add(res.name);
-                }
-            }
-         });
-         
-         await new Promise(r => setTimeout(r, 10));
-      }
-
-      if (combinedPages.length === 0) {
-        throw new Error("No valid data found in selected items.");
-      }
-
-      // Deduplicate
-      const uniqueMap = new Map<string, DebugPageData>();
-      combinedPages.forEach(p => {
-          const key = `${p.fileName}#${p.pageNumber}`;
-          uniqueMap.set(key, p);
-      });
-
-      const uniquePages = Array.from(uniqueMap.values());
-      uniquePages.sort((a, b) => {
-         if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
-         return a.pageNumber - b.pageNumber;
-      });
-
-      setRawPages(uniquePages);
-
-      const recoveredSourcePages = uniquePages.map(rp => ({
-        dataUrl: rp.dataUrl,
-        width: rp.width,
-        height: rp.height,
-        pageNumber: rp.pageNumber,
-        fileName: rp.fileName
-      }));
-      setSourcePages(recoveredSourcePages);
-
-      // If we found legacy files, we need to process them
-      if (legacyFilesFound.size > 0) {
-          setStatus(ProcessingStatus.CROPPING);
-          setDetailedStatus(`Generating images for ${legacyFilesFound.size} legacy files...`);
-
-          const legacyPages = uniquePages.filter(p => legacyFilesFound.has(p.fileName));
-          const totalDetections = legacyPages.reduce((acc, p) => acc + p.detections.length, 0);
-          setCroppingTotal(totalDetections);
-          setCroppingDone(0);
-
-          abortControllerRef.current = new AbortController();
-          const generatedLegacyQuestions = await generateQuestionsFromRawPages(
-            legacyPages, 
-            cropSettings, 
-            abortControllerRef.current.signal
-          );
-          
-          setQuestions([...combinedQuestions, ...generatedLegacyQuestions]);
-          setLegacySyncFiles(legacyFilesFound);
-      } else {
-          setQuestions(combinedQuestions);
-      }
-
-      setTotal(uniquePages.length);
-      setCompletedCount(uniquePages.length);
-      setStatus(ProcessingStatus.COMPLETED);
-
-    } catch (e: any) {
-      setError("Batch load failed: " + e.message);
-      setStatus(ProcessingStatus.ERROR);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
-
-  /**
-   * Syncs loaded legacy questions back to DB to allow instant load next time
-   */
-  const handleSyncLegacyData = async () => {
-     if (legacySyncFiles.size === 0) return;
-     setIsSyncingLegacy(true);
-     setDetailedStatus("Syncing processed images to database...");
-     
-     try {
-         const history = await getHistoryList();
-         const filesToSync = Array.from(legacySyncFiles);
-         
-         await Promise.all(filesToSync.map(async (fileName) => {
-             const fileQuestions = questions.filter(q => q.fileName === fileName);
-             if (fileQuestions.length === 0) return;
-
-             const historyItem = history.find(h => h.name === fileName);
-             if (historyItem) {
-                 await updateExamQuestionsOnly(historyItem.id, fileQuestions);
-             } else {
-                 // Fallback if record missing (unlikely if loaded from history)
-                 const filePages = rawPages.filter(p => p.fileName === fileName);
-                 await saveExamResult(fileName, filePages, fileQuestions);
-             }
-         }));
-
-         setLegacySyncFiles(new Set()); // Clear sync queue
-         setDetailedStatus("Sync complete!");
-         addNotification("Sync", "success", "All images saved to database for future instant loading.");
-         
-         setTimeout(() => {
-             if (status === ProcessingStatus.COMPLETED) setDetailedStatus("");
-         }, 3000);
-
-     } catch (e: any) {
-         console.error(e);
-         setError("Failed to sync legacy data: " + e.message);
-     } finally {
-         setIsSyncingLegacy(false);
-     }
-  };
-
-  /**
-   * Generates processed questions from raw debug data with PIPELINED Processing.
-   */
-  const generateQuestionsFromRawPages = async (pages: DebugPageData[], settings: CropSettings, signal: AbortSignal): Promise<QuestionImage[]> => {
-    // 1. Prepare Tasks grouped by File
-    type CropTask = {
-        pageIndex: number;
-        detIndex: number;
-        fileId: string;
-        pageObj: DebugPageData;
-        detection: DetectedQuestion;
-    };
-
-    const tasksByFile = new Map<string, CropTask[]>();
-
-    pages.forEach((page, pIdx) => {
-        page.detections.forEach((det, dIdx) => {
-            if (!tasksByFile.has(page.fileName)) {
-                tasksByFile.set(page.fileName, []);
-            }
-            tasksByFile.get(page.fileName)!.push({
-                pageIndex: pIdx,
-                detIndex: dIdx,
-                fileId: page.fileName,
-                pageObj: page,
-                detection: det
-            });
-        });
-    });
-
-    if (tasksByFile.size === 0) return [];
-
-    const FILE_CONCURRENCY = 4;
-    const fileList = Array.from(tasksByFile.entries());
-
-    // Process files in parallel batches
-    const fileResults = await pMap(fileList, async ([fileId, fileTasks]) => {
-        if (signal.aborted) return [];
-
-        // --- SUB-PIPELINE FOR SINGLE FILE ---
-
-        // 1. Parallel Crop (Construct Canvas) for items in THIS file
-        const cropResults = await Promise.all(fileTasks.map(async (task) => {
-            const boxes = normalizeBoxes(task.detection.boxes_2d);
-            const result = await constructQuestionCanvas(
-                task.pageObj.dataUrl,
-                boxes,
-                task.pageObj.width,
-                task.pageObj.height,
-                settings
-            );
-            
-            // Always update progress regardless of status closure staleness
-            setCroppingDone(prev => prev + 1);
-            
-            return { ...result, task };
-        }));
-
-        // 2. Sequential Merging (Sort & Merge)
-        cropResults.sort((a, b) => {
-            if (a.task.pageIndex !== b.task.pageIndex) return a.task.pageIndex - b.task.pageIndex;
-            return a.task.detIndex - b.task.detIndex;
-        });
-
-        type ExportTask = {
-            canvas: HTMLCanvasElement | OffscreenCanvas;
-            id: string;
-            pageNumber: number;
-            fileName: string;
-            originalDataUrl?: string;
-        };
-        
-        const fileExportTasks: ExportTask[] = [];
-
-        for (const item of cropResults) {
-            if (!item.canvas) continue;
-            const isContinuation = item.task.detection.id === 'continuation';
-            
-            if (isContinuation && fileExportTasks.length > 0) {
-                 const lastIdx = fileExportTasks.length - 1;
-                 const lastQ = fileExportTasks[lastIdx];
-                 const merged = mergeCanvasesVertical(lastQ.canvas, item.canvas, -settings.mergeOverlap);
-                 fileExportTasks[lastIdx] = {
-                     ...lastQ,
-                     canvas: merged.canvas
-                 };
-            } else {
-                fileExportTasks.push({
-                    canvas: item.canvas,
-                    id: item.task.detection.id,
-                    pageNumber: item.task.pageObj.pageNumber,
-                    fileName: fileId,
-                    originalDataUrl: item.originalDataUrl
-                });
-            }
-        }
-
-        // 3. Analyze & Export to DataURL
-        let maxFileWidth = 0;
-        const analyzedTasks = fileExportTasks.map(item => {
-             const trim = analyzeCanvasContent(item.canvas);
-             if (trim.w > maxFileWidth) maxFileWidth = trim.w;
-             return { ...item, trim };
-        });
-
-        const finalImages = await Promise.all(analyzedTasks.map(async (q) => {
-            const finalDataUrl = await generateAlignedImage(q.canvas, q.trim, maxFileWidth, settings);
-            if ('width' in q.canvas) { q.canvas.width = 0; q.canvas.height = 0; }
-            return {
-                id: q.id,
-                pageNumber: q.pageNumber,
-                fileName: q.fileName,
-                dataUrl: finalDataUrl,
-                originalDataUrl: q.originalDataUrl
-            };
-        }));
-
-        return finalImages;
-
-    }, FILE_CONCURRENCY, signal);
-
-    if (signal.aborted) return [];
-
-    // Flatten results
-    return fileResults.flat();
-  };
-
-  /**
-   * Re-runs cropping for a specific file using specific settings.
-   */
-  const handleRecropFile = async (fileName: string, specificSettings: CropSettings) => {
-    const targetPages = rawPages.filter(p => p.fileName === fileName);
-    if (targetPages.length === 0) return;
-
-    const taskController = new AbortController();
-    
-    setProcessingFiles(prev => new Set(prev).add(fileName));
-    setRefiningFile(null); 
-
-    try {
-       const newQuestions = await generateQuestionsFromRawPages(targetPages, specificSettings, taskController.signal);
-       
-       if (!taskController.signal.aborted) {
-         setQuestions(prev => {
-            const others = prev.filter(q => q.fileName !== fileName);
-            const combined = [...others, ...newQuestions];
-             return combined.sort((a,b) => {
-                 if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
-                 if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
-                 return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
-              });
-         });
-
-         // Update DB with new questions
-         await reSaveExamResult(fileName, targetPages, newQuestions);
-
-         addNotification(fileName, 'success', `Successfully refined ${fileName}`);
-       }
-    } catch (e: any) {
-       console.error(e);
-       addNotification(fileName, 'error', `Failed to refine ${fileName}: ${e.message}`);
-    } finally {
-       setProcessingFiles(prev => {
-           const next = new Set(prev);
-           next.delete(fileName);
-           return next;
-       });
-    }
-  };
-
-  /**
-   * Execute actual logic for re-analysis in BACKGROUND.
-   */
-  const executeReanalysis = async (fileName: string) => {
-    const filePages = rawPages.filter(p => p.fileName === fileName).sort((a,b) => a.pageNumber - b.pageNumber);
-    if (filePages.length === 0) return;
-
-    const taskController = new AbortController();
-    const signal = taskController.signal;
-
-    setProcessingFiles(prev => new Set(prev).add(fileName));
-    
-    try {
-        const updatedRawPages = [...rawPages];
-        
-        // 1. Detection Phase (Chunked)
-        const chunks = [];
-        for (let i = 0; i < filePages.length; i += concurrency) {
-            chunks.push(filePages.slice(i, i + concurrency));
-        }
-
-        const newResults: DebugPageData[] = [];
-
-        for (const chunk of chunks) {
-            if (signal.aborted) break;
-            
-            await Promise.all(chunk.map(async (page) => {
-                const detections = await detectQuestionsOnPage(page.dataUrl, selectedModel);
-                const newPage = { ...page, detections };
-                newResults.push(newPage);
-            }));
-        }
-
-        if (signal.aborted) return;
-
-        const mergedRawPages = updatedRawPages.map(p => {
-             const match = newResults.find(n => n.fileName === p.fileName && n.pageNumber === p.pageNumber);
-             return match ? match : p;
-        });
-        
-        setRawPages(mergedRawPages);
-        
-        const finalFilePages = mergedRawPages.filter(p => p.fileName === fileName);
-        
-        // 2. Cropping Phase
-        const newQuestions = await generateQuestionsFromRawPages(finalFilePages, cropSettings, signal);
-        
-        if (!signal.aborted) {
-             setQuestions(prev => {
-                const others = prev.filter(q => q.fileName !== fileName);
-                const combined = [...others, ...newQuestions];
-                 return combined.sort((a,b) => {
-                     if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
-                     if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
-                     return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
-                  });
-             });
-             
-             // Save to DB (update both raw pages and new questions)
-             await reSaveExamResult(fileName, finalFilePages, newQuestions);
-             
-             addNotification(fileName, 'success', `AI Analysis completed for ${fileName}`);
-             loadHistoryList(); 
-        }
-
-    } catch (error: any) {
-        console.error(error);
-        addNotification(fileName, 'error', `Re-analysis failed for ${fileName}: ${error.message}`);
-    } finally {
-        setProcessingFiles(prev => {
-           const next = new Set(prev);
-           next.delete(fileName);
-           return next;
-       });
-    }
-  };
-
-  /**
-   * Fully re-process a file (AI Detection + Crop) - Wrapper for Confirmation
-   */
-  const handleReanalyzeFile = (fileName: string) => {
-    const filePages = rawPages.filter(p => p.fileName === fileName);
-    if (filePages.length === 0) return;
-
-    setConfirmState({
-      isOpen: true,
-      title: "Re-analyze File?",
-      message: `Are you sure you want to re-analyze "${fileName}"?\n\nThis will consume AI quota and overwrite any manual edits for this file.`,
-      action: () => executeReanalysis(fileName),
-      isDestructive: true
-    });
-  };
-
-  /**
-   * Updates detections via Debug View and Recrops + Saves to DB.
-   */
-  const handleUpdateDetections = async (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => {
-      // 1. Calculate updated pages first
-      const updatedPages = rawPages.map(p => {
-          if (p.fileName === fileName && p.pageNumber === pageNumber) {
-              return { ...p, detections: newDetections };
-          }
-          return p;
-      });
-
-      // 2. Update React State
-      setRawPages(updatedPages);
-
-      // 3. Recrop in Background
-      setProcessingFiles(prev => new Set(prev).add(fileName));
-
-      try {
-          const targetPages = updatedPages.filter(p => p.fileName === fileName);
-          if (targetPages.length === 0) {
-              setProcessingFiles(prev => { const n = new Set(prev); n.delete(fileName); return n; });
-              return;
-          }
-
-          const taskController = new AbortController();
-          
-          const newQuestions = await generateQuestionsFromRawPages(
-              targetPages, 
-              cropSettings, 
-              taskController.signal
-          );
-          
-          if (!taskController.signal.aborted) {
-              // Save to DB immediately using the unified update method
-              await updatePageDetectionsAndQuestions(fileName, pageNumber, newDetections, newQuestions);
-              
-              setQuestions(prev => {
-                  const others = prev.filter(q => q.fileName !== fileName);
-                  const combined = [...others, ...newQuestions];
-                  return combined.sort((a,b) => {
-                     if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
-                     if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
-                     return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
-                  });
-              });
-              console.log(`Saved updated detections and questions for ${fileName}`);
-          }
-
-      } catch (err: any) {
-          console.error("Failed to save or recrop", err);
-          addNotification(fileName, 'error', `Failed to save changes: ${err.message}`);
-      } finally {
-          setProcessingFiles(prev => {
-             const next = new Set(prev);
-             next.delete(fileName);
-             return next;
-         });
-      }
-  };
-
-  const processZipFiles = async (files: { blob: Blob, name: string }[]) => {
-    try {
-      setStatus(ProcessingStatus.LOADING_PDF);
-      setDetailedStatus('Reading ZIP contents...');
-      const allRawPages: DebugPageData[] = [];
-      const allQuestions: QuestionImage[] = [];
-      const totalFiles = files.length;
-      let filesProcessed = 0;
-
-      for (const file of files) {
-        setDetailedStatus(`Parsing ZIP (${filesProcessed + 1}/${totalFiles}): ${file.name}`);
-        filesProcessed++;
-        try {
-          const zip = new JSZip();
-          const loadedZip = await zip.loadAsync(file.blob);
-          const analysisFileKeys = Object.keys(loadedZip.files).filter(key => key.match(/(^|\/)analysis_data\.json$/i));
-          
-          if (analysisFileKeys.length === 0) continue;
-
-          const zipBaseName = file.name.replace(/\.[^/.]+$/, "");
-          const zipRawPages: DebugPageData[] = [];
-
-          for (const analysisKey of analysisFileKeys) {
-              const dirPrefix = analysisKey.substring(0, analysisKey.lastIndexOf("analysis_data.json"));
-              const jsonText = await loadedZip.file(analysisKey)!.async('text');
-              const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
-              
-              for (const page of loadedRawPages) {
-                let rawFileName = page.fileName;
-                if (!rawFileName || rawFileName === "unknown_file") {
-                  if (dirPrefix) {
-                      rawFileName = dirPrefix.replace(/\/$/, "");
-                  } else {
-                      rawFileName = zipBaseName || "unknown_file";
-                  }
-                }
-                page.fileName = rawFileName;
-                
-                let foundKey: string | undefined = undefined;
-                const candidates = [
-                    `${dirPrefix}full_pages/Page_${page.pageNumber}.jpg`,
-                    `${dirPrefix}full_pages/Page_${page.pageNumber}.jpeg`,
-                    `${dirPrefix}full_pages/Page_${page.pageNumber}.png`
-                ];
-
-                for (const c of candidates) {
-                    if (loadedZip.files[c]) {
-                        foundKey = c;
-                        break;
-                    }
-                }
-
-                if (!foundKey) {
-                    foundKey = Object.keys(loadedZip.files).find(k => 
-                        k.startsWith(dirPrefix) &&
-                        !loadedZip.files[k].dir &&
-                        (k.match(new RegExp(`full_pages/.*Page_${page.pageNumber}\\.(jpg|jpeg|png)$`, 'i')))
-                    );
-                }
-
-                if (foundKey) {
-                  const base64 = await loadedZip.file(foundKey)!.async('base64');
-                  const ext = foundKey.split('.').pop()?.toLowerCase();
-                  const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-                  page.dataUrl = `data:${mime};base64,${base64}`;
-                }
-              }
-              zipRawPages.push(...loadedRawPages);
-          }
-          
-          allRawPages.push(...zipRawPages);
-
-          const potentialImageKeys = Object.keys(loadedZip.files).filter(k => 
-            !loadedZip.files[k].dir && /\.(jpg|jpeg|png)$/i.test(k) && !k.includes('full_pages/')
-          );
-
-          if (potentialImageKeys.length > 0) {
-            const loadedQuestions: QuestionImage[] = [];
-            await Promise.all(potentialImageKeys.map(async (key) => {
-                const base64 = await loadedZip.file(key)!.async('base64');
-                const ext = key.split('.').pop()?.toLowerCase();
-                const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-                // Simplified matching for brevity - assumes logic from before or robust zip structure
-                const pathParts = key.split('/');
-                const fileNameWithExt = pathParts[pathParts.length - 1];
-                let qId = "0";
-                let qFileName = zipRawPages.length > 0 ? zipRawPages[0].fileName : "unknown";
-
-                const flatMatch = fileNameWithExt.match(/^(.+)_Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
-                if (flatMatch) {
-                    qFileName = flatMatch[1];
-                    qId = flatMatch[2];
-                } else {
-                     const nestedMatch = fileNameWithExt.match(/^Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
-                     if (nestedMatch) qId = nestedMatch[1];
-                }
-                
-                loadedQuestions.push({
-                    id: qId,
-                    pageNumber: 1, // Placeholder if unknown
-                    fileName: qFileName,
-                    dataUrl: `data:${mime};base64,${base64}`
-                });
-            }));
-            allQuestions.push(...loadedQuestions);
-          }
-        } catch (e) { console.error(`Failed to parse ZIP ${file.name}:`, e); }
-      }
-
-      setRawPages(allRawPages);
-      setSourcePages(allRawPages.map(({detections, ...rest}) => rest));
-      setTotal(allRawPages.length);
-      
-      const uniqueFiles = new Set(allRawPages.map(p => p.fileName));
-      
-      if (allQuestions.length > 0) {
-        allQuestions.sort((a, b) => {
-            if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
-            return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
-        });
-        setQuestions(allQuestions);
-        setCompletedCount(allRawPages.length);
-        setStatus(ProcessingStatus.COMPLETED);
-
-        // Save questions to DB
-        const savePromises = Array.from(uniqueFiles).map(fileName => {
-           const filePages = allRawPages.filter(p => p.fileName === fileName);
-           const fileQuestions = allQuestions.filter(q => q.fileName === fileName);
-           return saveExamResult(fileName, filePages, fileQuestions);
-        });
-        await Promise.all(savePromises);
-        
-      } else {
-         if (allRawPages.length > 0) {
-            const qs = await generateQuestionsFromRawPages(allRawPages, cropSettings, new AbortController().signal);
-            setQuestions(qs);
-            setCompletedCount(allRawPages.length);
-            setStatus(ProcessingStatus.COMPLETED);
-
-            // Save generated questions to DB
-            const savePromises = Array.from(uniqueFiles).map(fileName => {
-                const filePages = allRawPages.filter(p => p.fileName === fileName);
-                const fileQuestions = qs.filter(q => q.fileName === fileName);
-                return saveExamResult(fileName, filePages, fileQuestions);
-            });
-            await Promise.all(savePromises);
-         } else {
-            throw new Error("No valid data found in ZIP");
-         }
-      }
-      await loadHistoryList(); 
-    } catch (err: any) {
-      setError("Batch ZIP load failed: " + err.message);
-      setStatus(ProcessingStatus.ERROR);
-    }
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fileList = Array.from(e.target.files || []) as File[];
-    if (fileList.length === 0) return;
-    
-    // Handle ZIPs
-    const zipFiles = fileList.filter(f => f.name.toLowerCase().endsWith('.zip'));
-    if (zipFiles.length > 0) {
-      await processZipFiles(zipFiles.map(f => ({ blob: f, name: f.name })));
-      return;
-    }
-
-    const pdfFiles = fileList.filter(f => f.name.toLowerCase().endsWith('.pdf'));
-    if (pdfFiles.length === 0) return;
-
-    abortControllerRef.current = new AbortController();
-    stopRequestedRef.current = false;
-    const signal = abortControllerRef.current.signal;
-    
-    // Reset State
-    setStartTime(Date.now());
-    setStatus(ProcessingStatus.LOADING_PDF);
-    setError(undefined);
-    setSourcePages([]);
-    setRawPages([]);
-    setQuestions([]);
-    setCompletedCount(0);
-    setCroppingTotal(0);
-    setCroppingDone(0);
-    setCurrentRound(1);
-    setFailedCount(0);
-    setProcessingFiles(new Set());
-
-    const filesToProcess: File[] = [];
-    const cachedRawPages: DebugPageData[] = [];
-    const cachedQuestions: QuestionImage[] = [];
-
-    if (useHistoryCache) {
-      setDetailedStatus("Checking history for existing files...");
-      for (const file of pdfFiles) {
-        const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-        const historyItem = historyList.find(h => h.name === fileNameWithoutExt);
-        let loadedFromCache = false;
-        if (historyItem) {
-          try {
-            const result = await loadExamResult(historyItem.id);
-            if (result && result.rawPages.length > 0) {
-               cachedRawPages.push(...result.rawPages);
-               if (result.questions && result.questions.length > 0) {
-                   cachedQuestions.push(...result.questions);
-               }
-               loadedFromCache = true;
-               console.log(`Loaded ${fileNameWithoutExt} from history cache.`);
-            }
-          } catch (err) {
-             console.warn(`Failed to load history for ${fileNameWithoutExt}`, err);
-          }
-        }
-        if (!loadedFromCache) {
-          filesToProcess.push(file);
-        }
-      }
-    } else {
-       filesToProcess.push(...pdfFiles);
-    }
-
-    try {
-      if (cachedRawPages.length > 0) {
-         setDetailedStatus("Restoring cached files...");
-         const uniqueCached = Array.from(new Map(cachedRawPages.map(p => [`${p.fileName}-${p.pageNumber}`, p])).values());
-         setRawPages(prev => [...prev, ...uniqueCached]);
-         
-         const recoveredSourcePages = uniqueCached.map(rp => ({
-            dataUrl: rp.dataUrl,
-            width: rp.width,
-            height: rp.height,
-            pageNumber: rp.pageNumber,
-            fileName: rp.fileName
-         }));
-         setSourcePages(prev => [...prev, ...recoveredSourcePages]);
-         
-         // If cached questions exist, assume they are complete for those files.
-         // If not, we might need to regenerate them.
-         let questionsFromCache = cachedQuestions;
-         
-         // Identify files in cache that lack questions
-         const cachedFiles = new Set(uniqueCached.map(p => p.fileName));
-         const filesWithQs = new Set(cachedQuestions.map(q => q.fileName));
-         const filesNeedingGen = Array.from(cachedFiles).filter(f => !filesWithQs.has(f));
-
-         if (filesNeedingGen.length > 0) {
-             const pagesToGen = uniqueCached.filter(p => filesNeedingGen.includes(p.fileName));
-             const generated = await generateQuestionsFromRawPages(pagesToGen, cropSettings, signal);
-             questionsFromCache = [...questionsFromCache, ...generated];
-         }
-
-         if (!signal.aborted) {
-            setQuestions(prev => {
-                const combined = [...prev, ...questionsFromCache];
-                return combined.sort((a,b) => a.fileName.localeCompare(b.fileName));
-            });
-            setCompletedCount(prev => prev + uniqueCached.length);
-         }
-      }
-
-      if (filesToProcess.length === 0) {
-         setStatus(ProcessingStatus.COMPLETED);
-         setDetailedStatus(`Loaded ${cachedRawPages.length} pages from history.`);
-         return;
-      }
-
-      const allNewPages: SourcePage[] = [];
-      let cumulativeRendered = 0;
-      
-      setTotal(cachedRawPages.length + (filesToProcess.length * 3));
-
-      for (let fIdx = 0; fIdx < filesToProcess.length; fIdx++) {
-         if (signal.aborted || stopRequestedRef.current) break;
-         const file = filesToProcess[fIdx];
-         const fileName = file.name.replace(/\.[^/.]+$/, "");
-         
-         setDetailedStatus(`Rendering (${fIdx + 1}/${filesToProcess.length}): ${file.name}...`);
-         
-         const loadingTask = pdfjsLib.getDocument({ data: await file.arrayBuffer() });
-         const pdf = await loadingTask.promise;
-         
-         cumulativeRendered += pdf.numPages;
-         setTotal(cachedRawPages.length + cumulativeRendered + (filesToProcess.length - fIdx - 1) * 3);
-         
-         for (let i = 1; i <= pdf.numPages; i++) {
-            if (signal.aborted || stopRequestedRef.current) break;
-            const page = await pdf.getPage(i);
-            const rendered = await renderPageToImage(page, 3);
-            const sourcePage = { ...rendered, pageNumber: i, fileName };
-            allNewPages.push(sourcePage);
-            setSourcePages(prev => [...prev, sourcePage]);
-         }
-      }
-
-      setTotal(cachedRawPages.length + allNewPages.length);
-      setProgress(cachedRawPages.length);
-
-      if (allNewPages.length > 0 && !stopRequestedRef.current && !signal.aborted) {
-         setStatus(ProcessingStatus.DETECTING_QUESTIONS);
-         
-         const fileMeta: Record<string, { totalPages: number, processedPages: number, cropped: boolean }> = {};
-         allNewPages.forEach(p => {
-             if (!fileMeta[p.fileName]) {
-                 fileMeta[p.fileName] = { 
-                    totalPages: allNewPages.filter(x => x.fileName === p.fileName).length, 
-                    processedPages: 0, 
-                    cropped: false 
-                 };
-             }
-         });
-
-         let queue = [...allNewPages];
-         let round = 1;
-
-         while (queue.length > 0) {
-             if (stopRequestedRef.current || signal.aborted) break;
-
-             setCurrentRound(round);
-             setDetailedStatus(round === 1 
-                ? "Analyzing pages with AI..." 
-                : `Round ${round}: Retrying ${queue.length} failed pages...`);
-             
-             const nextRoundQueue: SourcePage[] = [];
-             const executing = new Set<Promise<void>>();
-             
-             for (const pageData of queue) {
-                 if (stopRequestedRef.current || signal.aborted) break;
-
-                 const task = (async () => {
-                     try {
-                         const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel);
-                         
-                         const resultPage: DebugPageData = {
-                             pageNumber: pageData.pageNumber,
-                             fileName: pageData.fileName,
-                             dataUrl: pageData.dataUrl,
-                             width: pageData.width,
-                             height: pageData.height,
-                             detections
-                         };
-
-                         setRawPages(prev => [...prev, resultPage]);
-                         setCompletedCount(prev => prev + 1);
-                         setCroppingTotal(prev => prev + detections.length);
-
-                         if (fileMeta[pageData.fileName]) {
-                             fileMeta[pageData.fileName].processedPages++;
-                             const meta = fileMeta[pageData.fileName];
-                             
-                             if (!meta.cropped && meta.processedPages === meta.totalPages) {
-                                 meta.cropped = true;
-                                 
-                                 setRawPages(current => {
-                                     const filePages = current.filter(p => p.fileName === pageData.fileName);
-                                     filePages.sort((a,b) => a.pageNumber - b.pageNumber);
-                                     
-                                     // Generate questions immediately
-                                     generateQuestionsFromRawPages(filePages, cropSettings, signal).then(newQuestions => {
-                                        if (!signal.aborted && !stopRequestedRef.current) {
-                                            setQuestions(prevQ => [...prevQ, ...newQuestions]);
-                                            
-                                            // SAVE TO DB NOW with questions
-                                            saveExamResult(pageData.fileName, filePages, newQuestions)
-                                                .then(() => loadHistoryList());
-                                        }
-                                     });
-                                     return current;
-                                 });
-                             }
-                         }
-
-                     } catch (err: any) {
-                         console.warn(`Failed ${pageData.fileName} P${pageData.pageNumber} in Round ${round}`, err);
-                         nextRoundQueue.push(pageData);
-                         setFailedCount(prev => prev + 1);
-                     }
-                 })();
-
-                 executing.add(task);
-                 task.then(() => executing.delete(task));
-                 if (executing.size >= concurrency) await Promise.race(executing);
-             }
-
-             await Promise.all(executing);
-
-             if (nextRoundQueue.length > 0 && !stopRequestedRef.current && !signal.aborted) {
-                 queue = nextRoundQueue;
-                 round++;
-                 await new Promise(r => setTimeout(r, 1000));
-             } else {
-                 queue = [];
-             }
-         }
-      }
-
-      if (stopRequestedRef.current) {
-          setStatus(ProcessingStatus.STOPPED);
-      } else {
-          setStatus(ProcessingStatus.COMPLETED);
-      }
-
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-          setStatus(ProcessingStatus.STOPPED);
-          return;
-      }
-      setError(err.message || "Processing failed.");
-      setStatus(ProcessingStatus.ERROR);
-    }
-  };
-
-  const startRefineFile = (fileName: string) => {
-      setRefiningFile(fileName);
-  };
-
   // Determine unique file names for navigation
   const uniqueFileNames = useMemo(() => {
-    return Array.from(new Set(rawPages.map(p => p.fileName)));
-  }, [rawPages]);
+    return Array.from(new Set(state.rawPages.map(p => p.fileName)));
+  }, [state.rawPages]);
 
   const debugPages = useMemo(() => {
-    if (!debugFile) return [];
-    return rawPages.filter(p => p.fileName === debugFile);
-  }, [rawPages, debugFile]);
+    if (!state.debugFile) return [];
+    return state.rawPages.filter(p => p.fileName === state.debugFile);
+  }, [state.rawPages, state.debugFile]);
 
   const debugQuestions = useMemo(() => {
-    if (!debugFile) return [];
-    return questions.filter(q => q.fileName === debugFile);
-  }, [questions, debugFile]);
+    if (!state.debugFile) return [];
+    return state.questions.filter(q => q.fileName === state.debugFile);
+  }, [state.questions, state.debugFile]);
 
   // Navigation handlers
-  const currentFileIndex = uniqueFileNames.indexOf(debugFile || '');
+  const currentFileIndex = uniqueFileNames.indexOf(state.debugFile || '');
   const hasNextFile = currentFileIndex !== -1 && currentFileIndex < uniqueFileNames.length - 1;
   const hasPrevFile = currentFileIndex > 0;
 
   const updateDebugFile = (fileName: string | null) => {
-     setDebugFile(fileName);
-     if (fileName) setLastViewedFile(fileName);
+     setters.setDebugFile(fileName);
+     if (fileName) setters.setLastViewedFile(fileName);
   };
 
   const handleNextFile = () => {
@@ -1326,16 +133,32 @@ const App: React.FC = () => {
     }
   };
 
-  const isWideLayout = debugFile !== null || questions.length > 0 || sourcePages.length > 0;
-  const isGlobalProcessing = status === ProcessingStatus.LOADING_PDF || status === ProcessingStatus.DETECTING_QUESTIONS || status === ProcessingStatus.CROPPING;
-  const showInitialUI = status === ProcessingStatus.IDLE || (status === ProcessingStatus.ERROR && sourcePages.length === 0);
+  /**
+   * Fully re-process a file (AI Detection + Crop) - Wrapper for Confirmation
+   */
+  const handleReanalyzeFile = (fileName: string) => {
+    const filePages = state.rawPages.filter(p => p.fileName === fileName);
+    if (filePages.length === 0) return;
+
+    setConfirmState({
+      isOpen: true,
+      title: "Re-analyze File?",
+      message: `Are you sure you want to re-analyze "${fileName}"?\n\nThis will consume AI quota and overwrite any manual edits for this file.`,
+      action: () => executeReanalysis(fileName).then(() => refreshHistoryList()),
+      isDestructive: true
+    });
+  };
+
+  const isWideLayout = state.debugFile !== null || state.questions.length > 0 || state.sourcePages.length > 0;
+  const isGlobalProcessing = state.status === ProcessingStatus.LOADING_PDF || state.status === ProcessingStatus.DETECTING_QUESTIONS || state.status === ProcessingStatus.CROPPING;
+  const showInitialUI = state.status === ProcessingStatus.IDLE || (state.status === ProcessingStatus.ERROR && state.sourcePages.length === 0);
 
   return (
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 pb-32`}>
       <Header 
-        onShowHistory={() => setShowHistory(true)} 
-        onReset={handleReset} 
-        showReset={sourcePages.length > 0 && !isGlobalProcessing}
+        onShowHistory={() => setters.setShowHistory(true)} 
+        onReset={actions.resetState} 
+        showReset={state.sourcePages.length > 0 && !isGlobalProcessing}
       />
 
       <main className={`mx-auto transition-all duration-300 ${isWideLayout ? 'w-full max-w-[98vw]' : 'max-w-4xl'}`}>
@@ -1344,22 +167,22 @@ const App: React.FC = () => {
             <UploadSection onFileChange={handleFileChange} />
             
             <ConfigurationPanel 
-              selectedModel={selectedModel}
-              setSelectedModel={setSelectedModel}
-              concurrency={concurrency}
-              setConcurrency={setConcurrency}
-              cropSettings={cropSettings}
-              setCropSettings={setCropSettings}
-              useHistoryCache={useHistoryCache}
-              setUseHistoryCache={setUseHistoryCache}
-              batchSize={batchSize}
-              setBatchSize={setBatchSize}
+              selectedModel={state.selectedModel}
+              setSelectedModel={setters.setSelectedModel}
+              concurrency={state.concurrency}
+              setConcurrency={setters.setConcurrency}
+              cropSettings={state.cropSettings}
+              setCropSettings={setters.setCropSettings}
+              useHistoryCache={state.useHistoryCache}
+              setUseHistoryCache={setters.setUseHistoryCache}
+              batchSize={state.batchSize}
+              setBatchSize={setters.setBatchSize}
             />
           </div>
         )}
 
         {/* Sync Legacy Data Button */}
-        {legacySyncFiles.size > 0 && status === ProcessingStatus.COMPLETED && !debugFile && (
+        {state.legacySyncFiles.size > 0 && state.status === ProcessingStatus.COMPLETED && !state.debugFile && (
             <div className="mb-6 flex justify-center animate-fade-in">
                 <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 flex items-center gap-6 shadow-sm">
                     <div className="flex items-center gap-3">
@@ -1368,15 +191,15 @@ const App: React.FC = () => {
                          </div>
                          <div>
                              <h4 className="font-bold text-slate-800 text-sm">Optimization Available</h4>
-                             <p className="text-xs text-slate-500 font-medium">Save processed images for {legacySyncFiles.size} file(s) to history for instant loading next time.</p>
+                             <p className="text-xs text-slate-500 font-medium">Save processed images for {state.legacySyncFiles.size} file(s) to history for instant loading next time.</p>
                          </div>
                     </div>
                     <button 
                         onClick={handleSyncLegacyData}
-                        disabled={isSyncingLegacy}
+                        disabled={state.isSyncingLegacy}
                         className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs uppercase tracking-widest transition-all shadow-lg shadow-orange-200 active:scale-95 disabled:opacity-50 flex items-center gap-2"
                     >
-                        {isSyncingLegacy ? (
+                        {state.isSyncingLegacy ? (
                             <>
                                <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                Saving...
@@ -1388,26 +211,26 @@ const App: React.FC = () => {
         )}
 
         <ProcessingState 
-          status={status} 
-          progress={progress} 
-          total={total} 
-          completedCount={completedCount} 
-          error={error} 
-          detailedStatus={detailedStatus} 
-          croppingTotal={croppingTotal} 
-          croppingDone={croppingDone} 
-          elapsedTime={elapsedTime}
-          currentRound={currentRound}
-          failedCount={failedCount}
-          onAbort={isGlobalProcessing ? handleStop : undefined}
+          status={state.status} 
+          progress={state.progress} 
+          total={state.total} 
+          completedCount={state.completedCount} 
+          error={state.error} 
+          detailedStatus={state.detailedStatus} 
+          croppingTotal={state.croppingTotal} 
+          croppingDone={state.croppingDone} 
+          elapsedTime={state.elapsedTime}
+          currentRound={state.currentRound}
+          failedCount={state.failedCount}
+          onAbort={isGlobalProcessing ? actions.handleStop : undefined}
         />
         
-        {debugFile && (
+        {state.debugFile && (
             <DebugRawView 
                 pages={debugPages} 
                 questions={debugQuestions} 
-                onClose={() => setDebugFile(null)} 
-                title={debugFile}
+                onClose={() => setters.setDebugFile(null)} 
+                title={state.debugFile}
                 onNextFile={handleNextFile}
                 onPrevFile={handlePrevFile}
                 onJumpToIndex={handleJumpToIndex}
@@ -1416,41 +239,41 @@ const App: React.FC = () => {
                 onUpdateDetections={handleUpdateDetections}
                 onReanalyzeFile={handleReanalyzeFile}
                 isGlobalProcessing={isGlobalProcessing}
-                processingFiles={processingFiles}
+                processingFiles={state.processingFiles}
                 currentFileIndex={currentFileIndex + 1}
                 totalFiles={uniqueFileNames.length}
             />
         )}
 
-        {!debugFile && questions.length > 0 && (
+        {!state.debugFile && state.questions.length > 0 && (
             <QuestionGrid 
-                questions={questions} 
-                rawPages={rawPages} 
+                questions={state.questions} 
+                rawPages={state.rawPages} 
                 onDebug={(fileName) => updateDebugFile(fileName)}
-                onRefine={(fileName) => startRefineFile(fileName)}
-                lastViewedFile={lastViewedFile}
+                onRefine={(fileName) => setters.setRefiningFile(fileName)}
+                lastViewedFile={state.lastViewedFile}
             />
         )}
 
       </main>
 
       <HistorySidebar 
-        isOpen={showHistory}
-        onClose={() => setShowHistory(false)}
-        historyList={historyList}
-        isLoading={isLoadingHistory}
+        isOpen={state.showHistory}
+        onClose={() => setters.setShowHistory(false)}
+        historyList={state.historyList}
+        isLoading={state.isLoadingHistory}
         onLoadHistory={handleLoadHistory}
         onBatchLoadHistory={handleBatchLoadHistory}
-        onRefreshList={loadHistoryList}
+        onRefreshList={refreshHistoryList}
         onCleanupAll={handleCleanupAllHistory}
       />
       
-      {refiningFile && (
+      {state.refiningFile && (
         <RefinementModal 
-          fileName={refiningFile}
-          initialSettings={cropSettings}
-          status={status}
-          onClose={() => setRefiningFile(null)}
+          fileName={state.refiningFile}
+          initialSettings={state.cropSettings}
+          status={state.status}
+          onClose={() => setters.setRefiningFile(null)}
           onApply={handleRecropFile}
         />
       )}
@@ -1469,8 +292,8 @@ const App: React.FC = () => {
       />
 
       <NotificationToast 
-        notifications={notifications} 
-        onDismiss={(id) => setNotifications(prev => prev.filter(n => n.id !== id))}
+        notifications={state.notifications} 
+        onDismiss={(id) => setters.setNotifications(prev => prev.filter(n => n.id !== id))}
         onView={(fileName) => updateDebugFile(fileName)}
       />
 
