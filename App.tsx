@@ -346,7 +346,12 @@ const App: React.FC = () => {
              state.status === ProcessingStatus.COMPLETED && sortedFileNames.length > 0 && (
                 <div className="w-full max-w-4xl mx-auto mt-8 animate-fade-in">
                     <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-2xl font-black text-slate-900 tracking-tight">Processed Files</h2>
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-2xl font-black text-slate-900 tracking-tight">Processed Files</h2>
+                            <span className="bg-slate-100 text-slate-500 px-3 py-1 rounded-lg text-xs font-bold border border-slate-200 shadow-sm">
+                                {sortedFileNames.length} Files · {state.rawPages.length} Pages
+                            </span>
+                        </div>
                         <button 
                             onClick={handleGlobalDownload}
                             disabled={zippingFile !== null}

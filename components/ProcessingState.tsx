@@ -31,9 +31,8 @@ export const ProcessingState: React.FC<Props> = ({
   failedCount = 0,
   onAbort
 }) => {
-  if (status === ProcessingStatus.IDLE) return null;
+  if (status === ProcessingStatus.IDLE || status === ProcessingStatus.COMPLETED) return null;
 
-  const isCompleted = status === ProcessingStatus.COMPLETED;
   const isError = status === ProcessingStatus.ERROR;
   const isStopped = status === ProcessingStatus.STOPPED;
 
@@ -46,7 +45,7 @@ export const ProcessingState: React.FC<Props> = ({
 
   return (
     <div className="flex flex-col items-center justify-center p-12 bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 mt-12 w-full max-w-2xl mx-auto transition-all duration-500 relative overflow-hidden">
-      {!isError && !isCompleted && !isStopped && (
+      {!isError && !isStopped && (
         <div className="absolute top-0 left-0 w-full h-1.5 bg-slate-50">
           <div 
             className={`h-full transition-all duration-700 ease-out shadow-[0_0_10px_rgba(37,99,235,0.4)] ${currentRound > 1 ? 'bg-orange-500' : 'bg-blue-600'}`}
@@ -78,15 +77,7 @@ export const ProcessingState: React.FC<Props> = ({
       ) : (
         <>
           <div className="relative w-36 h-36 mb-10 flex items-center justify-center">
-            {isCompleted ? (
-              <div className="w-28 h-28 bg-green-100 text-green-600 rounded-full flex items-center justify-center animate-[scale-in_0.4s_cubic-bezier(0.175,0.885,0.32,1.275)] shadow-xl shadow-green-100 border-4 border-white">
-                <svg className="w-14 h-14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-            ) : (
-              <>
-                <div className="absolute inset-0 border-[6px] border-slate-50 rounded-full"></div>
+             <div className="absolute inset-0 border-[6px] border-slate-50 rounded-full"></div>
                 <div 
                   className={`absolute inset-0 border-[6px] rounded-full border-t-transparent animate-spin ${currentRound > 1 ? 'border-orange-500' : 'border-blue-600'}`}
                   style={{ animationDuration: '1.2s' }}
@@ -99,22 +90,16 @@ export const ProcessingState: React.FC<Props> = ({
                      <span className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Active</span>
                   )}
                 </div>
-              </>
-            )}
           </div>
           
-          <h3 className={`text-2xl font-black mb-4 transition-colors duration-500 tracking-tight ${isCompleted ? 'text-green-800' : 'text-slate-900'}`}>
+          <h3 className={`text-2xl font-black mb-4 transition-colors duration-500 tracking-tight text-slate-900`}>
             {status === ProcessingStatus.LOADING_PDF && "Loading Exam..."}
             {status === ProcessingStatus.DETECTING_QUESTIONS && currentRound === 1 && "AI Analyzing Layout..."}
             {status === ProcessingStatus.DETECTING_QUESTIONS && currentRound > 1 && `Retrying Failed Items...`}
             {status === ProcessingStatus.CROPPING && "Precisely Cropping..."}
-            {isCompleted && "Processing Completed!"}
           </h3>
           
           <div className="text-slate-500 font-medium text-center max-w-md min-h-[4em] flex flex-col items-center">
-            {isCompleted ? (
-              <span className="text-green-600 font-bold bg-green-50 px-6 py-2 rounded-full border border-green-100">Successfully extracted from {total} pages.</span>
-            ) : (
               <>
                 <span className="mb-4 opacity-80 text-sm font-semibold">{detailedStatus}</span>
                 
@@ -153,17 +138,14 @@ export const ProcessingState: React.FC<Props> = ({
                   </button>
                 )}
               </>
-            )}
           </div>
 
-          {!isCompleted && (
-            <div className="w-full bg-slate-50 h-2.5 rounded-full mt-10 overflow-hidden shadow-inner border border-slate-200/50">
+          <div className="w-full bg-slate-50 h-2.5 rounded-full mt-10 overflow-hidden shadow-inner border border-slate-200/50">
               <div 
                 className={`h-full transition-all duration-500 ease-out ${currentRound > 1 ? 'bg-orange-500' : 'bg-blue-600'}`}
                 style={{ width: `${displayPercent}%` }}
               ></div>
-            </div>
-          )}
+          </div>
         </>
       )}
     </div>
