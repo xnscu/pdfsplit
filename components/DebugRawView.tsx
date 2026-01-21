@@ -17,6 +17,9 @@ interface Props {
   hasPrevFile?: boolean;
   onUpdateDetections?: (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => void;
   onReanalyzeFile?: (fileName: string) => void;
+  onDownloadZip?: (fileName: string) => void;
+  onRefineFile?: (fileName: string) => void;
+  isZipping?: boolean;
   isGlobalProcessing?: boolean;
   processingFiles: Set<string>;
   currentFileIndex: number;
@@ -35,6 +38,9 @@ export const DebugRawView: React.FC<Props> = ({
   hasPrevFile,
   onUpdateDetections,
   onReanalyzeFile,
+  onDownloadZip,
+  onRefineFile,
+  isZipping,
   isGlobalProcessing = false,
   processingFiles,
   currentFileIndex,
@@ -276,6 +282,9 @@ export const DebugRawView: React.FC<Props> = ({
          onJumpToIndex={onJumpToIndex}
          onClose={onClose}
          onReanalyze={!isCurrentFileProcessing && onReanalyzeFile && title ? () => onReanalyzeFile(title) : undefined}
+         onDownloadZip={!isCurrentFileProcessing && onDownloadZip && title ? () => onDownloadZip(title) : undefined}
+         onRefine={!isCurrentFileProcessing && onRefineFile && title ? () => onRefineFile(title) : undefined}
+         isZipping={isZipping}
          hasNextFile={hasNextFile}
          hasPrevFile={hasPrevFile}
       />

@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
+import JSZip from 'jszip';
 import { ProcessingStatus } from './types';
 import { ProcessingState } from './components/ProcessingState';
-import { QuestionGrid } from './components/QuestionGrid';
 import { DebugRawView } from './components/DebugRawView';
 import { Header } from './components/Header';
 import { UploadSection } from './components/UploadSection';
@@ -38,6 +38,7 @@ const App: React.FC = () => {
     message: string;
     action: () => void;
     isDestructive: boolean;
+    confirmLabel?: string;
   }>({
     isOpen: false,
     title: '',
@@ -45,6 +46,8 @@ const App: React.FC = () => {
     action: () => {},
     isDestructive: false
   });
+
+  const [zippingFile, setZippingFile] = useState<string | null>(null);
 
   // Load History List on Mount using the hook action
   useEffect(() => {
@@ -98,6 +101,12 @@ const App: React.FC = () => {
     return Array.from(new Set(state.rawPages.map(p => p.fileName)));
   }, [state.rawPages]);
 
+  const sortedFileNames = useMemo(() => {
+    return uniqueFileNames.sort((a, b) => 
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+    );
+  }, [uniqueFileNames]);
+
   const debugPages = useMemo(() => {
     if (!state.debugFile) return [];
     return state.rawPages.filter(p => p.fileName === state.debugFile);
@@ -109,8 +118,8 @@ const App: React.FC = () => {
   }, [state.questions, state.debugFile]);
 
   // Navigation handlers
-  const currentFileIndex = uniqueFileNames.indexOf(state.debugFile || '');
-  const hasNextFile = currentFileIndex !== -1 && currentFileIndex < uniqueFileNames.length - 1;
+  const currentFileIndex = sortedFileNames.indexOf(state.debugFile || '');
+  const hasNextFile = currentFileIndex !== -1 && currentFileIndex < sortedFileNames.length - 1;
   const hasPrevFile = currentFileIndex > 0;
 
   const updateDebugFile = (fileName: string | null) => {
@@ -119,17 +128,17 @@ const App: React.FC = () => {
   };
 
   const handleNextFile = () => {
-    if (hasNextFile) updateDebugFile(uniqueFileNames[currentFileIndex + 1]);
+    if (hasNextFile) updateDebugFile(sortedFileNames[currentFileIndex + 1]);
   };
 
   const handlePrevFile = () => {
-    if (hasPrevFile) updateDebugFile(uniqueFileNames[currentFileIndex - 1]);
+    if (hasPrevFile) updateDebugFile(sortedFileNames[currentFileIndex - 1]);
   };
   
   const handleJumpToIndex = (oneBasedIndex: number) => {
     const zeroBasedIndex = oneBasedIndex - 1;
-    if (zeroBasedIndex >= 0 && zeroBasedIndex < uniqueFileNames.length) {
-        updateDebugFile(uniqueFileNames[zeroBasedIndex]);
+    if (zeroBasedIndex >= 0 && zeroBasedIndex < sortedFileNames.length) {
+        updateDebugFile(sortedFileNames[zeroBasedIndex]);
     }
   };
 
@@ -145,8 +154,100 @@ const App: React.FC = () => {
       title: "Re-analyze File?",
       message: `Are you sure you want to re-analyze "${fileName}"?\n\nThis will consume AI quota and overwrite any manual edits for this file.`,
       action: () => executeReanalysis(fileName).then(() => refreshHistoryList()),
-      isDestructive: true
+      isDestructive: true,
+      confirmLabel: "Re-analyze"
     });
+  };
+
+  // ZIP Generation Logic
+  const generateZip = async (targetFileName?: string) => {
+    if (state.questions.length === 0) return;
+    const fileNames = targetFileName ? [targetFileName] : sortedFileNames;
+    if (fileNames.length === 0) return;
+
+    if (targetFileName) setZippingFile(targetFileName);
+    else setZippingFile('ALL');
+    
+    try {
+      const zip = new JSZip();
+      const isBatch = fileNames.length > 1;
+
+      for (const fileName of fileNames) {
+        const fileQs = state.questions.filter(q => q.fileName === fileName);
+        if (fileQs.length === 0) continue;
+        
+        const fileRawPages = state.rawPages.filter(p => p.fileName === fileName);
+        const folder = isBatch ? zip.folder(fileName) : zip;
+        if (!folder) continue;
+
+        // Lightweight JSON copy
+        const lightweightRawPages = fileRawPages.map(({ dataUrl, ...rest }) => rest);
+        folder.file("analysis_data.json", JSON.stringify(lightweightRawPages, null, 2));
+        
+        const fullPagesFolder = folder.folder("full_pages");
+        fileRawPages.forEach((page) => {
+          const base64Data = page.dataUrl.split(',')[1];
+          fullPagesFolder?.file(`Page_${page.pageNumber}.jpg`, base64Data, { 
+              base64: true,
+              compression: "STORE" 
+          });
+        });
+
+        const usedNames = new Set<string>();
+        fileQs.forEach((q) => {
+          const base64Data = q.dataUrl.split(',')[1];
+          let finalName = `${q.fileName}_Q${q.id}.jpg`;
+          if (usedNames.has(finalName)) {
+             let counter = 1;
+             const baseName = `${q.fileName}_Q${q.id}`;
+             while(usedNames.has(`${baseName}_${counter}.jpg`)) counter++;
+             finalName = `${baseName}_${counter}.jpg`;
+          }
+          usedNames.add(finalName);
+          folder.file(finalName, base64Data, { 
+              base64: true,
+              compression: "STORE" 
+          });
+        });
+
+        // Yield to UI
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+
+      const content = await zip.generateAsync({ 
+        type: "blob",
+        compression: "STORE"
+      });
+      
+      const url = window.URL.createObjectURL(content);
+      const link = document.createElement('a');
+      link.href = url;
+      let downloadName = targetFileName ? `${targetFileName}_processed.zip` : isBatch ? "exam_batch_processed.zip" : `${fileNames[0]}_processed.zip`;
+
+      link.download = downloadName;
+      document.body.appendChild(link);
+      link.click();
+      
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("ZIP Error:", err);
+      actions.addNotification("ZIP Error", 'error', "Failed to create zip file.");
+    } finally {
+      setZippingFile(null);
+    }
+  };
+
+  const handleGlobalDownload = () => {
+      setConfirmState({
+          isOpen: true,
+          title: "Download All Processed Files?",
+          message: `This will create a single ZIP file containing all processed images from ${sortedFileNames.length} files.`,
+          action: () => generateZip(),
+          isDestructive: false,
+          confirmLabel: "Download ZIP"
+      });
   };
 
   const isWideLayout = state.debugFile !== null || state.questions.length > 0 || state.sourcePages.length > 0;
@@ -199,12 +300,7 @@ const App: React.FC = () => {
                         disabled={state.isSyncingLegacy}
                         className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs uppercase tracking-widest transition-all shadow-lg shadow-orange-200 active:scale-95 disabled:opacity-50 flex items-center gap-2"
                     >
-                        {state.isSyncingLegacy ? (
-                            <>
-                               <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                               Saving...
-                            </>
-                        ) : 'Sync to Database'}
+                        {state.isSyncingLegacy ? 'Saving...' : 'Sync to Database'}
                     </button>
                 </div>
             </div>
@@ -225,7 +321,7 @@ const App: React.FC = () => {
           onAbort={isGlobalProcessing ? actions.handleStop : undefined}
         />
         
-        {state.debugFile && (
+        {state.debugFile ? (
             <DebugRawView 
                 pages={debugPages} 
                 questions={debugQuestions} 
@@ -238,21 +334,52 @@ const App: React.FC = () => {
                 hasPrevFile={hasPrevFile}
                 onUpdateDetections={handleUpdateDetections}
                 onReanalyzeFile={handleReanalyzeFile}
+                onDownloadZip={generateZip}
+                onRefineFile={(fileName) => setters.setRefiningFile(fileName)}
+                isZipping={zippingFile !== null}
                 isGlobalProcessing={isGlobalProcessing}
                 processingFiles={state.processingFiles}
                 currentFileIndex={currentFileIndex + 1}
-                totalFiles={uniqueFileNames.length}
+                totalFiles={sortedFileNames.length}
             />
-        )}
-
-        {!state.debugFile && state.questions.length > 0 && (
-            <QuestionGrid 
-                questions={state.questions} 
-                rawPages={state.rawPages} 
-                onDebug={(fileName) => updateDebugFile(fileName)}
-                onRefine={(fileName) => setters.setRefiningFile(fileName)}
-                lastViewedFile={state.lastViewedFile}
-            />
+        ) : (
+             state.status === ProcessingStatus.COMPLETED && sortedFileNames.length > 0 && (
+                <div className="w-full max-w-4xl mx-auto mt-8 animate-fade-in">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-2xl font-black text-slate-900 tracking-tight">Processed Files</h2>
+                        <button 
+                            onClick={handleGlobalDownload}
+                            disabled={zippingFile !== null}
+                            className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-slate-700 transition-colors shadow-lg flex items-center gap-2 disabled:opacity-50"
+                        >
+                            {zippingFile === 'ALL' ? 'Packaging...' : 'Download All (ZIP)'}
+                        </button>
+                    </div>
+                    <div className="grid gap-4">
+                        {sortedFileNames.map((fileName, idx) => (
+                            <div key={fileName} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex items-center justify-between group">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-black text-sm">
+                                        {idx + 1}
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-slate-800 text-sm truncate max-w-[200px] md:max-w-md">{fileName}</h3>
+                                        <p className="text-xs text-slate-400 font-medium">
+                                            {state.questions.filter(q => q.fileName === fileName).length} Questions Extracted
+                                        </p>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={() => updateDebugFile(fileName)}
+                                    className="px-4 py-2 bg-blue-50 text-blue-600 font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-blue-100 transition-colors"
+                                >
+                                    Inspect
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+             )
         )}
 
       </main>
@@ -289,6 +416,7 @@ const App: React.FC = () => {
         }}
         onCancel={() => setConfirmState(prev => ({ ...prev, isOpen: false }))}
         isDestructive={confirmState.isDestructive}
+        confirmLabel={confirmState.confirmLabel}
       />
 
       <NotificationToast 

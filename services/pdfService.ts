@@ -391,6 +391,104 @@ export const generateAlignedImage = async (
     }
 };
 
+const canvasToDataURL = async (canvas: HTMLCanvasElement | OffscreenCanvas): Promise<string> => {
+    if ('toDataURL' in canvas) {
+        return (canvas as HTMLCanvasElement).toDataURL('image/jpeg', 0.8);
+    } else {
+        const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+        return new Promise(r => {
+            const reader = new FileReader();
+            reader.onloadend = () => r(reader.result as string);
+            reader.readAsDataURL(blob);
+        });
+    }
+}
+
+/**
+ * Generate 4 stages of debug previews for inspector
+ */
+export const generateDebugPreviews = async (
+    sourceDataUrl: string,
+    boxes: [number, number, number, number][],
+    originalWidth: number,
+    originalHeight: number,
+    settings: CropSettings
+): Promise<{ stage1: string, stage2: string, stage3: string, stage4: string }> => {
+    const img = new Image();
+    await new Promise(r => { img.onload = r; img.src = sourceDataUrl; });
+
+    // Stage 1: Raw AI Detection (Exact Box)
+    const { canvas: s1Canvas, context: s1Ctx } = createSmartCanvas(1, 1);
+    // Calculate raw stitched without padding
+    const s1Fragments = boxes.map(box => {
+         const [ymin, xmin, ymax, xmax] = box;
+         const x = (xmin / 1000) * originalWidth;
+         const y = (ymin / 1000) * originalHeight;
+         const w = ((xmax - xmin) / 1000) * originalWidth;
+         const h = ((ymax - ymin) / 1000) * originalHeight;
+         return { x, y, w, h };
+    });
+    
+    const minX = Math.min(...s1Fragments.map(f => f.x));
+    const totalH = s1Fragments.reduce((acc, f) => acc + f.h + 5, 0); // 5 gap
+    const maxW = Math.max(...s1Fragments.map(f => f.w));
+    
+    s1Canvas.width = maxW;
+    s1Canvas.height = totalH;
+    s1Ctx.fillStyle = '#ffffff';
+    s1Ctx.fillRect(0,0, maxW, totalH);
+    let curY = 0;
+    s1Fragments.forEach(f => {
+        s1Ctx.drawImage(img, f.x, f.y, f.w, f.h, 0, curY, f.w, f.h);
+        curY += f.h + 5;
+    });
+    const stage1 = await canvasToDataURL(s1Canvas);
+
+    // Stage 2: Crop Padding (Box + Padding)
+    // We can reuse constructQuestionCanvas logic but manually inspecting the intermediate steps is hard via that function.
+    // Let's approximate by manually creating it.
+    const { canvas: s2Canvas, context: s2Ctx } = createSmartCanvas(1, 1);
+    const s2Fragments = boxes.map(box => {
+         const [ymin, xmin, ymax, xmax] = box;
+         const p = settings.cropPadding;
+         const rawX = (xmin / 1000) * originalWidth;
+         const rawY = (ymin / 1000) * originalHeight;
+         const rawW = ((xmax - xmin) / 1000) * originalWidth;
+         const rawH = ((ymax - ymin) / 1000) * originalHeight;
+         
+         const x = Math.max(0, rawX - p);
+         const y = Math.max(0, rawY - p);
+         const w = Math.min(originalWidth - x, rawW + (p * 2));
+         const h = Math.min(originalHeight - y, rawH + (p * 2));
+         return { x, y, w, h };
+    });
+    const s2MaxW = Math.max(...s2Fragments.map(f => f.w));
+    const s2TotalH = s2Fragments.reduce((acc, f) => acc + f.h + 10, 0);
+    s2Canvas.width = s2MaxW;
+    s2Canvas.height = s2TotalH;
+    s2Ctx.fillStyle = '#ffffff';
+    s2Ctx.fillRect(0,0, s2MaxW, s2TotalH);
+    curY = 0;
+    s2Fragments.forEach(f => {
+        s2Ctx.drawImage(img, f.x, f.y, f.w, f.h, 0, curY, f.w, f.h);
+        curY += f.h + 10;
+    });
+    const stage2 = await canvasToDataURL(s2Canvas);
+
+    // Stage 3: Trim Whitespace (Result of constructQuestionCanvas essentially)
+    const result3 = await constructQuestionCanvas(sourceDataUrl, boxes, originalWidth, originalHeight, settings);
+    const stage3 = result3.canvas ? await canvasToDataURL(result3.canvas) : '';
+
+    // Stage 4: Final (Result 3 + aligned image)
+    let stage4 = '';
+    if (result3.canvas) {
+        const trim = analyzeCanvasContent(result3.canvas);
+        stage4 = await generateAlignedImage(result3.canvas, trim, trim.w, settings);
+    }
+
+    return { stage1, stage2, stage3, stage4 };
+};
+
 /**
  * Legacy wrapper if needed
  */
