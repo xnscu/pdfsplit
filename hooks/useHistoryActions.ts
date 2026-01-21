@@ -54,12 +54,31 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       let processedFiles = 0;
       let changedImagesCount = 0;
 
-      // Use Batch Process Size for local processing parallelism if available, otherwise default to 3.
-      // Respect user's need for concurrency, but ensure it's not 1 unless explicitly set.
-      const runConcurrency = state.batchSize ? Math.max(2, state.batchSize) : 3;
+      // --- SMART CONCURRENCY DETECTION ---
+      // 1. Get Logical CPU Cores (Default to 4 if API unavailable)
+      const cpuCores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
+      
+      // 2. Calculate Safe Limit:
+      //    - Reserve 1 core for the UI thread (prevents freezing).
+      //    - Cap at 8 to prevent memory exhaustion (Canvas operations are memory intensive).
+      //    - Ensure at least 1 worker.
+      const safeHardwareLimit = Math.max(1, Math.min(cpuCores - 1, 8));
+
+      // 3. Determine Final Concurrency:
+      //    Use the user's batchSize setting as a "hint", but clamp it to the hardware limit.
+      //    This prevents users from accidentally setting 100 and crashing the browser.
+      const userSetting = state.batchSize || 5;
+      const runConcurrency = Math.min(userSetting, safeHardwareLimit);
+
+      console.log(`Batch Processing: CPU Cores=${cpuCores}. User Setting=${userSetting}. Optimized Concurrency=${runConcurrency}`);
 
       try {
-         setDetailedStatus(`Batch Reprocessing: 0% (0/${totalFiles})`);
+         const getStatusMsg = (processed: number) => {
+             const percent = totalFiles > 0 ? Math.round((processed / totalFiles) * 100) : 0;
+             return `Batch Reprocessing: ${percent}% (${processed}/${totalFiles}) · Threads: ${runConcurrency}`;
+         };
+
+         setDetailedStatus(getStatusMsg(0));
 
          await pMap(ids, async (id) => {
             // 1. Load record
@@ -102,8 +121,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
             await reSaveExamResult(record.name, record.rawPages, newQuestions);
             
             processedFiles++;
-            const percent = Math.round((processedFiles / totalFiles) * 100);
-            setDetailedStatus(`Batch Reprocessing: ${percent}% (${processedFiles}/${totalFiles})`);
+            setDetailedStatus(getStatusMsg(processedFiles));
             
             // Critical: Yield to event loop to allow UI render between items in the concurrency pool.
             // This ensures "Real-time" updates even when CPU is busy.

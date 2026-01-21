@@ -348,8 +348,8 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
 
              setCurrentRound(round);
              setDetailedStatus(round === 1 
-                ? "Analyzing pages with AI..." 
-                : `Round ${round}: Retrying ${queue.length} failed pages...`);
+                ? `Analyzing pages with AI... (Threads: ${concurrency})` 
+                : `Round ${round}: Retrying ${queue.length} failed pages... (Threads: ${concurrency})`);
              
              const nextRoundQueue: SourcePage[] = [];
              const executing = new Set<Promise<void>>();

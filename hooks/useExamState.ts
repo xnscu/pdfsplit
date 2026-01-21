@@ -18,16 +18,29 @@ export const STORAGE_KEYS = {
   BATCH_SIZE: 'exam_splitter_batch_size_v1'
 };
 
-// Helper for auto-detect batch size based on RAM
+// Helper for auto-detect batch size based on RAM and CPU
 export const getAutoBatchSize = (): number => {
-  if (typeof navigator !== 'undefined' && 'deviceMemory' in navigator) {
-    // @ts-ignore
-    const ram = navigator.deviceMemory as number; 
-    if (ram <= 4) return 10;
-    if (ram <= 8) return 25;
-    return 50;
+  let score = 20; // Base score
+  
+  if (typeof navigator !== 'undefined') {
+    // RAM Factor
+    if ('deviceMemory' in navigator) {
+      // @ts-ignore
+      const ram = navigator.deviceMemory as number; 
+      if (ram <= 4) score = 10;
+      else if (ram <= 8) score = 25;
+      else score = 50;
+    }
+    
+    // CPU Factor - If user has many cores, they can handle slightly larger batches effectively
+    if ('hardwareConcurrency' in navigator) {
+       const cores = navigator.hardwareConcurrency;
+       if (cores >= 12) score += 10; // High-end CPU
+       else if (cores <= 4 && score > 20) score -= 5; // Low-end CPU but High RAM (unlikely but safe)
+    }
   }
-  return 20; 
+  
+  return score; 
 };
 
 export const useExamState = () => {
