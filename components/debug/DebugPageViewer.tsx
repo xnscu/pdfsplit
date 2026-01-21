@@ -284,24 +284,16 @@ export const DebugPageViewer: React.FC<Props> = ({
                             </React.Fragment>
                             ))}
                             
-                            <rect 
-                            x={boxes[0][3] - 40} 
-                            y={boxes[0][0]} 
-                            width="40" 
-                            height="25" 
-                            fill={isSelected ? "#3b82f6" : "#ef4444"}
-                            opacity={isGrouped && !isSelected ? 0.3 : 1}
-                            className="transition-colors duration-200"
-                            />
                             <text
-                            x={boxes[0][3] - 20}
-                            y={boxes[0][0] + 17}
-                            fill="white"
+                            x={boxes[0][3] - 4}
+                            y={boxes[0][0] + 16}
+                            fill={isSelected ? "#3b82f6" : isGrouped ? "#60a5fa" : "#ef4444"}
+                            fillOpacity="0.6"
                             fontSize="16"
-                            fontWeight="bold"
-                            textAnchor="middle"
-                            opacity={isGrouped && !isSelected ? 0.5 : 1}
+                            fontWeight="800"
+                            textAnchor="end"
                             pointerEvents="none"
+                            style={{ userSelect: 'none' }}
                             >
                             {det.id === 'continuation' ? '...' : det.id}
                             </text>
