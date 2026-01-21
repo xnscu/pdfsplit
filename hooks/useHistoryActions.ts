@@ -1,4 +1,3 @@
-
 import { ProcessingStatus, DebugPageData, QuestionImage } from '../types';
 import { loadExamResult, getHistoryList, saveExamResult, updateExamQuestionsOnly, cleanupAllHistory, reSaveExamResult } from '../services/storageService';
 import { generateQuestionsFromRawPages, pMap } from '../services/generationService';
@@ -54,23 +53,12 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       let processedFiles = 0;
       let changedImagesCount = 0;
 
-      // --- SMART CONCURRENCY DETECTION ---
-      // 1. Get Logical CPU Cores (Default to 4 if API unavailable)
-      const cpuCores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
-      
-      // 2. Calculate Safe Limit for Image Operations:
-      //    - Reserve 1 core for the UI thread (prevents freezing).
-      //    - Cap at 8 to prevent memory exhaustion.
-      //    - Ensure at least 2 workers if possible for speed.
-      const safeHardwareLimit = Math.max(1, Math.min(cpuCores - 1, 8));
+      // --- USER DEFINED CONCURRENCY ---
+      // Use user-defined concurrency for the internal parallel processing items.
+      // File processing remains sequential to allow UI updates, but inner loop runs in parallel.
+      const internalItemConcurrency = concurrency;
 
-      // 3. Concurrency Strategy:
-      //    - Process FILES sequentially (concurrency=1) to allow the UI to update "1/6, 2/6" smoothly.
-      //    - Process QUESTIONS within each file in parallel using the full safe hardware limit.
-      const fileConcurrency = 1;
-      const internalItemConcurrency = safeHardwareLimit;
-
-      console.log(`Batch Processing: CPU Cores=${cpuCores}. Strategy: Sequential Files (1) x Parallel Items (${internalItemConcurrency}).`);
+      console.log(`Batch Processing: User Concurrency=${concurrency}. Strategy: Sequential Files (1) x Parallel Items (${internalItemConcurrency}).`);
 
       try {
          const getStatusMsg = (processed: number) => {
@@ -129,7 +117,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
             // Critical: Yield to event loop to allow UI render between items in the concurrency pool.
             await new Promise(resolve => setTimeout(resolve, 0));
 
-         }, fileConcurrency);
+         }, 1);
 
          addNotification(null, "success", `Reprocessed ${processedFiles} files. ${changedImagesCount} images changed.`);
          await refreshHistoryList(); // Refreshes metadata if any counts changed
@@ -184,9 +172,6 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           setTotal(uniquePages.length);
           setCompletedCount(uniquePages.length);
 
-          const cpuCores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
-          const safeLimit = Math.max(1, Math.min(cpuCores - 1, 8));
-
           abortControllerRef.current = new AbortController();
           const generatedQuestions = await generateQuestionsFromRawPages(
             uniquePages, 
@@ -195,7 +180,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
             {
                 onProgress: () => setCroppingDone((p: number) => p + 1)
             },
-            safeLimit
+            concurrency
           );
 
           setQuestions(generatedQuestions);
@@ -281,9 +266,6 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           setCroppingTotal(totalDetections);
           setCroppingDone(0);
 
-          const cpuCores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
-          const safeLimit = Math.max(1, Math.min(cpuCores - 1, 8));
-
           abortControllerRef.current = new AbortController();
           const generatedLegacyQuestions = await generateQuestionsFromRawPages(
             legacyPages, 
@@ -292,7 +274,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
             {
                 onProgress: () => setCroppingDone((p: number) => p + 1)
             },
-            safeLimit
+            concurrency
           );
           
           setQuestions([...combinedQuestions, ...generatedLegacyQuestions]);

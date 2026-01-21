@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect } from 'react';
 import { ProcessingStatus, QuestionImage, DebugPageData, HistoryMetadata, SourcePage } from '../types';
 import { CropSettings } from '../services/pdfService';
@@ -87,7 +86,8 @@ export const useExamState = () => {
   const [concurrency, setConcurrency] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CONCURRENCY);
-      return saved ? Math.min(10, Math.max(1, parseInt(saved, 10))) : 5;
+      // Remove hard cap of 10. Allow up to 128 technically, but user sets it via UI.
+      return saved ? Math.max(1, parseInt(saved, 10)) : 5;
     } catch {
       return 5;
     }

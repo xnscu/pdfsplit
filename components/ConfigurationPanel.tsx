@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { CropSettings } from '../services/pdfService';
 
@@ -26,6 +25,8 @@ export const ConfigurationPanel: React.FC<Props> = ({
   batchSize, setBatchSize
 }) => {
   if (!isOpen) return null;
+
+  const detectedCores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 'Unknown') : 'Unknown';
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm animate-[fade-in_0.2s_ease-out]" onClick={onClose}>
@@ -61,11 +62,14 @@ export const ConfigurationPanel: React.FC<Props> = ({
 
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]" title="Controls simultaneous Gemini API requests">AI Concurrency</label>
-                  <span className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">{concurrency} Threads</span>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]" title="Controls simultaneous tasks (AI & Image Processing)">Concurrency</label>
+                  <div className="flex items-center gap-2">
+                     <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wide hidden sm:inline-block">Detected Cores: {detectedCores}</span>
+                     <span className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">{concurrency} Threads</span>
+                  </div>
                 </div>
                 <div className="pt-2 px-1">
-                  <input type="range" min="1" max="10" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} className="w-full accent-blue-600 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
+                  <input type="range" min="1" max="32" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} className="w-full accent-blue-600 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
                 </div>
               </div>
 

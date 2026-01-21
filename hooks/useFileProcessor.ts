@@ -1,4 +1,3 @@
-
 import { useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
@@ -163,17 +162,13 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
         
       } else {
          if (allRawPages.length > 0) {
-            // Auto-detect safe concurrency for ZIP processing (pure CPU task)
-            const cpuCores = typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4;
-            const safeHardwareLimit = Math.max(1, Math.min(cpuCores - 1, 8));
-
-            // Updated to use concurrency
+            // Updated to use user-defined concurrency strictly
             const qs = await generateQuestionsFromRawPages(
                 allRawPages, 
                 cropSettings, 
                 new AbortController().signal,
                 undefined, // no callback for zip load needed usually, or add if wanted
-                safeHardwareLimit
+                concurrency
             );
             setQuestions(qs);
             setCompletedCount(allRawPages.length);
