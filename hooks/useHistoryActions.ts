@@ -59,7 +59,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       const runConcurrency = Math.max(1, batchSize || 5);
 
       try {
-         setDetailedStatus(`Starting batch reprocessing for ${totalFiles} files (Parallel: ${runConcurrency})...`);
+         setDetailedStatus(`Batch Reprocessing: 0% (0/${totalFiles})`);
 
          await pMap(ids, async (id) => {
             // 1. Load record
@@ -102,7 +102,8 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
             await reSaveExamResult(record.name, record.rawPages, newQuestions);
             
             processedFiles++;
-            setDetailedStatus(`Reprocessing in parallel: ${processedFiles}/${totalFiles} completed...`);
+            const percent = Math.round((processedFiles / totalFiles) * 100);
+            setDetailedStatus(`Batch Reprocessing: ${percent}% (${processedFiles}/${totalFiles})`);
 
          }, runConcurrency);
 
