@@ -138,7 +138,7 @@ export const useExamState = () => {
     localStorage.setItem(STORAGE_KEYS.USE_HISTORY_CACHE, String(useHistoryCache));
   }, [useHistoryCache]);
 
-  const addNotification = (fileName: string, type: 'success' | 'error', message: string) => {
+  const addNotification = (fileName: string | null, type: 'success' | 'error', message: string) => {
       const id = Date.now().toString() + Math.random().toString();
       setNotifications(prev => [...prev, { id, fileName, type, message }]);
       if (type === 'success') {

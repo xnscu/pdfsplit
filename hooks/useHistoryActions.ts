@@ -1,6 +1,6 @@
 
 import { ProcessingStatus, DebugPageData, QuestionImage } from '../types';
-import { loadExamResult, getHistoryList, saveExamResult, updateExamQuestionsOnly, cleanupAllHistory } from '../services/storageService';
+import { loadExamResult, getHistoryList, saveExamResult, updateExamQuestionsOnly, cleanupAllHistory, reSaveExamResult } from '../services/storageService';
 import { generateQuestionsFromRawPages } from '../services/generationService';
 
 interface HistoryProps {
@@ -45,6 +45,70 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           console.error(e);
           setError("Failed to cleanup history.");
           setStatus(ProcessingStatus.ERROR);
+      }
+  };
+
+  const handleBatchReprocessHistory = async (ids: string[]) => {
+      setters.setIsLoadingHistory(true);
+      const totalFiles = ids.length;
+      let processedFiles = 0;
+      let changedImagesCount = 0;
+
+      try {
+         for (let i = 0; i < ids.length; i++) {
+            const id = ids[i];
+            setDetailedStatus(`Reprocessing (${i + 1}/${totalFiles})...`);
+            
+            // 1. Load record
+            const record = await loadExamResult(id);
+            if (!record) continue;
+
+            // 2. Recrop with current settings
+            // We use a non-cancellable controller for atomic operations
+            const newQuestions = await generateQuestionsFromRawPages(
+               record.rawPages,
+               cropSettings,
+               new AbortController().signal 
+            );
+
+            // 3. Count changes
+            const oldQuestions = record.questions || [];
+            const oldMap = new Map(oldQuestions.map(q => [`${q.fileName}-${q.id}`, q.dataUrl]));
+            
+            let currentFileChanges = 0;
+            // Check for changed content
+            newQuestions.forEach(nq => {
+                const key = `${nq.fileName}-${nq.id}`;
+                const oldUrl = oldMap.get(key);
+                if (!oldUrl || oldUrl !== nq.dataUrl) {
+                    currentFileChanges++;
+                }
+            });
+            // Check for deleted content
+            const newKeys = new Set(newQuestions.map(q => `${q.fileName}-${q.id}`));
+            oldQuestions.forEach(oq => {
+                 const key = `${oq.fileName}-${oq.id}`;
+                 if (!newKeys.has(key)) {
+                     currentFileChanges++;
+                 }
+            });
+            
+            changedImagesCount += currentFileChanges;
+
+            // 4. Save Updates
+            await reSaveExamResult(record.name, record.rawPages, newQuestions);
+            processedFiles++;
+         }
+
+         addNotification(null, "success", `Reprocessed ${processedFiles} files. ${changedImagesCount} images changed.`);
+         await refreshHistoryList(); // Refreshes metadata if any counts changed
+         
+      } catch (e: any) {
+         console.error(e);
+         addNotification(null, "error", e.message);
+      } finally {
+         setters.setIsLoadingHistory(false);
+         setDetailedStatus("");
       }
   };
 
@@ -233,7 +297,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
 
          setLegacySyncFiles(new Set()); 
          setDetailedStatus("Sync complete!");
-         addNotification("Sync", "success", "All images saved to database for future instant loading.");
+         addNotification(null, "success", "All images saved to database for future instant loading.");
          
          await refreshHistoryList(); // Refresh list after syncing
          
@@ -249,5 +313,5 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
      }
   };
 
-  return { handleCleanupAllHistory, handleLoadHistory, handleBatchLoadHistory, handleSyncLegacyData, refreshHistoryList };
+  return { handleCleanupAllHistory, handleLoadHistory, handleBatchLoadHistory, handleSyncLegacyData, handleBatchReprocessHistory, refreshHistoryList };
 };

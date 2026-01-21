@@ -3,7 +3,7 @@ import React, { useEffect } from 'react';
 
 export interface AppNotification {
   id: string;
-  fileName: string;
+  fileName?: string | null;
   type: 'success' | 'error';
   message: string;
 }
@@ -33,10 +33,10 @@ export const NotificationToast: React.FC<Props> = ({ notifications, onDismiss, o
            <div className="flex-1 min-w-0">
               <h4 className="text-xs font-black text-slate-800 uppercase tracking-wide mb-0.5">{n.type === 'success' ? 'Process Completed' : 'Process Failed'}</h4>
               <p className="text-xs text-slate-500 font-bold mb-3 break-words leading-relaxed">{n.message}</p>
-              {n.type === 'success' && (
+              {n.type === 'success' && n.fileName && (
                   <button 
                     onClick={() => {
-                        onView(n.fileName);
+                        if (n.fileName) onView(n.fileName);
                         onDismiss(n.id);
                     }}
                     className="text-[10px] font-bold text-white bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg transition-colors shadow-lg shadow-slate-200"

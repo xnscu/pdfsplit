@@ -27,7 +27,7 @@ const App: React.FC = () => {
   
   // 2. Logic Hooks
   // Extract refreshHistoryList first as it is needed for useFileProcessor and useRefinementActions
-  const { handleCleanupAllHistory, handleLoadHistory, handleBatchLoadHistory, handleSyncLegacyData, refreshHistoryList } = useHistoryActions({ state, setters, refs, actions });
+  const { handleCleanupAllHistory, handleLoadHistory, handleBatchLoadHistory, handleSyncLegacyData, handleBatchReprocessHistory, refreshHistoryList } = useHistoryActions({ state, setters, refs, actions });
   const { processZipFiles, handleFileChange } = useFileProcessor({ state, setters, refs, actions, refreshHistoryList });
   const { handleRecropFile, executeReanalysis, handleUpdateDetections } = useRefinementActions({ state, setters, actions, refreshHistoryList });
 
@@ -394,8 +394,10 @@ const App: React.FC = () => {
         onClose={() => setters.setShowHistory(false)}
         historyList={state.historyList}
         isLoading={state.isLoadingHistory}
+        loadingText={state.detailedStatus}
         onLoadHistory={handleLoadHistory}
         onBatchLoadHistory={handleBatchLoadHistory}
+        onBatchReprocessHistory={handleBatchReprocessHistory}
         onRefreshList={refreshHistoryList}
         onCleanupAll={handleCleanupAllHistory}
       />
