@@ -61,7 +61,7 @@ export const ConfigurationPanel: React.FC<Props> = ({
 
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Concurrency</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]" title="Controls simultaneous Gemini API requests">AI Concurrency</label>
                   <span className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">{concurrency} Threads</span>
                 </div>
                 <div className="pt-2 px-1">
@@ -72,7 +72,7 @@ export const ConfigurationPanel: React.FC<Props> = ({
               {batchSize !== undefined && setBatchSize && (
                 <div className="space-y-4">
                   <div className="flex justify-between items-center">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Batch Load Size</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]" title="Controls how many files are processed in parallel locally">Batch Process Size</label>
                     <span className="text-xs font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">{batchSize} Items</span>
                   </div>
                   <div className="pt-2 px-1">

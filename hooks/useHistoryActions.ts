@@ -1,7 +1,7 @@
 
 import { ProcessingStatus, DebugPageData, QuestionImage } from '../types';
 import { loadExamResult, getHistoryList, saveExamResult, updateExamQuestionsOnly, cleanupAllHistory, reSaveExamResult } from '../services/storageService';
-import { generateQuestionsFromRawPages } from '../services/generationService';
+import { generateQuestionsFromRawPages, pMap } from '../services/generationService';
 
 interface HistoryProps {
   state: any;
@@ -11,7 +11,7 @@ interface HistoryProps {
 }
 
 export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProps) => {
-  const { batchSize, cropSettings, legacySyncFiles, questions, rawPages } = state;
+  const { batchSize, cropSettings, legacySyncFiles, questions, rawPages, concurrency } = state;
   const {
     setStatus, setDetailedStatus, setError, setQuestions, setRawPages, setSourcePages,
     setTotal, setCompletedCount, setCroppingTotal, setCroppingDone, setLegacySyncFiles, setIsSyncingLegacy
@@ -54,17 +54,20 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       let processedFiles = 0;
       let changedImagesCount = 0;
 
+      // Use Batch Process Size for local processing parallelism
+      // Concurrency setting is reserved for Gemini API calls
+      const runConcurrency = Math.max(1, batchSize || 5);
+
       try {
-         for (let i = 0; i < ids.length; i++) {
-            const id = ids[i];
-            setDetailedStatus(`Reprocessing (${i + 1}/${totalFiles})...`);
-            
+         setDetailedStatus(`Starting batch reprocessing for ${totalFiles} files (Parallel: ${runConcurrency})...`);
+
+         await pMap(ids, async (id) => {
             // 1. Load record
             const record = await loadExamResult(id);
-            if (!record) continue;
+            if (!record) return;
 
             // 2. Recrop with current settings
-            // We use a non-cancellable controller for atomic operations
+            // We use a non-cancellable controller for atomic operations inside the parallel worker
             const newQuestions = await generateQuestionsFromRawPages(
                record.rawPages,
                cropSettings,
@@ -97,8 +100,11 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
 
             // 4. Save Updates
             await reSaveExamResult(record.name, record.rawPages, newQuestions);
+            
             processedFiles++;
-         }
+            setDetailedStatus(`Reprocessing in parallel: ${processedFiles}/${totalFiles} completed...`);
+
+         }, runConcurrency);
 
          addNotification(null, "success", `Reprocessed ${processedFiles} files. ${changedImagesCount} images changed.`);
          await refreshHistoryList(); // Refreshes metadata if any counts changed
