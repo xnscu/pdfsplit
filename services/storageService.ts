@@ -3,14 +3,18 @@ import { DebugPageData, HistoryMetadata, DetectedQuestion, QuestionImage } from 
 
 const DB_NAME = "MathSplitterDB";
 const STORE_NAME = "exams";
-const DB_VERSION = 1;
+// Removing explicit DB_VERSION constant to avoid VersionError on rollback
 
 /**
  * Open (and initialize) the IndexedDB
+ * Modified to be version-agnostic to handle code rollbacks gracefully.
  */
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    // FIX: Do not pass a version number. 
+    // If DB exists (e.g. v4), it opens v4. If it doesn't, it creates v1.
+    // This prevents "VersionError: requested version (1) is less than existing (4)".
+    const request = indexedDB.open(DB_NAME);
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
@@ -20,7 +24,28 @@ const openDB = (): Promise<IDBDatabase> => {
     };
 
     request.onsuccess = (event) => {
-      resolve((event.target as IDBOpenDBRequest).result);
+      const db = (event.target as IDBOpenDBRequest).result;
+      
+      // Safety Fallback: If DB exists (so onupgradeneeded didn't run) but STORE_NAME is missing,
+      // we must force an upgrade to create it. This handles rare edge cases.
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+          const currentVersion = db.version;
+          db.close();
+          const upgradeRequest = indexedDB.open(DB_NAME, currentVersion + 1);
+          
+          upgradeRequest.onupgradeneeded = (e) => {
+              const upgradedDb = (e.target as IDBOpenDBRequest).result;
+              if (!upgradedDb.objectStoreNames.contains(STORE_NAME)) {
+                  upgradedDb.createObjectStore(STORE_NAME, { keyPath: "id" });
+              }
+          };
+          
+          upgradeRequest.onsuccess = (e) => resolve((e.target as IDBOpenDBRequest).result);
+          upgradeRequest.onerror = (e) => reject((e.target as IDBOpenDBRequest).error);
+          return;
+      }
+
+      resolve(db);
     };
 
     request.onerror = (event) => {
