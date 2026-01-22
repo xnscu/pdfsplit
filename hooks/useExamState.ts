@@ -1,3 +1,4 @@
+
 import { useState, useRef, useEffect } from 'react';
 import { ProcessingStatus, QuestionImage, DebugPageData, HistoryMetadata, SourcePage } from '../types';
 import { CropSettings } from '../services/pdfService';
@@ -154,11 +155,7 @@ export const useExamState = () => {
   const addNotification = (fileName: string | null, type: 'success' | 'error', message: string) => {
       const id = Date.now().toString() + Math.random().toString();
       setNotifications(prev => [...prev, { id, fileName, type, message }]);
-      if (type === 'success') {
-          setTimeout(() => {
-              setNotifications(current => current.filter(n => n.id !== id));
-          }, 8000);
-      }
+      // Auto-dismiss disabled per user request: notifications must be closed manually.
   };
 
   const resetState = () => {

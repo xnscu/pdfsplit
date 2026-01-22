@@ -63,28 +63,28 @@ export const ConfigurationPanel: React.FC<Props> = ({
 
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]" title="Controls simultaneous Gemini API requests">Concurrency</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]" title="Controls simultaneous Gemini API requests">Gemini API Concurrency</label>
                   <div className="flex items-center gap-2">
                      <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wide hidden sm:inline-block">Detected Cores: {detectedCores}</span>
                      <span className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">{concurrency} Requests</span>
                   </div>
                 </div>
                 <div className="pt-2 px-1">
-                  <input type="range" min="1" max="128" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} className="w-full accent-blue-600 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
+                  <input type="range" min="1" max="64" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} className="w-full accent-blue-600 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
                 </div>
-                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">Controls simultaneous Gemini API requests. Higher values speed up analysis but may hit rate limits.</p>
+                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">Max simultaneous API calls to Google Gemini. Keep low if hitting rate limits (429).</p>
               </div>
 
               {batchSize !== undefined && setBatchSize && (
                 <div className="space-y-4">
                   <div className="flex justify-between items-center">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]" title="Controls how many items are processed locally in parallel">Batch Process Size</label>
-                    <span className="text-xs font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">{batchSize} Items</span>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]" title="Controls how many images are processed/cropped in parallel">Image Processing Concurrency</label>
+                    <span className="text-xs font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">{batchSize} Threads</span>
                   </div>
                   <div className="pt-2 px-1">
                     <input type="range" min="5" max="100" step="5" value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))} className="w-full accent-emerald-500 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
                   </div>
-                  <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">Higher = Faster local image processing, but uses more RAM.</p>
+                  <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">Parallel workers for image cropping & stitching. Higher values use more CPU/RAM.</p>
                 </div>
               )}
 

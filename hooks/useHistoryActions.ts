@@ -185,7 +185,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
             {
                 onProgress: () => setCroppingDone((p: number) => p + 1)
             },
-            concurrency
+            batchSize || 10
           );
 
           setQuestions(generatedQuestions);
@@ -250,7 +250,8 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           abortControllerRef.current = new AbortController();
           const generatedLegacyQuestions = await generateQuestionsFromRawPages(
             legacyPages, cropSettings, abortControllerRef.current.signal,
-            { onProgress: () => setCroppingDone((p: number) => p + 1) }, concurrency
+            { onProgress: () => setCroppingDone((p: number) => p + 1) }, 
+            batchSize || 10
           );
           setQuestions([...combinedQuestions, ...generatedLegacyQuestions]);
           setLegacySyncFiles(legacyFilesFound);
