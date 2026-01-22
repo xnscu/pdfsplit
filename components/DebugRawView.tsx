@@ -4,6 +4,7 @@ import { DebugPageData, QuestionImage, DetectedQuestion } from '../types';
 import { DebugToolbar } from './debug/DebugToolbar';
 import { DebugPageViewer } from './debug/DebugPageViewer';
 import { DebugInspectorPanel } from './debug/DebugInspectorPanel';
+import { DebugPreviewGrid } from './debug/DebugPreviewGrid';
 import { CropSettings } from '../services/pdfService';
 
 interface Props {
@@ -20,6 +21,7 @@ interface Props {
   onReanalyzeFile?: (fileName: string) => void;
   onDownloadZip?: (fileName: string) => void;
   onRefineFile?: (fileName: string) => void;
+  onProcessFile?: (fileName: string) => void;
   isZipping?: boolean;
   isGlobalProcessing?: boolean;
   processingFiles: Set<string>;
@@ -42,6 +44,7 @@ export const DebugRawView: React.FC<Props> = ({
   onReanalyzeFile,
   onDownloadZip,
   onRefineFile,
+  onProcessFile,
   isZipping,
   isGlobalProcessing = false,
   processingFiles,
@@ -51,6 +54,9 @@ export const DebugRawView: React.FC<Props> = ({
 }) => {
   // Key format: "fileName||pageNumber||detIndex"
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  
+  // VIEW MODE: Default to 'preview' (Final Output Grid)
+  const [viewMode, setViewMode] = useState<'preview' | 'debug'>('preview');
 
   // Dragging State for Crop Lines (Shared with sub-components)
   const [draggingSide, setDraggingSide] = useState<'left' | 'right' | 'top' | 'bottom' | null>(null);
@@ -67,11 +73,19 @@ export const DebugRawView: React.FC<Props> = ({
      return title ? processingFiles.has(title) : false;
   }, [isGlobalProcessing, processingFiles, title]);
 
-  // Reset selected key when the file changes
+  // Filter questions for the current file ONLY (for the Preview Grid)
+  const currentFileQuestions = useMemo(() => {
+    if (!title) return [];
+    return questions.filter(q => q.fileName === title);
+  }, [questions, title]);
+
+  // Reset selected key and view mode when the file changes
   useEffect(() => {
     setSelectedKey(null);
     setDraggingSide(null);
     setDragValue(null);
+    // Note: We intentionally keep the viewMode (Preview/Debug) persistent when switching files
+    // as users usually want to stay in one mode while browsing.
   }, [pages[0]?.fileName]);
 
   const { selectedImage, selectedDetection, pageDetections, selectedIndex } = useMemo(() => {
@@ -111,6 +125,31 @@ export const DebugRawView: React.FC<Props> = ({
 
     return { selectedImage: image, selectedDetection: detection, pageDetections: page.detections, selectedIndex: detIdx };
   }, [selectedKey, pages, questions]);
+
+  // Jump to specific question in Debug Mode
+  const handleQuestionClick = useCallback((q: QuestionImage) => {
+    // 1. Switch to debug view
+    setViewMode('debug');
+    
+    // 2. Find the corresponding detection to highlight
+    const page = pages.find(p => p.fileName === q.fileName && p.pageNumber === q.pageNumber);
+    if (page) {
+       // Try to match ID. 
+       // Note: q.id might be complex, but detections have an 'id' field.
+       const detIndex = page.detections.findIndex(d => d.id === q.id);
+       if (detIndex !== -1) {
+           const key = `${q.fileName}||${q.pageNumber}||${detIndex}`;
+           setSelectedKey(key);
+           
+           // Optional: Scroll logic could be added here if we had a ref to the page container
+           // But since DebugPageViewer is virtualized or simple scroll, we rely on it rendering the page.
+       } else {
+           // Fallback: Just select the page (deselect any specific box) or first box?
+           // The viewer doesn't support selecting just a page easily without a key format change.
+           // So we do nothing or select index 0 if valid.
+       }
+    }
+  }, [pages]);
 
   // Column Group Logic
   const columnInfo = useMemo(() => {
@@ -280,6 +319,8 @@ export const DebugRawView: React.FC<Props> = ({
          pageCount={pages.length}
          currentFileIndex={currentFileIndex}
          totalFiles={totalFiles}
+         viewMode={viewMode}
+         onToggleView={setViewMode}
          onPrevFile={onPrevFile}
          onNextFile={onNextFile}
          onJumpToIndex={onJumpToIndex}
@@ -287,52 +328,63 @@ export const DebugRawView: React.FC<Props> = ({
          onReanalyze={!isCurrentFileProcessing && onReanalyzeFile && title ? () => onReanalyzeFile(title) : undefined}
          onDownloadZip={!isCurrentFileProcessing && onDownloadZip && title ? () => onDownloadZip(title) : undefined}
          onRefine={!isCurrentFileProcessing && onRefineFile && title ? () => onRefineFile(title) : undefined}
+         onProcess={!isCurrentFileProcessing && onProcessFile && title ? () => onProcessFile(title) : undefined}
          isZipping={isZipping}
          hasNextFile={hasNextFile}
          hasPrevFile={hasPrevFile}
       />
 
       <div className="flex-1 flex overflow-hidden relative" ref={containerRef}>
-        <DebugPageViewer 
-           width={leftPanelWidth}
-           pages={pages}
-           selectedKey={selectedKey}
-           onSelectKey={setSelectedKey}
-           selectedDetection={selectedDetection}
-           selectedBoxCoords={selectedBoxCoords}
-           columnInfo={columnInfo}
-           draggingSide={draggingSide}
-           dragValue={dragValue}
-           onDragStateChange={(side, val) => {
-               setDraggingSide(side);
-               setDragValue(val);
-           }}
-           isProcessing={isCurrentFileProcessing}
-           hasNextFile={!!hasNextFile}
-           hasPrevFile={!!hasPrevFile}
-           onTriggerNextFile={() => onNextFile && onNextFile()}
-           onTriggerPrevFile={() => onPrevFile && onPrevFile()}
-        />
+        
+        {viewMode === 'preview' ? (
+           <DebugPreviewGrid 
+             questions={currentFileQuestions}
+             onQuestionClick={handleQuestionClick}
+           />
+        ) : (
+           <>
+              <DebugPageViewer 
+                 width={leftPanelWidth}
+                 pages={pages}
+                 selectedKey={selectedKey}
+                 onSelectKey={setSelectedKey}
+                 selectedDetection={selectedDetection}
+                 selectedBoxCoords={selectedBoxCoords}
+                 columnInfo={columnInfo}
+                 draggingSide={draggingSide}
+                 dragValue={dragValue}
+                 onDragStateChange={(side, val) => {
+                     setDraggingSide(side);
+                     setDragValue(val);
+                 }}
+                 isProcessing={isCurrentFileProcessing}
+                 hasNextFile={!!hasNextFile}
+                 hasPrevFile={!!hasPrevFile}
+                 onTriggerNextFile={() => onNextFile && onNextFile()}
+                 onTriggerPrevFile={() => onPrevFile && onPrevFile()}
+              />
 
-        {/* Resizer Handle */}
-        <div
-            className={`w-2 bg-slate-950 hover:bg-blue-600 cursor-col-resize relative z-[60] flex items-center justify-center transition-colors border-l border-r border-slate-800 flex-none select-none ${isResizingPanel ? 'bg-blue-600' : ''}`}
-            onMouseDown={startResizing}
-        >
-            <div className="w-0.5 h-8 bg-slate-600 rounded-full pointer-events-none"></div>
-        </div>
+              {/* Resizer Handle */}
+              <div
+                  className={`w-2 bg-slate-950 hover:bg-blue-600 cursor-col-resize relative z-[60] flex items-center justify-center transition-colors border-l border-r border-slate-800 flex-none select-none ${isResizingPanel ? 'bg-blue-600' : ''}`}
+                  onMouseDown={startResizing}
+              >
+                  <div className="w-0.5 h-8 bg-slate-600 rounded-full pointer-events-none"></div>
+              </div>
 
-        <DebugInspectorPanel 
-            width={100 - leftPanelWidth}
-            selectedDetection={selectedDetection}
-            selectedImage={selectedImage}
-            pageData={selectedPageData}
-            isProcessing={isCurrentFileProcessing}
-            draggingSide={draggingSide}
-            dragValue={dragValue}
-            columnInfo={columnInfo}
-            cropSettings={cropSettings}
-        />
+              <DebugInspectorPanel 
+                  width={100 - leftPanelWidth}
+                  selectedDetection={selectedDetection}
+                  selectedImage={selectedImage}
+                  pageData={selectedPageData}
+                  isProcessing={isCurrentFileProcessing}
+                  draggingSide={draggingSide}
+                  dragValue={dragValue}
+                  columnInfo={columnInfo}
+                  cropSettings={cropSettings}
+              />
+           </>
+        )}
       </div>
     </div>
   );

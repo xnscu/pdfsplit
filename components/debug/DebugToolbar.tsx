@@ -6,6 +6,8 @@ interface Props {
   pageCount: number;
   currentFileIndex: number;
   totalFiles: number;
+  viewMode: 'preview' | 'debug';
+  onToggleView: (mode: 'preview' | 'debug') => void;
   onPrevFile?: () => void;
   onNextFile?: () => void;
   onJumpToIndex?: (index: number) => void;
@@ -13,6 +15,7 @@ interface Props {
   onReanalyze?: () => void;
   onDownloadZip?: () => void;
   onRefine?: () => void;
+  onProcess?: () => void;
   isZipping?: boolean;
   hasNextFile?: boolean;
   hasPrevFile?: boolean;
@@ -23,6 +26,8 @@ export const DebugToolbar: React.FC<Props> = ({
   pageCount,
   currentFileIndex,
   totalFiles,
+  viewMode,
+  onToggleView,
   onPrevFile,
   onNextFile,
   onJumpToIndex,
@@ -30,6 +35,7 @@ export const DebugToolbar: React.FC<Props> = ({
   onReanalyze,
   onDownloadZip,
   onRefine,
+  onProcess,
   isZipping,
   hasNextFile,
   hasPrevFile
@@ -75,13 +81,51 @@ export const DebugToolbar: React.FC<Props> = ({
       </div>
 
       <div className="flex items-center gap-3">
+        
+        {/* View Toggle */}
+        <div className="bg-slate-800 p-1 rounded-xl flex items-center border border-slate-700 mr-2">
+            <button
+              onClick={() => onToggleView('preview')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${
+                viewMode === 'preview' 
+                  ? 'bg-blue-600 text-white shadow-lg' 
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
+              Final Result
+            </button>
+            <button
+              onClick={() => onToggleView('debug')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all ${
+                viewMode === 'debug' 
+                  ? 'bg-red-500 text-white shadow-lg' 
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+              Debug Boxes
+            </button>
+        </div>
+
+        {onProcess && (
+           <button
+             onClick={onProcess}
+             className="bg-indigo-600 text-white px-3 py-2 rounded-xl font-bold text-xs hover:bg-indigo-500 transition-colors flex items-center gap-2 shadow-lg shadow-indigo-900/20"
+             title="Recrop images with current settings"
+           >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+              Process
+           </button>
+        )}
+
         {onRefine && (
            <button
              onClick={onRefine}
              className="bg-slate-800 text-slate-300 border border-slate-700 px-3 py-2 rounded-xl font-bold text-xs hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2"
            >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
-              Refine Settings
+              Settings
            </button>
         )}
         
@@ -96,18 +140,7 @@ export const DebugToolbar: React.FC<Props> = ({
               ) : (
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
               )}
-              Download ZIP
-           </button>
-        )}
-
-        {onReanalyze && (
-           <button
-             onClick={onReanalyze}
-             className="bg-blue-600 text-white px-3 py-2 rounded-xl font-bold text-xs hover:bg-blue-500 transition-colors flex items-center gap-2 shadow-lg shadow-blue-900/20 mr-2"
-             title="Re-run AI detection for this file"
-           >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-              <span className="hidden sm:inline">Re-analyze</span>
+              ZIP
            </button>
         )}
 

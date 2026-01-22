@@ -117,9 +117,11 @@ const getTrimmedBounds = (ctx, width, height) => {
 };
 
 /**
- * Enhanced Trim Whitespace with Threshold Limit
- * @param limit - Max pixels to trim. If whitespace > limit, trim to limit. If < limit, keep as is.
- *                This preserves relative indentation ("alignment whitespace").
+ * Enhanced Trim Whitespace with Threshold Limit (Max Cut Depth)
+ * @param limit - Max pixels to remove from any side. 
+ *                If whitespace > limit, we remove 'limit' pixels and keep the rest.
+ *                If whitespace < limit, we remove all of it.
+ *                This preserves RELATIVE indentation if the common margin > limit.
  */
 const trimWhitespace = (ctx, width, height, limit = 0) => {
   const w = Math.floor(width);
@@ -161,6 +163,7 @@ const trimWhitespace = (ctx, width, height, limit = 0) => {
 
   // Trim Bottom
   while (bottom > top && !rowHasInk(bottom - 1)) { bottom--; }
+  // bottom is the y-coord (exclusive). So (h - bottom) is the whitespace height.
   if (limit > 0 && (h - bottom) > limit) bottom = h - limit;
 
   // Trim Left
@@ -251,7 +254,7 @@ const processPartsRaw = async (sourceDataUrl, boxes, originalWidth, originalHeig
     for (const box of finalBoxes) {
         const [ymin, xmin, ymax, xmax] = box;
 
-        // Intelligent Padding Logic
+        // Intelligent Padding Logic for Step 1
         const uX = Math.floor((xmin / 1000) * originalWidth);
         const uY = Math.floor((ymin / 1000) * originalHeight);
         const uW = Math.ceil(((xmax - xmin) / 1000) * originalWidth);
@@ -297,7 +300,7 @@ const processPartsRaw = async (sourceDataUrl, boxes, originalWidth, originalHeig
 
     if (processedFragments.length === 0) return null;
 
-    // Stitch
+    // Stitch fragments (Step 1 internal stitching)
     const minAbsInkX = Math.min(...processedFragments.map(f => f.absInkX));
     const maxContentWidth = Math.max(...processedFragments.map(f => (f.absInkX - minAbsInkX) + f.trim.w));
     const fragmentGap = 10;
@@ -347,13 +350,12 @@ const processPartsRaw = async (sourceDataUrl, boxes, originalWidth, originalHeig
 const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
     const partsImages = []; 
 
-    // Process each part individually: 
-    // Step 1 (Crop) -> Step 2 (Trim w/ Limit) -> Step 3 (Pad) -> Step 4 (Align)
+    // Process each part individually using the 5-Step Pipeline
     for (const part of task.parts) {
          let boxes = part.detection.boxes_2d;
          if (!Array.isArray(boxes[0])) boxes = [boxes];
 
-         // Step 1: Crop
+         // [STEP 1] Crop: Apply crop padding (cropPadding) and basic extraction
          const rawRes = await processPartsRaw(
              part.pageObj.dataUrl,
              boxes,
@@ -363,19 +365,21 @@ const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
          );
          if (!rawRes) continue;
 
-         // Step 2: Trim Whitespace (with Threshold Limit)
-         // Default limit 50px. If whitespace < 50, keep it (alignment). If > 50, clamp to 50 (remove excessive).
+         // [STEP 2] Trim Whitespace (with Threshold):
+         // Removes excess whitespace but STOPS if limit (50px) is reached.
+         // This preserves relative alignment if margins are large.
          const TRIM_LIMIT = 50; 
          const trim = trimWhitespace(rawRes.canvas.getContext('2d'), rawRes.canvas.width, rawRes.canvas.height, TRIM_LIMIT);
 
-         // Step 3 & 4: Inner Padding & Width Alignment (Right Fill)
+         // [STEP 3] Inner Padding: Add consistent aesthetic padding (canvasPadding)
          const padding = settings.canvasPadding;
          
          const contentW = trim.w;
          const contentH = trim.h;
          
-         // Force width to be at least targetWidth (AI Box Width).
-         // If contentW is smaller, we fill right with whitespace.
+         // [STEP 4] Width Alignment: 
+         // Force width to be at least targetWidth (Max AI Box Width).
+         // Fill right side with whitespace.
          const finalW = Math.max(contentW, Math.floor(targetWidth)) + (padding * 2);
          const finalH = contentH + (padding * 2);
 
@@ -395,7 +399,8 @@ const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
 
     if (partsImages.length === 0) return null;
 
-    // Step 5: Merge Continuations (Vertical Stack)
+    // [STEP 5] Merge Continuations
+    // Vertically stack processed parts. No extra trimming here (relying on Step 2).
     let finalCanvas;
     if (partsImages.length === 1) {
         finalCanvas = partsImages[0].canvas;
@@ -537,7 +542,6 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
     
     // Stage 4: Aligned & Merged (Final)
     // To show true final output, we should run the full processLogicalQuestion logic for this part
-    // But since debug is usually single-box focused, we mock the "Single Part" flow.
     let stage4 = '';
     if (result3 && result3.canvas) {
          const t = trimWhitespace(result3.canvas.getContext('2d'), result3.canvas.width, result3.canvas.height, 50);
