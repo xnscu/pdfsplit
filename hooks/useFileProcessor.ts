@@ -1,12 +1,12 @@
 
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
 import { ProcessingStatus, DebugPageData, QuestionImage, SourcePage } from '../types';
 import { renderPageToImage } from '../services/pdfService';
 import { detectQuestionsOnPage } from '../services/geminiService';
 import { loadExamResult, saveExamResult, getHistoryList } from '../services/storageService';
-import { generateQuestionsFromRawPages } from '../services/generationService';
+import { generateQuestionsFromRawPages, CropQueue, createLogicalQuestions, processLogicalQuestion } from '../services/generationService';
 
 // We need a subset of the full state/setters
 interface ProcessorProps {
@@ -29,6 +29,18 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
   } = setters;
 
   const { abortControllerRef, stopRequestedRef } = refs;
+
+  // Global Queue for cropping tasks to ensure flattened concurrency
+  const cropQueueRef = useRef(new CropQueue());
+  
+  // Track per-file progress to save results when file is done
+  const fileResultsRef = useRef<Record<string, QuestionImage[]>>({});
+  const fileCropMetaRef = useRef<Record<string, { totalQs: number, processedQs: number, saved: boolean }>>({});
+
+  // Update queue concurrency when settings change
+  useEffect(() => {
+    cropQueueRef.current.concurrency = batchSize || 10;
+  }, [batchSize]);
 
   const processZipFiles = async (files: { blob: Blob, name: string }[]) => {
     try {
@@ -212,7 +224,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
     stopRequestedRef.current = false;
     const signal = abortControllerRef.current.signal;
     
-    // Reset State (Partial)
+    // Reset State
     setStartTime(Date.now());
     setStatus(ProcessingStatus.LOADING_PDF);
     setError(undefined);
@@ -225,6 +237,11 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
     setCurrentRound(1);
     setFailedCount(0);
     setters.setProcessingFiles(new Set());
+    
+    // Reset Queue & Meta
+    cropQueueRef.current.clear();
+    fileResultsRef.current = {};
+    fileCropMetaRef.current = {};
 
     const filesToProcess: File[] = [];
     const cachedRawPages: DebugPageData[] = [];
@@ -343,13 +360,13 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
       if (allNewPages.length > 0 && !stopRequestedRef.current && !signal.aborted) {
          setStatus(ProcessingStatus.DETECTING_QUESTIONS);
          
-         const fileMeta: Record<string, { totalPages: number, processedPages: number, cropped: boolean }> = {};
+         // Meta for detection
+         const detectionMeta: Record<string, { totalPages: number, processedPages: number }> = {};
          allNewPages.forEach(p => {
-             if (!fileMeta[p.fileName]) {
-                 fileMeta[p.fileName] = { 
+             if (!detectionMeta[p.fileName]) {
+                 detectionMeta[p.fileName] = { 
                     totalPages: allNewPages.filter(x => x.fileName === p.fileName).length, 
-                    processedPages: 0, 
-                    cropped: false 
+                    processedPages: 0
                  };
              }
          });
@@ -373,7 +390,6 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
 
                  const task = (async () => {
                      try {
-                         // Gemini API usage: use concurrency
                          const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel);
                          
                          const resultPage: DebugPageData = {
@@ -389,45 +405,67 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                          setCompletedCount((prev: number) => prev + 1);
                          setCroppingTotal((prev: number) => prev + detections.length);
 
-                         if (fileMeta[pageData.fileName]) {
-                             fileMeta[pageData.fileName].processedPages++;
-                             const meta = fileMeta[pageData.fileName];
+                         if (detectionMeta[pageData.fileName]) {
+                             detectionMeta[pageData.fileName].processedPages++;
+                             const dMeta = detectionMeta[pageData.fileName];
                              
-                             if (!meta.cropped && meta.processedPages === meta.totalPages) {
-                                 meta.cropped = true;
+                             // If file is fully detected, queue its crops
+                             if (dMeta.processedPages === dMeta.totalPages) {
                                  
-                                 setRawPages((current: any) => {
-                                     const filePages = current.filter((p: any) => p.fileName === pageData.fileName);
+                                 // Use functional update to ensure we have all pages for this file
+                                 setRawPages((currentRaw: any) => {
+                                     const filePages = currentRaw.filter((p: any) => p.fileName === pageData.fileName);
                                      filePages.sort((a: any,b: any) => a.pageNumber - b.pageNumber);
                                      
-                                     // Image processing usage: use batchSize
-                                     generateQuestionsFromRawPages(
-                                        filePages, 
-                                        cropSettings, 
-                                        signal,
-                                        {
-                                            onProgress: () => setCroppingDone((p: number) => p + 1),
-                                            onResult: (img) => {
+                                     // 1. Prepare tasks
+                                     const logicalQs = createLogicalQuestions(filePages);
+                                     
+                                     // Init Crop Meta
+                                     fileCropMetaRef.current[pageData.fileName] = {
+                                         totalQs: logicalQs.length,
+                                         processedQs: 0,
+                                         saved: false
+                                     };
+                                     fileResultsRef.current[pageData.fileName] = [];
+
+                                     // 2. Add to Global Queue
+                                     logicalQs.forEach(lq => {
+                                         cropQueueRef.current.enqueue(async () => {
+                                            if (signal.aborted) return;
+                                            
+                                            const result = await processLogicalQuestion(lq, cropSettings);
+                                            if (result) {
+                                                // Update state results immediately for UI
                                                 setQuestions((prevQ: any) => {
-                                                    const next = [...prevQ, img];
-                                                    // Basic sort to keep sanity
+                                                    const next = [...prevQ, result];
+                                                    // Basic sort
                                                     return next.sort((a: any,b: any) => {
                                                         if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
-                                                        // Fallback sort
                                                         return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
                                                     });
                                                 });
+                                                setCroppingDone((p: number) => p + 1);
+
+                                                // Update file tracking
+                                                const fMeta = fileCropMetaRef.current[pageData.fileName];
+                                                const fRes = fileResultsRef.current[pageData.fileName];
+                                                if (fMeta && fRes) {
+                                                    fRes.push(result);
+                                                    fMeta.processedQs++;
+                                                    
+                                                    // Check if File Done
+                                                    if (fMeta.processedQs >= fMeta.totalQs && !fMeta.saved) {
+                                                        fMeta.saved = true;
+                                                        // Save to DB
+                                                        saveExamResult(pageData.fileName, filePages, fRes)
+                                                            .then(() => refreshHistoryList());
+                                                    }
+                                                }
                                             }
-                                        },
-                                        batchSize || 10
-                                     ).then(newQuestions => {
-                                        if (!signal.aborted && !stopRequestedRef.current) {
-                                            // Final save (questions already in state)
-                                            saveExamResult(pageData.fileName, filePages, newQuestions)
-                                                .then(() => refreshHistoryList());
-                                        }
+                                         });
                                      });
-                                     return current;
+
+                                     return currentRaw;
                                  });
                              }
                          }
@@ -459,6 +497,12 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
       if (stopRequestedRef.current) {
           setStatus(ProcessingStatus.STOPPED);
       } else {
+          // Wait for crop queue to finish before showing completed
+          if (cropQueueRef.current.size > 0) {
+              setStatus(ProcessingStatus.CROPPING);
+              setDetailedStatus("Finalizing crops...");
+              await cropQueueRef.current.onIdle();
+          }
           setStatus(ProcessingStatus.COMPLETED);
       }
 

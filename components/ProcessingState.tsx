@@ -116,7 +116,6 @@ export const ProcessingState: React.FC<Props> = ({
                     <>
                       <span className="flex items-center gap-2 text-slate-400">Total Qs: {croppingTotal}</span>
                       <span className="flex items-center gap-2 text-green-600">Cropped: {croppingDone}</span>
-                      <span className="flex items-center gap-2 text-blue-500">Page {progress}</span>
                     </>
                   ) : (
                     <span className="text-blue-600">Page {progress} / {total}</span>

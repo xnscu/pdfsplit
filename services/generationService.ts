@@ -46,7 +46,7 @@ export const pMap = async <T, R>(
   return results;
 };
 
-interface LogicalQuestion {
+export interface LogicalQuestion {
   id: string;
   fileId: string;
   parts: {
@@ -57,20 +57,9 @@ interface LogicalQuestion {
 }
 
 /**
- * Generates processed questions from raw debug data with ITEM-LEVEL Concurrency.
+ * Group pages into Logical Questions (handling continuations)
  */
-export const generateQuestionsFromRawPages = async (
-  pages: DebugPageData[], 
-  settings: CropSettings, 
-  signal: AbortSignal,
-  callbacks?: {
-    onProgress?: () => void;
-    onResult?: (image: QuestionImage) => void;
-  },
-  concurrency: number = 3
-): Promise<QuestionImage[]> => {
-  
-  // 1. Group by file to handle continuations order correctly
+export const createLogicalQuestions = (pages: DebugPageData[]): LogicalQuestion[] => {
   const files = new Map<string, DebugPageData[]>();
   pages.forEach(p => {
     if (!files.has(p.fileName)) files.set(p.fileName, []);
@@ -80,7 +69,7 @@ export const generateQuestionsFromRawPages = async (
   const logicalQuestions: LogicalQuestion[] = [];
 
   for (const [fileId, filePages] of files) {
-      // Sort pages
+      // Sort pages to ensure correct continuation order
       filePages.sort((a,b) => a.pageNumber - b.pageNumber);
       
       let currentQ: LogicalQuestion | null = null;
@@ -111,15 +100,16 @@ export const generateQuestionsFromRawPages = async (
           }
       }
   }
+  return logicalQuestions;
+};
 
-  if (logicalQuestions.length === 0) return [];
-
-  // 2. Process Logical Questions in Parallel
-  const results = await pMap(logicalQuestions, async (task, i) => {
-     if (signal.aborted) return null;
-     
-     console.log(`[Start Task] Processing Question ${task.id} from ${task.fileId}`);
-
+/**
+ * Process a single logical question
+ */
+export const processLogicalQuestion = async (
+  task: LogicalQuestion, 
+  settings: CropSettings
+): Promise<QuestionImage | null> => {
      try {
          // A. Crop Parts
          const partsCanvas = [];
@@ -135,10 +125,7 @@ export const generateQuestionsFromRawPages = async (
              if (res.canvas) partsCanvas.push({ canvas: res.canvas, originalDataUrl: res.originalDataUrl });
          }
 
-         if (partsCanvas.length === 0) {
-            console.log(`[End Task] Processing Question ${task.id} - No content`);
-            return null;
-         }
+         if (partsCanvas.length === 0) return null;
 
          // B. Merge (Sequential Vertical)
          let finalCanvas = partsCanvas[0].canvas;
@@ -152,8 +139,6 @@ export const generateQuestionsFromRawPages = async (
          }
 
          // C. Export
-         // Note: We use intrinsic trim width to allow independent parallel processing 
-         // without waiting for full-file analysis.
          const trim = analyzeCanvasContent(finalCanvas);
          const finalDataUrl = await generateAlignedImage(finalCanvas, trim, trim.w, settings);
          
@@ -164,24 +149,107 @@ export const generateQuestionsFromRawPages = async (
              dataUrl: finalDataUrl,
              originalDataUrl: originalDataUrl
          };
-
-         // Real-time updates
-         if (callbacks?.onResult) callbacks.onResult(qImage);
-         if (callbacks?.onProgress) callbacks.onProgress();
-
-         console.log(`[End Task] Processing Question ${task.id} from ${task.fileId}`);
          
          // Help GC
          if ('width' in finalCanvas) { finalCanvas.width = 0; finalCanvas.height = 0; }
 
          return qImage;
-
      } catch (e) {
          console.error(`Error processing question ${task.id}`, e);
-         console.log(`[End Task] Processing Question ${task.id} - Failed`);
          return null;
      }
+};
 
+/**
+ * Global Crop Queue to flatten processing across files
+ */
+export class CropQueue {
+  private queue: (() => Promise<void>)[] = [];
+  private active = 0;
+  private _concurrency = 5;
+  private resolveIdle?: () => void;
+
+  set concurrency(val: number) {
+    this._concurrency = val;
+    this.process();
+  }
+  
+  get concurrency() { return this._concurrency; }
+
+  enqueue(task: () => Promise<void>) {
+    this.queue.push(task);
+    this.process();
+  }
+
+  get size() {
+      return this.queue.length + this.active;
+  }
+
+  // Returns a promise that resolves when queue is empty and active tasks are done
+  onIdle(): Promise<void> {
+      if (this.queue.length === 0 && this.active === 0) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+          this.resolveIdle = resolve;
+      });
+  }
+
+  clear() {
+      this.queue = [];
+      // We cannot stop active tasks easily without AbortSignals passed down deep, 
+      // but clearing queue stops new ones.
+  }
+
+  private process() {
+    while (this.active < this._concurrency && this.queue.length > 0) {
+      const task = this.queue.shift();
+      if (task) {
+        this.active++;
+        task().finally(() => {
+          this.active--;
+          this.checkIdle();
+          this.process();
+        });
+      }
+    }
+  }
+
+  private checkIdle() {
+      if (this.queue.length === 0 && this.active === 0 && this.resolveIdle) {
+          this.resolveIdle();
+          this.resolveIdle = undefined;
+      }
+  }
+}
+
+/**
+ * Generates processed questions from raw debug data.
+ * Legacy wrapper that uses the new helpers but runs immediately (for history/refinement).
+ */
+export const generateQuestionsFromRawPages = async (
+  pages: DebugPageData[], 
+  settings: CropSettings, 
+  signal: AbortSignal,
+  callbacks?: {
+    onProgress?: () => void;
+    onResult?: (image: QuestionImage) => void;
+  },
+  concurrency: number = 3
+): Promise<QuestionImage[]> => {
+  
+  const logicalQuestions = createLogicalQuestions(pages);
+  if (logicalQuestions.length === 0) return [];
+
+  const results = await pMap(logicalQuestions, async (task) => {
+     if (signal.aborted) return null;
+     
+     const res = await processLogicalQuestion(task, settings);
+     
+     if (res) {
+        if (callbacks?.onResult) callbacks.onResult(res);
+        if (callbacks?.onProgress) callbacks.onProgress();
+     }
+     
+     return res;
   }, concurrency, signal);
 
   return results.filter((r): r is QuestionImage => r !== null);
