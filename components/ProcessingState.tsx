@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { ProcessingStatus } from '../types';
+import { CircularProgress } from './CircularProgress';
 
 interface Props {
   status: ProcessingStatus;
@@ -50,16 +51,7 @@ export const ProcessingState: React.FC<Props> = ({
 
   return (
     <div className={`flex flex-col items-center justify-center p-10 bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 mt-12 w-full max-w-2xl mx-auto transition-all duration-500 relative overflow-hidden animate-[fade-in_0.5s_ease-out]`}>
-      {/* Progress Bar Top */}
-      {!isError && (
-        <div className="absolute top-0 left-0 w-full h-1.5 bg-slate-50">
-          <div 
-            className={`h-full transition-all duration-700 ease-out shadow-[0_0_10px_rgba(37,99,235,0.4)] ${isCompleted ? 'bg-green-500' : currentRound > 1 ? 'bg-orange-500' : 'bg-blue-600'}`}
-            style={{ width: `${displayPercent}%` }}
-          />
-        </div>
-      )}
-
+      
       {isError ? (
         <div className="text-center w-full py-4">
           <div className="bg-red-50 text-red-600 p-8 rounded-3xl mb-4 border border-red-100">
@@ -112,21 +104,22 @@ export const ProcessingState: React.FC<Props> = ({
         </div>
       ) : (
         <>
-          <div className="relative w-36 h-36 mb-10 flex items-center justify-center">
-             <div className="absolute inset-0 border-[6px] border-slate-50 rounded-full"></div>
-                <div 
-                  className={`absolute inset-0 border-[6px] rounded-full border-t-transparent animate-spin ${currentRound > 1 ? 'border-orange-500' : 'border-blue-600'}`}
-                  style={{ animationDuration: '1.2s' }}
-                ></div>
-                <div className={`absolute inset-0 flex flex-col items-center justify-center font-black tabular-nums ${currentRound > 1 ? 'text-orange-500' : 'text-blue-600'}`}>
-                  <span className="text-3xl">{Math.round(displayPercent)}%</span>
+          <CircularProgress 
+            progress={displayPercent} 
+            size="9rem"
+            colorClass={currentRound > 1 ? 'text-orange-500' : 'text-blue-600'}
+            className="mb-10"
+            label={
+               <>
+                  <span className={`text-3xl font-black tabular-nums ${currentRound > 1 ? 'text-orange-500' : 'text-blue-600'}`}>{Math.round(displayPercent)}%</span>
                   {currentRound > 1 ? (
                      <span className="text-[9px] bg-orange-100 px-2 py-0.5 rounded-full uppercase tracking-widest mt-1">Round {currentRound}</span>
                   ) : (
                      <span className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Active</span>
                   )}
-                </div>
-          </div>
+               </>
+            }
+          />
           
           <h3 className={`text-2xl font-black mb-4 transition-colors duration-500 tracking-tight text-slate-900`}>
             {status === ProcessingStatus.LOADING_PDF && "Loading Exam..."}
@@ -173,13 +166,6 @@ export const ProcessingState: React.FC<Props> = ({
                   </button>
                 )}
               </>
-          </div>
-
-          <div className="w-full bg-slate-50 h-2.5 rounded-full mt-10 overflow-hidden shadow-inner border border-slate-200/50">
-              <div 
-                className={`h-full transition-all duration-500 ease-out ${currentRound > 1 ? 'bg-orange-500' : 'bg-blue-600'}`}
-                style={{ width: `${displayPercent}%` }}
-              ></div>
           </div>
         </>
       )}
