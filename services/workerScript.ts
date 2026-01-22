@@ -350,7 +350,7 @@ const processParts = async (sourceDataUrl, boxes, originalWidth, originalHeight,
     return { canvas, originalDataUrl };
 };
 
-const processLogicalQuestion = async (task, settings) => {
+const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
     // 1. Crop Parts
     const partsCanvas = [];
     for (const part of task.parts) {
@@ -404,7 +404,13 @@ const processLogicalQuestion = async (task, settings) => {
     // 3. Export Final
     const trim = trimWhitespace(finalCanvas.getContext('2d'), finalCanvas.width, finalCanvas.height);
     const padding = settings.canvasPadding;
-    const finalWidth = trim.w + (padding * 2);
+
+    // Calculate Final Target Width
+    // Use the max of [Actual Trimmed Width] and [Global Target Width passed from main thread]
+    // This effectively adds padding to the right if the content is narrower than the column
+    const finalContentWidth = Math.max(trim.w, Math.floor(targetWidth));
+
+    const finalWidth = finalContentWidth + (padding * 2);
     const finalHeight = trim.h + (padding * 2);
     
     const { canvas: exportCanvas, context: exportCtx } = createSmartCanvas(finalWidth, finalHeight);
@@ -433,10 +439,10 @@ const processLogicalQuestion = async (task, settings) => {
     };
 };
 
-const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, originalHeight, settings) => {
+const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, originalHeight, settings, targetWidth = 0) => {
     const imgBitmap = await loadImageBitmapFromDataUrl(sourceDataUrl);
     
-    // Stage 1: Raw AI Detection (Exact Box)
+    // Stage 1: Raw AI Detection
     const { canvas: s1Canvas, context: s1Ctx } = createSmartCanvas(1, 1);
     const s1Fragments = boxes.map(box => {
          const [ymin, xmin, ymax, xmax] = box;
@@ -462,14 +468,12 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
     });
     const stage1 = await canvasToDataURL(s1Canvas);
 
-    // Stage 2: Smart Crop Padding (Reflecting actual logic)
+    // Stage 2: Smart Crop Padding
     const { canvas: s2Canvas, context: s2Ctx } = createSmartCanvas(1, 1);
     const s2Fragments = [];
     
     for (const box of boxes) {
          const [ymin, xmin, ymax, xmax] = box;
-         
-         // --- SMART PADDING CALCULATION ---
          const uX = Math.floor((xmin / 1000) * originalWidth);
          const uY = Math.floor((ymin / 1000) * originalHeight);
          const uW = Math.ceil(((xmax - xmin) / 1000) * originalWidth);
@@ -483,14 +487,12 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
          if (uW > 0 && uH > 0) {
             const { canvas: checkCanvas, context: checkCtx } = createSmartCanvas(uW, uH);
             checkCtx.drawImage(imgBitmap, uX, uY, uW, uH, 0, 0, uW, uH);
-            // Lowered threshold to 230 to match processParts
             const edges = checkCanvasEdges(checkCtx, uW, uH, 230, 2); 
             if (edges.top) pTop = 0;
             if (edges.bottom) pBottom = 0;
             if (edges.left) pLeft = 0;
             if (edges.right) pRight = 0;
          }
-         // ---------------------------------
 
          const rawX = (xmin / 1000) * originalWidth;
          const rawY = (ymin / 1000) * originalHeight;
@@ -518,8 +520,22 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
     const stage2 = await canvasToDataURL(s2Canvas);
 
     // Stage 3: Trim Whitespace
+    // Note: processParts returns the stitched parts. The parts themselves are trimmed, but the
+    // assembled canvas might be wider if some parts were wide and others narrow.
+    // To show a true "tightly trimmed" debug view, we should run trimWhitespace on this result.
     const result3 = await processParts(sourceDataUrl, boxes, originalWidth, originalHeight, settings);
-    const stage3 = result3 && result3.canvas ? await canvasToDataURL(result3.canvas) : '';
+    let stage3 = '';
+    if (result3 && result3.canvas) {
+         // Perform an explicit trim on the stitched result for the preview to ensure it looks "tight"
+         const t = trimWhitespace(result3.canvas.getContext('2d'), result3.canvas.width, result3.canvas.height);
+         if (t.w > 0 && t.h > 0) {
+            const { canvas: s3C, context: s3Ctx } = createSmartCanvas(t.w, t.h);
+            s3Ctx.drawImage(result3.canvas, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
+            stage3 = await canvasToDataURL(s3C);
+         } else {
+            stage3 = await canvasToDataURL(result3.canvas);
+         }
+    }
     
     // Stage 4: Aligned (Final)
     // We reuse logic from processLogicalQuestion's final step
@@ -528,11 +544,16 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
          const finalCanvas = result3.canvas;
          const trim = trimWhitespace(finalCanvas.getContext('2d'), finalCanvas.width, finalCanvas.height);
          const padding = settings.canvasPadding;
-         const finalWidth = trim.w + (padding * 2);
+
+         // Apply Global Width Alignment Logic to Stage 4 Preview
+         const finalContentWidth = Math.max(trim.w, Math.floor(targetWidth));
+
+         const finalWidth = finalContentWidth + (padding * 2);
          const finalHeight = trim.h + (padding * 2);
          const { canvas: exportCanvas, context: exportCtx } = createSmartCanvas(finalWidth, finalHeight);
          exportCtx.fillStyle = '#ffffff';
          exportCtx.fillRect(0, 0, finalWidth, finalHeight);
+         
          exportCtx.drawImage(
             finalCanvas,
             trim.x, trim.y, trim.w, trim.h,
@@ -550,7 +571,7 @@ self.onmessage = async (e) => {
   
   if (type === 'PROCESS_QUESTION') {
      try {
-        const result = await processLogicalQuestion(payload.task, payload.settings);
+        const result = await processLogicalQuestion(payload.task, payload.settings, payload.targetWidth);
         self.postMessage({ id, success: true, result });
      } catch (err) {
         console.error("Worker Error:", err);
@@ -559,8 +580,8 @@ self.onmessage = async (e) => {
   } 
   else if (type === 'GENERATE_DEBUG') {
       try {
-          const { sourceDataUrl, boxes, originalWidth, originalHeight, settings } = payload;
-          const result = await generateDebugPreviews(sourceDataUrl, boxes, originalWidth, originalHeight, settings);
+          const { sourceDataUrl, boxes, originalWidth, originalHeight, settings, targetWidth } = payload;
+          const result = await generateDebugPreviews(sourceDataUrl, boxes, originalWidth, originalHeight, settings, targetWidth);
           self.postMessage({ id, success: true, result });
       } catch (err) {
           console.error("Worker Preview Error:", err);
@@ -568,7 +589,6 @@ self.onmessage = async (e) => {
       }
   }
 };
-`;
-
+`
 const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
 export const WORKER_BLOB_URL = URL.createObjectURL(blob);

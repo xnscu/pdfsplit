@@ -1,4 +1,5 @@
 
+
 import { DebugPageData, QuestionImage, DetectedQuestion } from "../types";
 import { CropSettings } from "./pdfService";
 import { WORKER_BLOB_URL } from "./workerScript";
@@ -202,9 +203,10 @@ export class CropQueue {
  */
 export const processLogicalQuestion = async (
   task: LogicalQuestion, 
-  settings: CropSettings
+  settings: CropSettings,
+  targetWidth?: number
 ): Promise<QuestionImage | null> => {
-    return globalWorkerPool.exec('PROCESS_QUESTION', { task, settings });
+    return globalWorkerPool.exec('PROCESS_QUESTION', { task, settings, targetWidth });
 };
 
 /**
@@ -215,9 +217,10 @@ export const generateDebugPreviews = async (
     boxes: [number, number, number, number][],
     originalWidth: number,
     originalHeight: number,
-    settings: CropSettings
+    settings: CropSettings,
+    targetWidth?: number
 ): Promise<{ stage1: string, stage2: string, stage3: string, stage4: string } | null> => {
-    return globalWorkerPool.exec('GENERATE_DEBUG', { sourceDataUrl, boxes, originalWidth, originalHeight, settings });
+    return globalWorkerPool.exec('GENERATE_DEBUG', { sourceDataUrl, boxes, originalWidth, originalHeight, settings, targetWidth });
 };
 
 // Legacy helper used by History loading
@@ -263,6 +266,35 @@ export const generateQuestionsFromRawPages = async (
   
   globalWorkerPool.concurrency = concurrency;
   
+  // 1. Calculate Max Width per Page (for column alignment)
+  // We want to force all questions on the same page to have the same width (aligned right with whitespace)
+  const pageMaxWidths = new Map<number, number>(); // pageNumber -> pxWidth
+
+  for (const page of pages) {
+      // Only process if we haven't already calculated this page's max width 
+      // (or if we are processing multiple files, handle overlaps carefully, 
+      // but usually pageNumber is unique per batch unless multiple files are involved.
+      // Better to key by fileName + pageNumber, but here we assume pages are from one context or handled safely)
+      // Actually, let's use a compound key map in memory just in case, but pass simple number to worker? 
+      // The worker only processes one task.
+      
+      // Let's iterate all detections on this page
+      let maxW = 0;
+      for (const det of page.detections) {
+          const boxes = Array.isArray(det.boxes_2d[0]) ? det.boxes_2d : [det.boxes_2d];
+          for (const box of boxes) {
+              // box is [ymin, xmin, ymax, xmax] (0-1000)
+              // Width in px
+              const w = (( (box as number[])[3] - (box as number[])[1] ) / 1000) * page.width;
+              if (w > maxW) maxW = w;
+          }
+      }
+      // Use compound key for lookup
+      const key = `${page.fileName}#${page.pageNumber}`;
+      // @ts-ignore
+      pageMaxWidths.set(key, Math.ceil(maxW));
+  }
+  
   const logicalQuestions = createLogicalQuestions(pages);
   if (logicalQuestions.length === 0) return [];
 
@@ -271,7 +303,13 @@ export const generateQuestionsFromRawPages = async (
   const promises = logicalQuestions.map(async (task) => {
      if (signal.aborted) return null;
      
-     const res = await processLogicalQuestion(task, settings);
+     // Lookup target width
+     const pObj = task.parts[0].pageObj;
+     const key = `${pObj.fileName}#${pObj.pageNumber}`;
+     // @ts-ignore
+     const targetWidth = pageMaxWidths.get(key) || 0;
+     
+     const res = await processLogicalQuestion(task, settings, targetWidth);
      
      if (res) {
         if (callbacks?.onResult) callbacks.onResult(res);

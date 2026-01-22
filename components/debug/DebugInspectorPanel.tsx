@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { DetectedQuestion, QuestionImage, DebugPageData } from '../../types';
 import { generateDebugPreviews } from '../../services/generationService';
@@ -46,12 +47,26 @@ export const DebugInspectorPanel: React.FC<Props> = ({
            boxes = [boxes];
         }
 
+        // Calculate Target Width for this page (Max of all detection boxes)
+        let maxBoxWidthPx = 0;
+        if (pageData && pageData.detections) {
+            pageData.detections.forEach(det => {
+                 const dBoxes = Array.isArray(det.boxes_2d[0]) ? det.boxes_2d : [det.boxes_2d];
+                 dBoxes.forEach(b => {
+                     // @ts-ignore
+                     const w = ((b[3] - b[1]) / 1000) * pageData.width;
+                     if (w > maxBoxWidthPx) maxBoxWidthPx = w;
+                 });
+            });
+        }
+
         const result = await generateDebugPreviews(
           pageData.dataUrl,
           boxes as [number, number, number, number][],
           pageData.width,
           pageData.height,
-          cropSettings
+          cropSettings,
+          Math.ceil(maxBoxWidthPx) // Pass target width for alignment
         );
 
         setStages(result);
