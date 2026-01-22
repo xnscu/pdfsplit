@@ -349,7 +349,19 @@ const App: React.FC = () => {
         )}
       </main>
 
-      <HistorySidebar isOpen={state.showHistory} onClose={() => setters.setShowHistory(false)} historyList={state.historyList} isLoading={state.isLoadingHistory} loadingText={state.detailedStatus} onLoadHistory={handleLoadHistory} onBatchLoadHistory={handleBatchLoadHistory} onBatchReprocessHistory={handleBatchReprocessHistory} onRefreshList={refreshHistoryList} onCleanupAll={handleCleanupAllHistory} />
+      <HistorySidebar 
+        isOpen={state.showHistory} 
+        onClose={() => setters.setShowHistory(false)} 
+        historyList={state.historyList} 
+        isLoading={state.isLoadingHistory} 
+        loadingText={state.detailedStatus} 
+        progress={state.total > 0 ? (state.completedCount / state.total) * 100 : 0}
+        onLoadHistory={handleLoadHistory} 
+        onBatchLoadHistory={handleBatchLoadHistory} 
+        onBatchReprocessHistory={handleBatchReprocessHistory} 
+        onRefreshList={refreshHistoryList} 
+        onCleanupAll={handleCleanupAllHistory} 
+      />
       <ConfigurationPanel isOpen={showSettings} onClose={() => setShowSettings(false)} selectedModel={state.selectedModel} setSelectedModel={setters.setSelectedModel} concurrency={state.concurrency} setConcurrency={setters.setConcurrency} cropSettings={state.cropSettings} setCropSettings={setters.setCropSettings} useHistoryCache={state.useHistoryCache} setUseHistoryCache={setters.setUseHistoryCache} batchSize={state.batchSize} setBatchSize={setters.setBatchSize} />
       {state.refiningFile && (
         <RefinementModal fileName={state.refiningFile} initialSettings={state.cropSettings} status={state.status} onClose={() => setters.setRefiningFile(null)} onApply={(fileName, settings) => { handleRecropFile(fileName, settings); setters.setCropSettings(settings); }} />

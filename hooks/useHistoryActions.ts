@@ -53,31 +53,31 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       const startTimeLocal = Date.now();
       setStartTime(startTimeLocal);
       
-      // Use the batchSize setting for the worker pool concurrency,
-      // but process files sequentially to ensure memory safety.
       const workerConcurrency = batchSize || 5;
       
       let totalFilesProcessed = 0;
       let totalChangedImages = 0;
       const totalFiles = ids.length;
 
+      setTotal(totalFiles);
+      setCompletedCount(0);
+
       try {
          for (let i = 0; i < totalFiles; i++) {
              const id = ids[i];
              
              // 1. Load Data for just THIS file
-             // We do this inside the loop to ensure previous file data is GC'd
              const record = await loadExamResult(id);
              
              if (!record || !record.rawPages || record.rawPages.length === 0) {
+                 setCompletedCount(i + 1);
                  continue;
              }
              
              const fileName = record.name;
-             setDetailedStatus(`Processing file ${i + 1}/${totalFiles}: ${fileName}`);
+             setDetailedStatus(fileName);
 
              // 2. Process
-             // This uses the worker pool internally
              const generatedQuestions = await generateQuestionsFromRawPages(
                  record.rawPages,
                  cropSettings,
@@ -98,8 +98,9 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
 
              await reSaveExamResult(fileName, record.rawPages, generatedQuestions);
              
+             setCompletedCount(i + 1);
+
              // 4. Force GC Opportunity / UI Refresh
-             // Yield to main thread to allow UI to render status updates and GC to run
              await new Promise(resolve => setTimeout(resolve, 20));
          }
 
@@ -120,6 +121,8 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       } finally {
          setters.setIsLoadingHistory(false);
          setDetailedStatus("");
+         setTotal(0);
+         setCompletedCount(0);
       }
   };
 
@@ -201,7 +204,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     setters.setIsLoadingHistory(true);
     setStartTime(Date.now());
     setStatus(ProcessingStatus.LOADING_PDF);
-    setDetailedStatus(`Queuing ${ids.length} exams from history...`);
+    setDetailedStatus(`Queuing ${ids.length} exams...`);
 
     try {
       const CHUNK_SIZE = 5; // Reduced chunk size for safety
@@ -210,7 +213,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       const legacyFilesFound = new Set<string>();
       
       for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
-         setDetailedStatus(`Loading batch ${Math.floor(i/CHUNK_SIZE) + 1}/${Math.ceil(ids.length/CHUNK_SIZE)}...`);
+         setDetailedStatus(`Loading batch ${Math.floor(i/CHUNK_SIZE) + 1}/${Math.ceil(ids.length/CHUNK_SIZE)}`);
          const chunk = ids.slice(i, i + CHUNK_SIZE);
          const results = await Promise.all(chunk.map(id => loadExamResult(id)));
          

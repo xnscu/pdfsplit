@@ -10,6 +10,7 @@ interface Props {
   historyList: HistoryMetadata[];
   isLoading: boolean;
   loadingText?: string;
+  progress?: number;
   onLoadHistory: (id: string) => void;
   onBatchLoadHistory: (ids: string[]) => void;
   onBatchReprocessHistory: (ids: string[]) => void;
@@ -29,6 +30,7 @@ export const HistorySidebar: React.FC<Props> = ({
   historyList, 
   isLoading, 
   loadingText,
+  progress = 0,
   onLoadHistory,
   onBatchLoadHistory,
   onBatchReprocessHistory,
@@ -295,10 +297,23 @@ export const HistorySidebar: React.FC<Props> = ({
             )}
           </div>
           {isLoading && (
-            <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-10">
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-sm font-bold text-slate-600">{loadingText || "Loading Data..."}</p>
+            <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-10 animate-fade-in">
+              <div className="flex flex-col items-center gap-4 bg-white p-6 rounded-3xl shadow-2xl border border-slate-100">
+                <div className="relative w-16 h-16 flex items-center justify-center">
+                    <svg className="w-full h-full transform -rotate-90">
+                        <circle cx="32" cy="32" r="28" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-slate-100" />
+                        <circle cx="32" cy="32" r="28" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-blue-600 transition-all duration-300 ease-out" 
+                                strokeDasharray={2 * Math.PI * 28}
+                                strokeDashoffset={2 * Math.PI * 28 * (1 - ((progress || 0) / 100))} 
+                                strokeLinecap="round"
+                        />
+                    </svg>
+                    <span className="absolute text-xs font-black text-slate-800">{Math.round(progress || 0)}%</span>
+                </div>
+                <div className="text-center">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Processing</p>
+                    <p className="text-sm font-bold text-slate-900 max-w-[200px] truncate">{loadingText || "Please wait..."}</p>
+                </div>
               </div>
             </div>
           )}

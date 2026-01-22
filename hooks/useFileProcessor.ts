@@ -44,133 +44,184 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
 
   const processZipFiles = async (files: { blob: Blob, name: string }[]) => {
     try {
-      /* 补上计时起点 */
       setStartTime(Date.now());
       setStatus(ProcessingStatus.LOADING_PDF);
-      setDetailedStatus('Reading ZIP contents...');
+      setDetailedStatus('Scanning ZIP contents...');
+      
       const allRawPages: DebugPageData[] = [];
       const allQuestions: QuestionImage[] = [];
-      const totalFiles = files.length;
-      let filesProcessed = 0;
+      
+      // Phase 1: Pre-scan to determine total work (pages)
+      let totalWorkItems = 0;
+      const workQueue: {
+          zip: JSZip,
+          name: string,
+          analysisEntries: { key: string, pages: DebugPageData[] }[],
+          imageKeys: string[]
+      }[] = [];
 
       for (const file of files) {
-        setDetailedStatus(`Parsing ZIP (${filesProcessed + 1}/${totalFiles}): ${file.name}`);
-        filesProcessed++;
-        try {
-          const zip = new JSZip();
-          const loadedZip = await zip.loadAsync(file.blob);
-          const analysisFileKeys = Object.keys(loadedZip.files).filter(key => key.match(/(^|\/)analysis_data\.json$/i));
-          
-          if (analysisFileKeys.length === 0) {
-              const pdfKeys = Object.keys(loadedZip.files).filter(k => k.toLowerCase().endsWith('.pdf') && !loadedZip.files[k].dir);
-              if (pdfKeys.length > 0) continue;
-              continue;
-          }
-
-          const zipBaseName = file.name.replace(/\.[^/.]+$/, "");
-          setTotal(analysisFileKeys.length * 5); 
-
-          for (const analysisKey of analysisFileKeys) {
-              const dirPrefix = analysisKey.substring(0, analysisKey.lastIndexOf("analysis_data.json"));
-              const jsonText = await loadedZip.file(analysisKey)!.async('text');
-              const loadedRawPages = JSON.parse(jsonText) as DebugPageData[];
+          try {
+              const zip = new JSZip();
+              const loadedZip = await zip.loadAsync(file.blob);
               
-              setDetailedStatus(`Extracting data for ${dirPrefix || zipBaseName}...`);
-
-              for (const page of loadedRawPages) {
-                let rawFileName = page.fileName;
-                if (!rawFileName || rawFileName === "unknown_file") {
-                  if (dirPrefix) rawFileName = dirPrefix.replace(/\/$/, "");
-                  else rawFileName = zipBaseName || "unknown_file";
-                }
-                page.fileName = rawFileName;
-                
-                let foundKey: string | undefined = undefined;
-                const candidates = [
-                    `${dirPrefix}full_pages/Page_${page.pageNumber}.jpg`,
-                    `${dirPrefix}full_pages/Page_${page.pageNumber}.jpeg`,
-                    `${dirPrefix}full_pages/Page_${page.pageNumber}.png`
-                ];
-
-                for (const c of candidates) {
-                    if (loadedZip.files[c]) {
-                        foundKey = c;
-                        break;
-                    }
-                }
-
-                if (!foundKey) {
-                    foundKey = Object.keys(loadedZip.files).find(k => 
-                        k.startsWith(dirPrefix) &&
-                        !loadedZip.files[k].dir &&
-                        (k.match(new RegExp(`full_pages/.*Page_${page.pageNumber}\\.(jpg|jpeg|png)$`, 'i')))
-                    );
-                }
-
-                if (foundKey) {
-                  const base64 = await loadedZip.file(foundKey)!.async('base64');
-                  const ext = foundKey.split('.').pop()?.toLowerCase();
-                  const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-                  page.dataUrl = `data:${mime};base64,${base64}`;
-                }
-                setProgress((p: number) => p + 1);
+              const analysisFileKeys = Object.keys(loadedZip.files).filter(key => key.match(/(^|\/)analysis_data\.json$/i));
+              const analysisEntries: { key: string, pages: DebugPageData[] }[] = [];
+              
+              if (analysisFileKeys.length > 0) {
+                  for (const key of analysisFileKeys) {
+                      const jsonText = await loadedZip.file(key)!.async('text');
+                      const pages = JSON.parse(jsonText) as DebugPageData[];
+                      analysisEntries.push({ key, pages });
+                      totalWorkItems += pages.length;
+                  }
               }
-              allRawPages.push(...loadedRawPages);
-          }
-          
-          const potentialImageKeys = Object.keys(loadedZip.files).filter(k => 
-            !loadedZip.files[k].dir && /\.(jpg|jpeg|png)$/i.test(k) && !k.includes('full_pages/')
-          );
+              
+              const potentialImageKeys = Object.keys(loadedZip.files).filter(k => 
+                !loadedZip.files[k].dir && /\.(jpg|jpeg|png)$/i.test(k) && !k.includes('full_pages/')
+              );
+              
+              if (analysisEntries.length > 0 || potentialImageKeys.length > 0) {
+                   workQueue.push({ 
+                       zip: loadedZip, 
+                       name: file.name, 
+                       analysisEntries, 
+                       imageKeys: potentialImageKeys 
+                   });
+              }
 
-          if (potentialImageKeys.length > 0) {
-            setDetailedStatus(`Linking ${potentialImageKeys.length} question images...`);
-            const loadedQuestions: QuestionImage[] = [];
-            await Promise.all(potentialImageKeys.map(async (key) => {
-                const base64 = await loadedZip.file(key)!.async('base64');
-                const ext = key.split('.').pop()?.toLowerCase();
-                const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-                const pathParts = key.split('/');
-                const fileNameWithExt = pathParts[pathParts.length - 1];
-                let qId = "0";
-                let qFileName = allRawPages.length > 0 ? allRawPages[0].fileName : "unknown";
-
-                const flatMatch = fileNameWithExt.match(/^(.+)_Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
-                if (flatMatch) {
-                    qFileName = flatMatch[1];
-                    qId = flatMatch[2];
-                } else {
-                     const nestedMatch = fileNameWithExt.match(/^Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
-                     if (nestedMatch) qId = nestedMatch[1];
-                }
-                
-                loadedQuestions.push({
-                    id: qId,
-                    pageNumber: 1, 
-                    fileName: qFileName,
-                    dataUrl: `data:${mime};base64,${base64}`
-                });
-            }));
-            allQuestions.push(...loadedQuestions);
+          } catch (e) {
+              console.error(`Failed to scan ${file.name}`, e);
           }
-        } catch (e) { console.error(`Failed to parse ZIP ${file.name}:`, e); }
       }
 
+      // Initialize counters
+      setTotal(totalWorkItems > 0 ? totalWorkItems : 1); 
+      setCompletedCount(0);
+      setProgress(0);
+      
+      // Phase 2: Extraction
+      let processedCount = 0;
+
+      for (const work of workQueue) {
+          const zipBaseName = work.name.replace(/\.[^/.]+$/, "");
+          
+          // Process Pages
+          for (const entry of work.analysisEntries) {
+              const dirPrefix = entry.key.substring(0, entry.key.lastIndexOf("analysis_data.json"));
+              setDetailedStatus(`Extracting: ${dirPrefix || zipBaseName}`);
+
+              for (const page of entry.pages) {
+                  // Normalize filename
+                  let rawFileName = page.fileName;
+                  if (!rawFileName || rawFileName === "unknown_file") {
+                    if (dirPrefix) rawFileName = dirPrefix.replace(/\/$/, "");
+                    else rawFileName = zipBaseName || "unknown_file";
+                  }
+                  page.fileName = rawFileName;
+
+                  // Find full page image
+                  let foundKey: string | undefined = undefined;
+                  const candidates = [
+                      `${dirPrefix}full_pages/Page_${page.pageNumber}.jpg`,
+                      `${dirPrefix}full_pages/Page_${page.pageNumber}.jpeg`,
+                      `${dirPrefix}full_pages/Page_${page.pageNumber}.png`
+                  ];
+
+                  for (const c of candidates) {
+                      if (work.zip.files[c]) {
+                          foundKey = c;
+                          break;
+                      }
+                  }
+
+                  if (!foundKey) {
+                      // Regex fallback for loose structures
+                      foundKey = Object.keys(work.zip.files).find(k => 
+                          k.startsWith(dirPrefix) &&
+                          !work.zip.files[k].dir &&
+                          (k.match(new RegExp(`full_pages/.*Page_${page.pageNumber}\\.(jpg|jpeg|png)$`, 'i')))
+                      );
+                  }
+
+                  if (foundKey) {
+                    const base64 = await work.zip.file(foundKey)!.async('base64');
+                    const ext = foundKey.split('.').pop()?.toLowerCase();
+                    const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+                    page.dataUrl = `data:${mime};base64,${base64}`;
+                  }
+
+                  // Update Progress
+                  processedCount++;
+                  setCompletedCount(processedCount);
+                  setProgress(processedCount);
+                  
+                  // Yield to UI thread every few items to keep browser responsive
+                  if (processedCount % 5 === 0) await new Promise(r => setTimeout(r, 0));
+              }
+              allRawPages.push(...entry.pages);
+          }
+
+          // Process Pre-cut Questions (if any)
+          if (work.imageKeys.length > 0) {
+             setDetailedStatus(`Linking pre-cut images...`);
+             const loadedQuestions: QuestionImage[] = [];
+             
+             // Process in chunks to avoid blocking
+             const chunkSize = 20;
+             for (let i = 0; i < work.imageKeys.length; i += chunkSize) {
+                 const chunk = work.imageKeys.slice(i, i + chunkSize);
+                 await Promise.all(chunk.map(async (key) => {
+                    const base64 = await work.zip.file(key)!.async('base64');
+                    const ext = key.split('.').pop()?.toLowerCase();
+                    const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+                    const pathParts = key.split('/');
+                    const fileNameWithExt = pathParts[pathParts.length - 1];
+                    let qId = "0";
+                    let qFileName = allRawPages.length > 0 ? allRawPages[0].fileName : "unknown";
+
+                    // Heuristic extraction of ID and Filename
+                    const flatMatch = fileNameWithExt.match(/^(.+)_Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
+                    if (flatMatch) {
+                        qFileName = flatMatch[1];
+                        qId = flatMatch[2];
+                    } else {
+                        const nestedMatch = fileNameWithExt.match(/^Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
+                        if (nestedMatch) qId = nestedMatch[1];
+                    }
+
+                    loadedQuestions.push({
+                        id: qId,
+                        pageNumber: 1,
+                        fileName: qFileName,
+                        dataUrl: `data:${mime};base64,${base64}`
+                    });
+                 }));
+                 await new Promise(r => setTimeout(r, 0));
+             }
+             allQuestions.push(...loadedQuestions);
+          }
+      }
+
+      // Finalize State
       setRawPages(allRawPages);
       setSourcePages(allRawPages.map(({detections, ...rest}) => rest));
-      setTotal(allRawPages.length);
-      setCompletedCount(allRawPages.length);
+      
+      // Ensure 100% at end
+      setCompletedCount(totalWorkItems > 0 ? totalWorkItems : 1);
       
       const uniqueFiles = new Set(allRawPages.map(p => p.fileName));
       
       if (allQuestions.length > 0) {
-        setDetailedStatus('Syncing results...');
-        allQuestions.sort((a, b) => {
+         setDetailedStatus('Syncing results...');
+         allQuestions.sort((a, b) => {
             if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
             return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
         });
         setQuestions(allQuestions);
         setStatus(ProcessingStatus.COMPLETED);
 
+        // Save Results
         const savePromises = Array.from(uniqueFiles).map(fileName => {
            const filePages = allRawPages.filter(p => p.fileName === fileName);
            const fileQuestions = allQuestions.filter(q => q.fileName === fileName);
@@ -180,11 +231,12 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
         
       } else {
          if (allRawPages.length > 0) {
+            // Regenerate Crops if only raw pages found
             setStatus(ProcessingStatus.CROPPING);
             const totalQs = allRawPages.reduce((acc, p) => acc + p.detections.length, 0);
             setCroppingTotal(totalQs);
             setCroppingDone(0);
-            setDetailedStatus('Regenerating question images from extracted data...');
+            setDetailedStatus('Regenerating images...');
 
             const qs = await generateQuestionsFromRawPages(
                 allRawPages, 
@@ -206,7 +258,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             });
             await Promise.all(savePromises);
          } else {
-            throw new Error("No valid data found in ZIP.");
+             throw new Error("No valid data found in ZIP.");
          }
       }
       await refreshHistoryList();
@@ -255,7 +307,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
     const cachedQuestions: QuestionImage[] = [];
 
     if (useHistoryCache) {
-      setDetailedStatus("Checking history for existing files...");
+      setDetailedStatus("Checking history...");
       const historyList = await getHistoryList();
       for (const file of pdfFiles) {
         const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
@@ -283,7 +335,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
 
     try {
       if (cachedRawPages.length > 0) {
-         setDetailedStatus("Restoring cached files...");
+         setDetailedStatus("Restoring cache...");
          const uniqueCached = Array.from(new Map(cachedRawPages.map(p => [`${p.fileName}-${p.pageNumber}`, p])).values());
          setRawPages((prev: any) => [...prev, ...uniqueCached]);
          
@@ -336,7 +388,9 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
          if (signal.aborted || stopRequestedRef.current) break;
          const file = filesToProcess[fIdx];
          const fileName = file.name.replace(/\.[^/.]+$/, "");
-         setDetailedStatus(`Rendering (${fIdx + 1}/${filesToProcess.length}): ${file.name}...`);
+         
+         setDetailedStatus(`Rendering: ${file.name}`);
+         
          const loadingTask = pdfjsLib.getDocument({ data: await file.arrayBuffer() });
          const pdf = await loadingTask.promise;
          cumulativeRendered += pdf.numPages;
