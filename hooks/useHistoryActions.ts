@@ -1,3 +1,4 @@
+
 import { ProcessingStatus, DebugPageData, QuestionImage } from '../types';
 import { loadExamResult, getHistoryList, saveExamResult, updateExamQuestionsOnly, cleanupAllHistory, reSaveExamResult } from '../services/storageService';
 import { generateQuestionsFromRawPages, pMap } from '../services/generationService';
@@ -50,23 +51,23 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
   const handleBatchReprocessHistory = async (ids: string[]) => {
       setters.setIsLoadingHistory(true);
       const totalFiles = ids.length;
-      let processedFiles = 0;
+      let filesProcessedCount = 0;
+      let totalQuestionsProcessed = 0;
       let changedImagesCount = 0;
 
-      // --- USER DEFINED CONCURRENCY ---
-      // Use user-defined concurrency for the internal parallel processing items.
-      // File processing remains sequential to allow UI updates, but inner loop runs in parallel.
-      const internalItemConcurrency = concurrency;
+      // Use user-defined Batch Size for the internal parallel processing items as requested.
+      // This allows the "Batch Process Size" slider to control how many questions are processed in parallel per file.
+      const internalItemConcurrency = batchSize || 5;
 
-      console.log(`Batch Processing: User Concurrency=${concurrency}. Strategy: Sequential Files (1) x Parallel Items (${internalItemConcurrency}).`);
+      console.log(`Batch Processing: User BatchSize=${internalItemConcurrency}. Strategy: Sequential Files (1) x Parallel Items (${internalItemConcurrency}).`);
 
       try {
-         const getStatusMsg = (processed: number) => {
-             const percent = totalFiles > 0 ? Math.round((processed / totalFiles) * 100) : 0;
-             return `Batch Reprocessing: ${percent}% (${processed}/${totalFiles}) · Threads: ${internalItemConcurrency}`;
+         const updateStatus = () => {
+             const percent = totalFiles > 0 ? Math.round((filesProcessedCount / totalFiles) * 100) : 0;
+             setDetailedStatus(`Batch Reprocessing: Completed ${totalQuestionsProcessed} items... (File ${filesProcessedCount + 1}/${totalFiles}) · Threads: ${internalItemConcurrency}`);
          };
 
-         setDetailedStatus(getStatusMsg(0));
+         updateStatus();
 
          await pMap(ids, async (id) => {
             // 1. Load record
@@ -74,13 +75,20 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
             if (!record) return;
 
             // 2. Recrop with current settings
-            // We use a non-cancellable controller for atomic operations inside the parallel worker
-            // We pass 'internalItemConcurrency' to use full CPU power for this single file.
+            // Pass 'internalItemConcurrency' to use full CPU power for this single file.
+            // Add onResult callback to update global item progress.
             const newQuestions = await generateQuestionsFromRawPages(
                record.rawPages,
                cropSettings,
                new AbortController().signal,
-               undefined, // No UI callback updates for batch background job
+               {
+                 onResult: () => {
+                   totalQuestionsProcessed++;
+                   // Debounce status updates slightly to prevent react churn if super fast
+                   // But for now direct update is fine for visual feedback
+                   updateStatus();
+                 }
+               }, 
                internalItemConcurrency
             );
 
@@ -111,15 +119,15 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
             // 4. Save Updates
             await reSaveExamResult(record.name, record.rawPages, newQuestions);
             
-            processedFiles++;
-            setDetailedStatus(getStatusMsg(processedFiles));
+            filesProcessedCount++;
+            updateStatus();
             
             // Critical: Yield to event loop to allow UI render between items in the concurrency pool.
             await new Promise(resolve => setTimeout(resolve, 0));
 
          }, 1);
 
-         addNotification(null, "success", `Reprocessed ${processedFiles} files. ${changedImagesCount} images changed.`);
+         addNotification(null, "success", `Reprocessed ${filesProcessedCount} files. ${changedImagesCount} images changed.`);
          await refreshHistoryList(); // Refreshes metadata if any counts changed
          
       } catch (e: any) {

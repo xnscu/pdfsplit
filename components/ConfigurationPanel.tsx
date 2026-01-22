@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { CropSettings } from '../services/pdfService';
 
@@ -69,8 +70,9 @@ export const ConfigurationPanel: React.FC<Props> = ({
                   </div>
                 </div>
                 <div className="pt-2 px-1">
-                  <input type="range" min="1" max="32" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} className="w-full accent-blue-600 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
+                  <input type="range" min="1" max="128" value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} className="w-full accent-blue-600 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
                 </div>
+                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">Controls parallel image processing. Higher values use more CPU.</p>
               </div>
 
               {batchSize !== undefined && setBatchSize && (
@@ -82,7 +84,7 @@ export const ConfigurationPanel: React.FC<Props> = ({
                   <div className="pt-2 px-1">
                     <input type="range" min="5" max="100" step="5" value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))} className="w-full accent-emerald-500 h-2 bg-slate-100 rounded-lg cursor-pointer appearance-none" />
                   </div>
-                  <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">Higher = Faster, but uses more RAM.</p>
+                  <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">Higher = Faster I/O, but uses more RAM.</p>
                 </div>
               )}
 
