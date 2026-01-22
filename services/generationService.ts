@@ -72,9 +72,9 @@ export const createLogicalQuestions = (pages: DebugPageData[]): LogicalQuestion[
 class WorkerPool {
     private workers: Worker[] = [];
     private queue: { 
-        task: LogicalQuestion; 
-        settings: CropSettings; 
-        resolve: (val: QuestionImage | null) => void; 
+        type: string;
+        payload: any;
+        resolve: (val: any) => void; 
         reject: (err: any) => void; 
     }[] = [];
     private activeCount = 0;
@@ -111,18 +111,15 @@ class WorkerPool {
         return null;
     }
 
-    exec(task: LogicalQuestion, settings: CropSettings): Promise<QuestionImage | null> {
+    exec(type: 'PROCESS_QUESTION' | 'GENERATE_DEBUG', payload: any): Promise<any> {
         return new Promise((resolve, reject) => {
-            this.queue.push({ task, settings, resolve, reject });
+            this.queue.push({ type, payload, resolve, reject });
             this.processQueue();
         });
     }
 
     private processQueue() {
         if (this.queue.length === 0) return;
-
-        // Clean up excess workers if concurrency dropped significantly? 
-        // For now, we just keep them alive for reuse.
 
         while (this.activeCount < this._concurrency && this.queue.length > 0) {
             const worker = this.getFreeWorker();
@@ -144,7 +141,6 @@ class WorkerPool {
                         if (e.data.success) {
                             job.resolve(e.data.result);
                         } else {
-                            // Non-fatal, just return null for this question
                             console.error("Worker processing error:", e.data.error);
                             job.resolve(null);
                         }
@@ -155,14 +151,13 @@ class WorkerPool {
                 worker.addEventListener('message', handler);
                 worker.postMessage({ 
                     id: msgId, 
-                    type: 'PROCESS_QUESTION', 
-                    payload: { task: job.task, settings: job.settings } 
+                    type: job.type, 
+                    payload: job.payload 
                 });
             }
         }
     }
 
-    // Wait until queue is empty
     onIdle(): Promise<void> {
         if (this.queue.length === 0 && this.activeCount === 0) return Promise.resolve();
         return new Promise((resolve) => {
@@ -177,8 +172,6 @@ class WorkerPool {
     
     clear() {
         this.queue = [];
-        // Cannot easily stop running workers without terminating them, 
-        // but we can clear pending.
     }
 }
 
@@ -186,26 +179,14 @@ class WorkerPool {
 export const globalWorkerPool = new WorkerPool();
 
 // Backwards compatibility wrapper for CropQueue
-// We now just wrap the globalWorkerPool
 export class CropQueue {
   set concurrency(val: number) {
       globalWorkerPool.concurrency = val;
   }
   
   get concurrency() { return globalWorkerPool.concurrency; }
-
-  // Enqueue assumes a void function wrapper in legacy code, 
-  // but we can't easily extract the args from the closure.
-  // The hooks/useFileProcessor needs to be updated to use exec directly
-  // OR we keep this wrapper if we modify useFileProcessor to pass data.
-  // Actually, useFileProcessor calls `enqueue(async () => ... processLogicalQuestion ...)`.
-  // To make this work transparently, we need to export `processLogicalQuestion` that 
-  // internally calls the worker pool.
   
   enqueue(task: () => Promise<void>) {
-      // Legacy support: We execute the task. 
-      // BUT if the task calls processLogicalQuestion, it will block main thread if we don't change processLogicalQuestion.
-      // See below.
       task(); 
   }
 
@@ -223,7 +204,20 @@ export const processLogicalQuestion = async (
   task: LogicalQuestion, 
   settings: CropSettings
 ): Promise<QuestionImage | null> => {
-    return globalWorkerPool.exec(task, settings);
+    return globalWorkerPool.exec('PROCESS_QUESTION', { task, settings });
+};
+
+/**
+ * Generate Debug Previews (4 stages) - NOW USES WORKER
+ */
+export const generateDebugPreviews = async (
+    sourceDataUrl: string,
+    boxes: [number, number, number, number][],
+    originalWidth: number,
+    originalHeight: number,
+    settings: CropSettings
+): Promise<{ stage1: string, stage2: string, stage3: string, stage4: string } | null> => {
+    return globalWorkerPool.exec('GENERATE_DEBUG', { sourceDataUrl, boxes, originalWidth, originalHeight, settings });
 };
 
 // Legacy helper used by History loading
@@ -233,14 +227,6 @@ export const pMap = async <T, R>(
   concurrency: number,
   signal?: AbortSignal
 ): Promise<R[]> => {
-    // Just map and promise all, because the concurrency is handled inside `processLogicalQuestion` (via WorkerPool)
-    // if `mapper` calls `processLogicalQuestion`.
-    // If mapper does something else, we might need real pMap.
-    // For `handleBatchReprocessHistory`, it calls processLogicalQuestion.
-    
-    // However, to be safe and ensure we don't flood the pool with millions of pending promises,
-    // we use a simple semaphore loop.
-    
     const results: R[] = [];
     const executing: Promise<void>[] = [];
     
@@ -251,17 +237,8 @@ export const pMap = async <T, R>(
         });
         executing.push(p);
         
-        // Cleaning up finished promises
-        const clean = () => {
-             // Removing resolved is tricky with basic array, simpler to just limit initial dispatch
-        };
-        
         if (executing.length >= concurrency) {
             await Promise.race(executing);
-            // In a real implementation we'd remove the finished one. 
-            // But since our mapper relies on WorkerPool which has internal queue, 
-            // we can actually just fire all if not too many, OR use a basic chunking.
-            // Let's use basic chunking for safety.
         }
     }
     
@@ -291,7 +268,6 @@ export const generateQuestionsFromRawPages = async (
 
   const results: QuestionImage[] = [];
 
-  // We push all to pool. Pool handles concurrency.
   const promises = logicalQuestions.map(async (task) => {
      if (signal.aborted) return null;
      

@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { DetectedQuestion, QuestionImage, DebugPageData } from '../../types';
-import { generateDebugPreviews, CropSettings } from '../../services/pdfService';
+import { generateDebugPreviews } from '../../services/generationService';
+import { CropSettings } from '../../services/pdfService';
 
 interface Props {
   width: number;
