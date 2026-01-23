@@ -468,14 +468,15 @@ export const analysisPrompt = `# 角色
       "level3": "String (可空，例如：1. 空间几何体)"
     }
   ],
-  "question_md":"String (题目文本，使用Markdown格式，数学公式使用LaTeX格式。几何图形、异形表格等无法转换的部分忽略即可)",
-  "solution_md": "String (标准解答过程，使用Markdown格式，数学公式使用LaTeX格式)",
-  "analysis_md": "String (考点溯源与思路分析，使用Markdown)",
-  "breakthrough_md":  "String (可空，难题的突破口，使用Markdown)",
-  "pitfalls_md": "String (可空，避坑指南，指出易错点，使用Markdown)"
+  question_md: { type: Type.STRING, description: "题目文本，几何图形、异形表格等无法转换的部分忽略即可" },
+  solution_md: { type: Type.STRING, description: "题目答案，考生在考场上写的答案。注意选择题和填空题只填答案本身，不要和题目解析混淆了。" },
+  analysis_md: { type: Type.STRING, description: "题目解析" },
+  breakthrough_md: { type: Type.STRING, description: "难题的突破口：选填，由必要给出的才填，不必勉强" },
+  pitfalls_md: { type: Type.STRING, description: "易错点：选填，由必要给出的才填，不必勉强" }
 }
 \`\`\`
 
 # 其他说明
-\`tags\` 数组中的内容必须严格完全匹配【知识点目录】中的文本，不要自己创造知识点名称。如果题目考察了多个知识点，请在数组中列出所有。如果题目存在【知识点目录】之外的知识点，请打上标签“超纲知识”，此时level0是“超纲知识”，level1是超纲知识点（由你来动态决定）。
+- \`tags\` 数组中的内容必须严格完全匹配【知识点目录】中的文本，不要自己创造知识点名称。如果题目考察了多个知识点，请在数组中列出所有。如果题目存在【知识点目录】之外的知识点，请打上标签“超纲知识”，此时level0是“超纲知识”，level1是超纲知识点（由你来动态决定）。
+- 输出JSON的XXX_md字段表示markdown文本，且数学公式使用LaTex。
 `;

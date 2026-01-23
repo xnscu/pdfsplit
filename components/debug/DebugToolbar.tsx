@@ -118,6 +118,43 @@ export const DebugToolbar: React.FC<Props> = ({
             </button>
         </div>
 
+        {/* 1. Settings */}
+        {onRefine && (
+           <button
+             onClick={onRefine}
+             className="bg-slate-800 text-slate-300 border border-slate-700 px-3 py-2 rounded-xl font-bold text-xs hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2"
+             title="Adjust Crop Settings"
+           >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
+              Settings
+           </button>
+        )}
+
+        {/* 2. Re-Scan (Layout) - Was missing */}
+        {onReanalyze && (
+           <button
+             onClick={onReanalyze}
+             className="bg-orange-600 text-white px-3 py-2 rounded-xl font-bold text-xs hover:bg-orange-500 transition-colors flex items-center gap-2 shadow-lg shadow-orange-900/20"
+             title="Re-run AI Layout Detection (Consumes Quota)"
+           >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+              Re-Scan
+           </button>
+        )}
+
+        {/* 3. Recrop (Local) */}
+        {onProcess && (
+           <button
+             onClick={onProcess}
+             className="bg-indigo-600 text-white px-3 py-2 rounded-xl font-bold text-xs hover:bg-indigo-500 transition-colors flex items-center gap-2 shadow-lg shadow-indigo-900/20"
+             title="Recrop images using current boxes and settings"
+           >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              Recrop
+           </button>
+        )}
+
+        {/* 4. AI Solve (Content) */}
         {onAnalyze && (
            <button
              onClick={onAnalyze}
@@ -125,7 +162,7 @@ export const DebugToolbar: React.FC<Props> = ({
              className={`px-3 py-2 rounded-xl font-bold text-xs transition-colors flex items-center gap-2 shadow-lg min-w-[100px] justify-center ${
                  isAnalyzing ? 'bg-purple-900/50 text-purple-200 cursor-wait' : 'bg-purple-600 text-white hover:bg-purple-500 shadow-purple-900/20'
              }`}
-             title="Analyze all questions in this file with AI"
+             title="Analyze question content (Solution, Tags, Difficulty)"
            >
               {isAnalyzing ? (
                   <>
@@ -134,34 +171,14 @@ export const DebugToolbar: React.FC<Props> = ({
                   </>
               ) : (
                   <>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                    Analyze AI
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                    AI Solve
                   </>
               )}
            </button>
         )}
-
-        {onProcess && (
-           <button
-             onClick={onProcess}
-             className="bg-indigo-600 text-white px-3 py-2 rounded-xl font-bold text-xs hover:bg-indigo-500 transition-colors flex items-center gap-2 shadow-lg shadow-indigo-900/20"
-             title="Recrop images with current settings"
-           >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
-              Process
-           </button>
-        )}
-
-        {onRefine && (
-           <button
-             onClick={onRefine}
-             className="bg-slate-800 text-slate-300 border border-slate-700 px-3 py-2 rounded-xl font-bold text-xs hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2"
-           >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
-              Settings
-           </button>
-        )}
         
+        {/* 5. ZIP */}
         {onDownloadZip && (
            <button
              onClick={onDownloadZip}
