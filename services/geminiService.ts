@@ -3,7 +3,11 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { DetectedQuestion, QuestionAnalysis } from "../types";
 import { PROMPTS, SCHEMAS, MODEL_IDS } from "../shared/ai-config.js";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getAiClient = (apiKey?: string) => {
+  const key = apiKey || process.env.API_KEY;
+  if (!key) throw new Error("No API Key available");
+  return new GoogleGenAI({ apiKey: key });
+};
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -13,9 +17,11 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 export const detectQuestionsOnPage = async (
   image: string, 
   modelId: string = MODEL_IDS.PRO,
-  maxRetries: number = 5
+  maxRetries: number = 5,
+  apiKey?: string
 ): Promise<DetectedQuestion[]> => {
   let attempt = 0;
+  const ai = getAiClient(apiKey);
   
   while (attempt < maxRetries) {
     try {
@@ -76,9 +82,11 @@ export const detectQuestionsOnPage = async (
 export const analyzeQuestion = async (
   image: string,
   modelId: string = MODEL_IDS.FLASH,
-  maxRetries: number = 3
+  maxRetries: number = 3,
+  apiKey?: string
 ): Promise<QuestionAnalysis> => {
   let attempt = 0;
+  const ai = getAiClient(apiKey);
   
   while (attempt < maxRetries) {
     try {

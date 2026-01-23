@@ -13,7 +13,7 @@ interface AnalysisProps {
 }
 
 export const useAnalysisProcessor = ({ state, setters, refs, actions }: AnalysisProps) => {
-  const { analysisConcurrency, questions, selectedModel } = state;
+  const { analysisConcurrency, questions, selectedModel, apiKey } = state;
   const {
     setAnalyzingTotal, setAnalyzingDone,
     setQuestions
@@ -21,28 +21,34 @@ export const useAnalysisProcessor = ({ state, setters, refs, actions }: Analysis
   const { stopRequestedRef } = refs;
   const { addNotification } = actions;
 
-  // Revised Handler with local tracking for DB save
   const handleStartAnalysisRobust = async (fileName: string) => {
       const targetQuestions = questions.filter((q: QuestionImage) => q.fileName === fileName);
       if (targetQuestions.length === 0) {
-          addNotification(fileName, 'error', "No questions found to analyze.");
+          addNotification(fileName, 'error', "没有找到需要解析的题目。");
           return;
       }
 
+      // Reset progress
       setAnalyzingTotal(targetQuestions.length);
       setAnalyzingDone(0);
       
       const localMap = new Map<string, QuestionImage>();
       targetQuestions.forEach(q => localMap.set(q.id, q));
 
+      // Queue for processing (contains QuestionImage)
       const queue = [...targetQuestions];
       
+      // Helper to process a single item
       const processItem = async (q: QuestionImage) => {
         if (stopRequestedRef.current) return;
+        
         try {
-            const analysis = await analyzeQuestion(q.dataUrl, selectedModel || MODEL_IDS.FLASH);
+            // Check if already analyzed to avoid double work if re-added
+            // (Though in this logic we only re-add on failure)
             
-            // Update Local Map for DB Save
+            const analysis = await analyzeQuestion(q.dataUrl, selectedModel || MODEL_IDS.FLASH, undefined, apiKey);
+            
+            // Success! Update Local Map
             const updatedQ = { ...q, analysis };
             localMap.set(q.id, updatedQ);
 
@@ -58,18 +64,25 @@ export const useAnalysisProcessor = ({ state, setters, refs, actions }: Analysis
 
             // 2. Real-time DB Save (Persistence)
             const currentFileQuestions = Array.from(localMap.values());
-            // Sort questions to maintain order
             currentFileQuestions.sort((a, b) => (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0));
             
-            await updateQuestionsForFile(fileName, currentFileQuestions);
-
-        } catch (e) {
-            console.error(e);
-        } finally {
+            // We don't await this to avoid blocking the worker thread too long
+            updateQuestionsForFile(fileName, currentFileQuestions).catch(e => console.warn("Auto-save failed", e));
+            
+            // Increment Success Counter
             setAnalyzingDone((prev: number) => prev + 1);
+
+        } catch (e: any) {
+            console.warn(`Analysis failed for Q${q.id}, retrying...`, e.message);
+            // On failure: Push back to queue with a small delay to avoid hammering
+            if (!stopRequestedRef.current) {
+                await new Promise(resolve => setTimeout(resolve, 2000)); // 2s backoff
+                queue.push(q);
+            }
         }
     };
 
+    // Worker Loop
     const workers = Array(analysisConcurrency).fill(null).map(async () => {
         while (queue.length > 0) {
             if (stopRequestedRef.current) break;
@@ -80,7 +93,13 @@ export const useAnalysisProcessor = ({ state, setters, refs, actions }: Analysis
 
     await Promise.all(workers);
     
-    addNotification(fileName, 'success', "Analysis complete and saved.");
+    if (!stopRequestedRef.current) {
+        addNotification(fileName, 'success', "AI 解析全部完成！");
+    } else {
+        addNotification(fileName, 'error', "解析已停止。");
+    }
+    
+    // Reset counters after done (or stopped)
     setAnalyzingTotal(0);
     setAnalyzingDone(0);
   };

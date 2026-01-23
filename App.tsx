@@ -32,14 +32,7 @@ const App: React.FC = () => {
   const { processZipFiles, handleFileChange } = useFileProcessor({ state, setters, refs, actions, refreshHistoryList });
   const { handleRecropFile, executeReanalysis, handleUpdateDetections } = useRefinementActions({ state, setters, actions, refreshHistoryList });
   
-  // Analysis Hook - Injecting reSaveExamResult capability via closure/direct import usage inside the hook would be cleaner, 
-  // but for now, we will wrap the save logic inside the hook if possible, OR pass a saver callback.
-  // The `useAnalysisProcessor` implemented previously assumes imports. 
-  // Let's modify the usage to ensure it works.
-  // Actually, I'll pass a saver function to `useAnalysisProcessor` context if needed, but it imports services directly.
-  
-  // Modify `useAnalysisProcessor` implementation in the hook file to import `reSaveExamResult` directly.
-  // Here we just initialize it.
+  // Analysis Hook
   const { handleStartAnalysis } = useAnalysisProcessor({ state, setters, refs, actions });
 
   // 3. Local UI State
@@ -139,9 +132,6 @@ const App: React.FC = () => {
   // Wrap analysis start to include saving logic that relies on `reSaveExamResult`
   const handleAnalyzeWrapper = async (fileName: string) => {
       // The hook handles the process. We just trigger it.
-      // But we need to ensure the hook imports `reSaveExamResult` OR we do the saving here.
-      // `useAnalysisProcessor` will update state.
-      // Saving is better done inside the hook where it has the fresh data loop.
       await handleStartAnalysis(fileName);
       await refreshHistoryList();
   };
@@ -352,7 +342,7 @@ const App: React.FC = () => {
                 onDownloadZip={generateZip}
                 onRefineFile={(fileName) => setters.setRefiningFile(fileName)}
                 onProcessFile={(fileName) => handleRecropFile(fileName, state.cropSettings)}
-                onAnalyzeFile={handleAnalyzeWrapper} // NEW
+                onAnalyzeFile={handleAnalyzeWrapper}
                 analyzingTotal={state.analyzingTotal}
                 analyzingDone={state.analyzingDone}
                 isZipping={zippingFile !== null}
@@ -434,14 +424,16 @@ const App: React.FC = () => {
           setSelectedModel={setters.setSelectedModel} 
           concurrency={state.concurrency} 
           setConcurrency={setters.setConcurrency} 
-          analysisConcurrency={state.analysisConcurrency} // NEW
-          setAnalysisConcurrency={setters.setAnalysisConcurrency} // NEW
+          analysisConcurrency={state.analysisConcurrency}
+          setAnalysisConcurrency={setters.setAnalysisConcurrency}
           cropSettings={state.cropSettings} 
           setCropSettings={setters.setCropSettings} 
           useHistoryCache={state.useHistoryCache} 
           setUseHistoryCache={setters.setUseHistoryCache} 
           batchSize={state.batchSize} 
           setBatchSize={setters.setBatchSize} 
+          apiKey={state.apiKey}
+          setApiKey={setters.setApiKey}
       />
       {state.refiningFile && (
         <RefinementModal fileName={state.refiningFile} initialSettings={state.cropSettings} status={state.status} onClose={() => setters.setRefiningFile(null)} onApply={(fileName, settings) => { handleRecropFile(fileName, settings); setters.setCropSettings(settings); }} />

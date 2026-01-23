@@ -19,7 +19,7 @@ interface ProcessorProps {
 
 export const useFileProcessor = ({ state, setters, refs, actions, refreshHistoryList }: ProcessorProps) => {
   const {
-    cropSettings, concurrency, selectedModel, useHistoryCache, batchSize
+    cropSettings, concurrency, selectedModel, useHistoryCache, batchSize, apiKey
   } = state;
 
   const {
@@ -432,7 +432,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                  if (stopRequestedRef.current || signal.aborted) break;
                  const task = (async () => {
                      try {
-                         const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel);
+                         const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel, undefined, apiKey);
                          const resultPage: DebugPageData = {
                              pageNumber: pageData.pageNumber, fileName: pageData.fileName,
                              dataUrl: pageData.dataUrl, width: pageData.width,

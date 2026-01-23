@@ -86,11 +86,11 @@ export const SCHEMAS = {
           required: ["level0", "level1"]
         }
       },
-      question_md: { type: Type.STRING, description: "题目文本，几何图形、异形表格等无法转换的部分忽略即可" },
-      solution_md: { type: Type.STRING, description: "题目答案，考生在考场上写的答案。注意选择题和填空题只填答案本身，不要和题目解析混淆了。" },
-      analysis_md: { type: Type.STRING, description: "题目解析" },
-      breakthrough_md: { type: Type.STRING, description: "难题的突破口：选填，由必要给出的才填，不必勉强" },
-      pitfalls_md: { type: Type.STRING, description: "易错点：选填，由必要给出的才填，不必勉强" }
+      question_md: { type: Type.STRING, description: "题目文本，必须使用Markdown格式。数学公式必须使用LaTeX格式并用 $ 或 $$ 包裹。" },
+      solution_md: { type: Type.STRING, description: "题目答案。1. 选填题仅给出答案即可。 2. 解答题必须给出完整的、分步的、包含评分标准的标准解答过程（写出'解：'）。所有数学公式必须使用LaTeX格式并用 $ 或 $$ 包裹。" },
+      analysis_md: { type: Type.STRING, description: "思路分析。所有数学公式必须使用LaTeX格式并用 $ 或 $$ 包裹。" },
+      breakthrough_md: { type: Type.STRING, description: "突破口（选填）。所有数学公式必须使用LaTeX格式并用 $ 或 $$ 包裹。" },
+      pitfalls_md: { type: Type.STRING, description: "易错点（选填）。所有数学公式必须使用LaTeX格式并用 $ 或 $$ 包裹。" }
     },
     required: ["difficulty", "question_type", "tags", "question_md", "solution_md", "analysis_md"]
   }

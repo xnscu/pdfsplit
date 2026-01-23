@@ -100,7 +100,7 @@ const VirtualRow = ({ index, style, data }: ListChildComponentProps) => {
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Q{q.id}</span>
                     {q.analysis && (
-                        <span className="text-[9px] font-bold text-white bg-purple-500 px-1.5 py-0.5 rounded shadow-sm">AI</span>
+                        <span className="text-[9px] font-bold text-white bg-slate-800 px-1.5 py-0.5 rounded shadow-sm">AI</span>
                     )}
                   </div>
                   {q.originalDataUrl && <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>}
@@ -188,7 +188,6 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
 
   // ZIP Generation Logic
   const generateZip = async (targetFileName?: string) => {
-    // (ZIP logic remains same as original)
     if (questions.length === 0) return;
     const fileNames = targetFileName ? [targetFileName] : Object.keys(groupedQuestions);
     if (fileNames.length === 0) return;
@@ -440,7 +439,7 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
                <div className="flex flex-col">
                  <h2 className="text-3xl font-black tracking-tight flex items-center gap-3">
                     Question {selectedImage.id}
-                    {selectedImage.analysis && <span className="text-xs bg-purple-600 px-2 py-1 rounded text-white font-bold">AI Analyzed</span>}
+                    {selectedImage.analysis && <span className="text-xs bg-slate-800 border border-slate-600 px-2 py-1 rounded text-slate-200 font-bold">已解析</span>}
                  </h2>
                  <p className="text-xs font-bold text-white/40 uppercase tracking-[0.2em]">{selectedImage.fileName}</p>
                </div>
@@ -450,7 +449,7 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
                         onClick={() => setShowAnalysis(!showAnalysis)}
                         className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors ${showAnalysis ? 'bg-white text-slate-900' : 'bg-white/10 text-white hover:bg-white/20'}`}
                      >
-                        {showAnalysis ? 'Hide Analysis' : 'Show Analysis'}
+                        {showAnalysis ? '隐藏解析' : '显示解析'}
                      </button>
                  )}
                  <button 
@@ -497,45 +496,64 @@ export const QuestionGrid: React.FC<Props> = ({ questions, rawPages, onDebug, on
               {/* Analysis Side */}
               {showAnalysis && selectedImage.analysis && (
                  <div className="w-1/2 h-full overflow-y-auto bg-white p-8 custom-scrollbar">
-                    <div className="space-y-6">
-                        <div className="flex flex-wrap gap-2 mb-4">
-                            <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-lg text-xs font-bold border border-blue-100">Difficulty: {selectedImage.analysis.difficulty}/5</span>
-                            <span className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-lg text-xs font-bold border border-emerald-100">{selectedImage.analysis.question_type}</span>
+                    <div className="space-y-8">
+                        {/* Tags */}
+                        <div>
+                             <h3 className="text-base font-bold text-slate-900 mb-2 border-b-2 border-slate-900 pb-1 inline-block">知识点标签</h3>
+                             <div className="flex flex-wrap gap-2 mt-2">
+                                <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded text-xs font-bold border border-slate-200">
+                                   难度: {selectedImage.analysis.difficulty}/5
+                                </span>
+                                <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded text-xs font-bold border border-slate-200">
+                                   {selectedImage.analysis.question_type}
+                                </span>
+                             </div>
+                             <div className="mt-3 space-y-1">
+                                {selectedImage.analysis.tags.map((tag, idx) => (
+                                    <div key={idx} className="text-sm text-slate-700 font-medium">
+                                        <span className="text-slate-900 font-bold">● {tag.level0}</span> 
+                                        {tag.level1 && <span className="text-slate-500"> › {tag.level1}</span>}
+                                        {tag.level2 && <span className="text-slate-500"> › {tag.level2}</span>}
+                                    </div>
+                                ))}
+                             </div>
                         </div>
-                        
-                        {selectedImage.analysis.tags.map((tag, idx) => (
-                            <div key={idx} className="text-xs text-slate-500 mb-2">
-                                <span className="font-bold text-slate-700">{tag.level0}</span> 
-                                {tag.level1 && <span> › {tag.level1}</span>}
-                                {tag.level2 && <span> › {tag.level2}</span>}
-                            </div>
-                        ))}
 
-                        <div className="prose prose-sm prose-slate max-w-none">
-                            <h3 className="text-lg font-black text-slate-900 border-b pb-2 mb-4">Solution</h3>
+                        {/* Standard Solution */}
+                        <div className="prose prose-base max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-800">
+                            <h3 className="text-base font-bold text-slate-900 mb-2 border-b-2 border-slate-900 pb-1 inline-block">标准解答</h3>
                             <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
                                 {selectedImage.analysis.solution_md}
                             </ReactMarkdown>
-
-                            <h3 className="text-lg font-black text-slate-900 border-b pb-2 mb-4 mt-8">Analysis</h3>
+                        </div>
+                        
+                        {/* Key Analysis */}
+                        <div className="prose prose-base max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-800">
+                            <h3 className="text-base font-bold text-slate-900 mb-2 border-b-2 border-slate-900 pb-1 inline-block">思路分析</h3>
                             <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
                                 {selectedImage.analysis.analysis_md}
                             </ReactMarkdown>
+                        </div>
 
-                            {selectedImage.analysis.breakthrough_md && (
-                              <>
-                                <h3 className="text-lg font-black text-slate-900 border-b pb-2 mb-4 mt-8 text-indigo-600">Breakthrough</h3>
+                        {/* Breakthrough */}
+                        {selectedImage.analysis.breakthrough_md && (
+                          <div className="prose prose-base max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-800">
+                                <h3 className="text-base font-bold text-slate-900 mb-2 border-b-2 border-slate-900 pb-1 inline-block">突破口</h3>
                                 <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
                                     {selectedImage.analysis.breakthrough_md}
                                 </ReactMarkdown>
-                              </>
-                            )}
+                          </div>
+                        )}
 
-                            <h3 className="text-lg font-black text-slate-900 border-b pb-2 mb-4 mt-8 text-red-600">Pitfalls</h3>
-                             <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                {selectedImage.analysis.pitfalls_md}
-                            </ReactMarkdown>
-                        </div>
+                        {/* Pitfalls */}
+                        {selectedImage.analysis.pitfalls_md && (
+                            <div className="prose prose-base max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-800">
+                                <h3 className="text-base font-bold text-slate-900 mb-2 border-b-2 border-slate-900 pb-1 inline-block">易错点</h3>
+                                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                    {selectedImage.analysis.pitfalls_md}
+                                </ReactMarkdown>
+                            </div>
+                        )}
                     </div>
                  </div>
               )}

@@ -17,6 +17,8 @@ interface Props {
   setUseHistoryCache: (b: boolean) => void;
   batchSize?: number;
   setBatchSize?: (b: number) => void;
+  apiKey?: string;
+  setApiKey?: (key: string) => void;
 }
 
 export const ConfigurationPanel: React.FC<Props> = ({
@@ -26,7 +28,8 @@ export const ConfigurationPanel: React.FC<Props> = ({
   analysisConcurrency = 5, setAnalysisConcurrency,
   cropSettings, setCropSettings,
   useHistoryCache, setUseHistoryCache,
-  batchSize, setBatchSize
+  batchSize, setBatchSize,
+  apiKey, setApiKey
 }) => {
   if (!isOpen) return null;
 
@@ -53,7 +56,25 @@ export const ConfigurationPanel: React.FC<Props> = ({
           </div>
 
           <div className="space-y-8">
-             <div className="space-y-4">
+             {/* API Key Section */}
+             {setApiKey && (
+               <div className="space-y-4 pt-2">
+                  <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">Custom API Key</h3>
+                  <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-500">Gemini API Key (Optional)</label>
+                      <input 
+                          type="password"
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          placeholder="Leave empty to use default system key"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-300 placeholder:font-normal"
+                      />
+                      <p className="text-[10px] text-slate-400 font-medium">Entering a key here will override the built-in default key for all AI operations.</p>
+                  </div>
+               </div>
+             )}
+
+             <div className="space-y-4 pt-6 border-t border-slate-100">
                 <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">AI Model</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                    {[

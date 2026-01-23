@@ -13,7 +13,7 @@ interface RefinementProps {
 }
 
 export const useRefinementActions = ({ state, setters, actions, refreshHistoryList }: RefinementProps) => {
-  const { rawPages, concurrency, selectedModel, cropSettings, batchSize } = state;
+  const { rawPages, concurrency, selectedModel, cropSettings, batchSize, apiKey } = state;
   const { setQuestions, setRawPages, setProcessingFiles, setCroppingDone } = setters;
   const { addNotification } = actions;
 
@@ -89,7 +89,7 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
             if (signal.aborted) break;
             
             await Promise.all(chunk.map(async (page: DebugPageData) => {
-                const detections = await detectQuestionsOnPage(page.dataUrl, selectedModel);
+                const detections = await detectQuestionsOnPage(page.dataUrl, selectedModel, undefined, apiKey);
                 const newPage = { ...page, detections };
                 newResults.push(newPage);
             }));

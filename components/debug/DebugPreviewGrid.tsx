@@ -41,12 +41,12 @@ export const DebugPreviewGrid: React.FC<Props> = ({ questions, onQuestionClick }
             {sortedQuestions.map((q) => (
               <div 
                 key={q.id} 
-                className="w-full mb-8 border-b border-slate-50 pb-8 last:border-0"
+                className="w-full mb-8 border-b border-slate-100 pb-8 last:border-0"
               >
                   {/* Image only, no metadata overlay on image to keep it clean */}
                   <div 
                     onClick={() => onQuestionClick(q)}
-                    className="cursor-pointer group relative rounded-lg overflow-hidden border border-transparent hover:border-blue-100 transition-all"
+                    className="cursor-pointer group relative rounded-lg overflow-hidden border border-transparent hover:border-slate-200 transition-all"
                     title={`Click to debug Question ${q.id}`}
                   >
                       <img 
@@ -55,92 +55,70 @@ export const DebugPreviewGrid: React.FC<Props> = ({ questions, onQuestionClick }
                           className="max-w-full h-auto object-contain block select-none" 
                           loading="lazy"
                       />
-                      {/* Subtle invisible overlay to indicate interactability without changing visual style */}
-                      <div className="absolute inset-0 bg-blue-600/0 group-hover:bg-blue-600/5 transition-colors pointer-events-none" />
                   </div>
 
                   {/* Analysis Block */}
                   {q.analysis && (
                       <div className="mt-4 px-2 md:px-4 animate-[fade-in_0.3s_ease-out]">
-                         <div className="bg-slate-50/60 rounded-2xl p-6 border border-slate-100/80 shadow-sm backdrop-blur-sm">
+                         <div className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm">
                             {/* Metadata Tags */}
-                            <div className="flex flex-wrap items-center gap-2 mb-4 border-b border-slate-200/50 pb-3">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 mr-2 flex items-center gap-1">
-                                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                                   AI Analysis
+                            <div className="flex flex-wrap items-center gap-2 mb-4 pb-3 border-b border-slate-100">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 mr-2 flex items-center gap-1">
+                                   AI 解析
                                 </span>
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                                    q.analysis.difficulty >= 4 ? 'bg-red-50 text-red-600 border-red-100' :
-                                    q.analysis.difficulty >= 3 ? 'bg-orange-50 text-orange-600 border-orange-100' :
-                                    'bg-green-50 text-green-600 border-green-100'
-                                }`}>
-                                   Difficulty: {q.analysis.difficulty}/5
+                                <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded text-xs font-bold border border-slate-200">
+                                   难度: {q.analysis.difficulty}/5
                                 </span>
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-100">
+                                <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded text-xs font-bold border border-slate-200">
                                    {q.analysis.question_type}
                                 </span>
                             </div>
 
-                            {/* Markdown Content */}
-                            <div className="grid grid-cols-1 gap-6 text-sm text-slate-700 leading-relaxed">
-                                
-                                {/* Solution */}
+                            <div className="space-y-6">
+                                {/* Tags Breadcrumbs */}
                                 <div>
-                                    <h4 className="text-xs font-black text-slate-900 mb-2 flex items-center gap-2">
-                                        <span className="w-1.5 h-1.5 bg-slate-900 rounded-full"></span>
-                                        Solution
-                                    </h4>
-                                    <div className="prose prose-sm max-w-none prose-slate prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
-                                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                            {q.analysis.solution_md}
-                                        </ReactMarkdown>
-                                    </div>
+                                     {q.analysis.tags.map((tag, idx) => (
+                                        <div key={idx} className="text-sm text-slate-800 font-medium">
+                                            <span className="text-slate-900 font-bold">● {tag.level0}</span> 
+                                            {tag.level1 && <span className="text-slate-500"> › {tag.level1}</span>}
+                                            {tag.level2 && <span className="text-slate-500"> › {tag.level2}</span>}
+                                        </div>
+                                    ))}
                                 </div>
 
-                                {/* Analysis, Breakthrough & Pitfalls */}
-                                {(q.analysis.analysis_md || q.analysis.breakthrough_md || q.analysis.pitfalls_md) && (
-                                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 pt-4 border-t border-slate-200/50">
-                                        {q.analysis.analysis_md && (
-                                            <div>
-                                                <h4 className="text-xs font-black text-blue-600 mb-2 flex items-center gap-2">
-                                                    <span className="w-1.5 h-1.5 bg-blue-600 rounded-full"></span>
-                                                    Key Analysis
-                                                </h4>
-                                                <div className="prose prose-sm max-w-none prose-blue prose-p:my-1">
-                                                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                                        {q.analysis.analysis_md}
-                                                    </ReactMarkdown>
-                                                </div>
-                                            </div>
-                                        )}
+                                {/* Standard Solution */}
+                                <div className="prose prose-sm max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-800">
+                                    <h4 className="text-sm font-bold text-slate-900 mb-1 border-b border-slate-300 pb-0.5 inline-block">标准解答</h4>
+                                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                        {q.analysis.solution_md}
+                                    </ReactMarkdown>
+                                </div>
+                                
+                                {/* Analysis */}
+                                <div className="prose prose-sm max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-800">
+                                    <h4 className="text-sm font-bold text-slate-900 mb-1 border-b border-slate-300 pb-0.5 inline-block">思路分析</h4>
+                                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                        {q.analysis.analysis_md}
+                                    </ReactMarkdown>
+                                </div>
 
-                                        {q.analysis.breakthrough_md && (
-                                            <div>
-                                                <h4 className="text-xs font-black text-indigo-600 mb-2 flex items-center gap-2">
-                                                    <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full"></span>
-                                                    Breakthrough
-                                                </h4>
-                                                <div className="prose prose-sm max-w-none prose-indigo prose-p:my-1">
-                                                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                                        {q.analysis.breakthrough_md}
-                                                    </ReactMarkdown>
-                                                </div>
-                                            </div>
-                                        )}
-                                        
-                                        {q.analysis.pitfalls_md && (
-                                            <div>
-                                                <h4 className="text-xs font-black text-red-500 mb-2 flex items-center gap-2">
-                                                    <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                                                    Pitfalls
-                                                </h4>
-                                                <div className="prose prose-sm max-w-none prose-red prose-p:my-1">
-                                                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                                        {q.analysis.pitfalls_md}
-                                                    </ReactMarkdown>
-                                                </div>
-                                            </div>
-                                        )}
+                                {/* Breakthrough */}
+                                {q.analysis.breakthrough_md && (
+                                    <div className="prose prose-sm max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-800">
+                                        <h4 className="text-sm font-bold text-slate-900 mb-1 border-b border-slate-300 pb-0.5 inline-block">突破口</h4>
+                                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                            {q.analysis.breakthrough_md}
+                                        </ReactMarkdown>
+                                    </div>
+                                )}
+                                
+                                {/* Pitfalls */}
+                                {q.analysis.pitfalls_md && (
+                                    <div className="prose prose-sm max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-800">
+                                        <h4 className="text-sm font-bold text-slate-900 mb-1 border-b border-slate-300 pb-0.5 inline-block">易错点</h4>
+                                        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                            {q.analysis.pitfalls_md}
+                                        </ReactMarkdown>
                                     </div>
                                 )}
                             </div>
@@ -149,11 +127,6 @@ export const DebugPreviewGrid: React.FC<Props> = ({ questions, onQuestionClick }
                   )}
               </div>
             ))}
-          </div>
-          
-          {/* Subtle end marker */}
-          <div className="mt-20 border-t border-slate-100 pt-8 text-center opacity-30">
-             <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto"></div>
           </div>
       </div>
     </div>

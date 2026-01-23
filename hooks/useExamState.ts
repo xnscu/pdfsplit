@@ -16,7 +16,8 @@ export const STORAGE_KEYS = {
   ANALYSIS_CONCURRENCY: 'exam_splitter_analysis_concurrency_v1',
   MODEL: 'exam_splitter_selected_model_v3',
   USE_HISTORY_CACHE: 'exam_splitter_use_history_cache_v1',
-  BATCH_SIZE: 'exam_splitter_batch_size_v1'
+  BATCH_SIZE: 'exam_splitter_batch_size_v1',
+  API_KEY: 'exam_splitter_api_key_v1'
 };
 
 // Helper for auto-detect batch size based on RAM and CPU
@@ -103,6 +104,10 @@ export const useExamState = () => {
     return localStorage.getItem(STORAGE_KEYS.USE_HISTORY_CACHE) === 'true';
   });
 
+  const [apiKey, setApiKey] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.API_KEY) || '';
+  });
+
   // Progress
   const [progress, setProgress] = useState(0); 
   const [total, setTotal] = useState(0);
@@ -152,6 +157,10 @@ export const useExamState = () => {
     localStorage.setItem(STORAGE_KEYS.USE_HISTORY_CACHE, String(useHistoryCache));
   }, [useHistoryCache]);
 
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.API_KEY, apiKey);
+  }, [apiKey]);
+
   const addNotification = (fileName: string | null, type: 'success' | 'error', message: string) => {
       const id = Date.now().toString() + Math.random().toString();
       setNotifications(prev => [...prev, { id, fileName, type, message }]);
@@ -200,14 +209,14 @@ export const useExamState = () => {
       status, questions, rawPages, sourcePages, debugFile, lastViewedFile, refiningFile,
       legacySyncFiles, isSyncingLegacy, processingFiles, notifications, showHistory,
       historyList, isLoadingHistory, cropSettings, concurrency, analysisConcurrency, batchSize, selectedModel,
-      useHistoryCache, progress, total, completedCount, error, detailedStatus,
+      useHistoryCache, apiKey, progress, total, completedCount, error, detailedStatus,
       croppingTotal, croppingDone, analyzingTotal, analyzingDone, currentRound, failedCount, startTime, elapsedTime
     },
     setters: {
       setStatus, setQuestions, setRawPages, setSourcePages, setDebugFile, setLastViewedFile, setRefiningFile,
       setLegacySyncFiles, setIsSyncingLegacy, setProcessingFiles, setNotifications, setShowHistory,
       setHistoryList, setIsLoadingHistory, setCropSettings, setConcurrency, setAnalysisConcurrency, setBatchSize, setSelectedModel,
-      setUseHistoryCache, setProgress, setTotal, setCompletedCount, setError, setDetailedStatus,
+      setUseHistoryCache, setApiKey, setProgress, setTotal, setCompletedCount, setError, setDetailedStatus,
       setCroppingTotal, setCroppingDone, setAnalyzingTotal, setAnalyzingDone, setCurrentRound, setFailedCount, setStartTime, setElapsedTime
     },
     refs: {
