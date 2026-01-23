@@ -121,10 +121,6 @@ export const reSaveExamResult = async (fileName: string, rawPages: DebugPageData
         record.timestamp = Date.now();
         
         // Update questions if provided. 
-        // If we are just re-saving rawPages (e.g. intermediate step), we might want to keep old questions?
-        // Usually re-save implies new state. If questions is undefined, we assume we keep old ones OR 
-        // if this is a full re-analysis, the caller should pass the new empty/partial array.
-        // For safety here: if questions is passed, overwrite.
         if (questions !== undefined) {
           record.questions = questions;
         }
@@ -180,19 +176,46 @@ export const updatePageDetectionsAndQuestions = async (
         }
 
         // 2. Update the stored questions for this file (Replacing old ones for this file)
-        // We need to merge. If record.questions has questions from OTHER files (batch), keep them.
-        // If record.questions only has this file, replace.
-        // CURRENT DESIGN: A record usually maps 1-to-1 with a fileName if created via upload, 
-        // but if batch processed they might be distinct records.
-        // The saveExamResult usually creates one record per filename.
-        
-        // Since we save per filename in `saveExamResult` logic in App.tsx:
         record.questions = newFileQuestions;
 
         // Save back
         const putReq = store.put(record);
         putReq.onsuccess = () => resolve();
         putReq.onerror = () => reject(putReq.error);
+    };
+    getReq.onerror = () => reject(getReq.error);
+  });
+};
+
+/**
+ * Efficiently update ONLY the questions list for a specific file name.
+ * Used for real-time analysis saving.
+ */
+export const updateQuestionsForFile = async (fileName: string, questions: QuestionImage[]): Promise<void> => {
+  const list = await getHistoryList();
+  const targetItem = list.find(h => h.name === fileName);
+  
+  if (!targetItem) {
+     return;
+  }
+
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], "readwrite");
+    const store = transaction.objectStore(STORE_NAME);
+    
+    const getReq = store.get(targetItem.id);
+    
+    getReq.onsuccess = () => {
+        const record = getReq.result;
+        if (record) {
+            record.questions = questions;
+            const putReq = store.put(record);
+            putReq.onsuccess = () => resolve();
+            putReq.onerror = () => reject(putReq.error);
+        } else {
+            resolve();
+        }
     };
     getReq.onerror = () => reject(getReq.error);
   });
