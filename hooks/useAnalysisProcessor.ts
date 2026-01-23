@@ -13,7 +13,7 @@ interface AnalysisProps {
 }
 
 export const useAnalysisProcessor = ({ state, setters, refs, actions }: AnalysisProps) => {
-  const { analysisConcurrency, questions } = state;
+  const { analysisConcurrency, questions, selectedModel } = state;
   const {
     setStatus, setDetailedStatus, setAnalyzingTotal, setAnalyzingDone,
     setQuestions
@@ -55,7 +55,7 @@ export const useAnalysisProcessor = ({ state, setters, refs, actions }: Analysis
             // Check if already analyzed? (Optional optimization)
             // if (q.analysis) { ... } 
             
-            const analysis = await analyzeQuestion(q.dataUrl, MODEL_IDS.FLASH); // Use Flash for speed/cost
+            const analysis = await analyzeQuestion(q.dataUrl, selectedModel || MODEL_IDS.FLASH); 
             
             // Update State Immediately
             setQuestions((prev: QuestionImage[]) => {
@@ -120,7 +120,7 @@ export const useAnalysisProcessor = ({ state, setters, refs, actions }: Analysis
       const processItem = async (q: QuestionImage) => {
         if (stopRequestedRef.current) return;
         try {
-            const analysis = await analyzeQuestion(q.dataUrl, MODEL_IDS.FLASH);
+            const analysis = await analyzeQuestion(q.dataUrl, selectedModel || MODEL_IDS.FLASH);
             
             // Update Local Map for DB Save
             const updatedQ = { ...q, analysis };
