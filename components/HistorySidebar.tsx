@@ -226,6 +226,9 @@ export const HistorySidebar: React.FC<Props> = ({
             </div>
 
             <div className="flex flex-col gap-3 pt-2">
+              {/* Sync Status Section */}
+              <SyncStatus />
+
               {/* Sorting Controls */}
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase text-slate-400">Sort By:</span>
@@ -311,9 +314,6 @@ export const HistorySidebar: React.FC<Props> = ({
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
-            {/* Sync Status Section */}
-            <SyncStatus />
-
             {sortedHistoryList.length === 0 ? (
               <div className="text-center py-20 text-slate-400">
                 <p className="text-sm font-bold">No history records found.</p>
