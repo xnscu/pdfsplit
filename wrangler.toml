@@ -1,0 +1,12 @@
+name = "gksx"
+main = "src/worker.mjs"
+compatibility_date = "2024-09-23"
+compatibility_flags = [ "nodejs_compat" ]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gksx"
+database_id = "3a16e8da-382f-420e-aafb-9ba983c480cb"
+
+[observability.logs]
+enabled = true

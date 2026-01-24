@@ -1,4 +1,3 @@
-
 export interface BoundingBox {
   ymin: number;
   xmin: number;
@@ -9,7 +8,7 @@ export interface BoundingBox {
 export interface DetectedQuestion {
   id: string;
   // Support both single box [y,x,y,x] and multiple boxes [[y,x,y,x], [y,x,y,x]]
-  boxes_2d: [number, number, number, number] | [number, number, number, number][]; 
+  boxes_2d: [number, number, number, number] | [number, number, number, number][];
 }
 
 export interface QuestionAnalysis {
@@ -25,7 +24,7 @@ export interface QuestionAnalysis {
   solution_md: string;
   analysis_md: string;
   breakthrough_md?: string;
-  pitfalls_md: string;
+  pitfalls_md?: string;
 }
 
 export interface QuestionImage {
@@ -63,6 +62,15 @@ export interface HistoryMetadata {
   pageCount: number;
 }
 
+export interface ExamRecord {
+  id: string;
+  name: string;
+  timestamp: number;
+  pageCount: number;
+  rawPages: DebugPageData[];
+  questions: QuestionImage[];
+}
+
 export interface SourcePage {
   dataUrl: string;
   width: number;
@@ -72,12 +80,12 @@ export interface SourcePage {
 }
 
 export enum ProcessingStatus {
-  IDLE = 'IDLE',
-  LOADING_PDF = 'LOADING_PDF',
-  DETECTING_QUESTIONS = 'DETECTING_QUESTIONS',
-  CROPPING = 'CROPPING',
-  ANALYZING = 'ANALYZING', // New Status
-  COMPLETED = 'COMPLETED',
-  ERROR = 'ERROR',
-  STOPPED = 'STOPPED'
+  IDLE = "IDLE",
+  LOADING_PDF = "LOADING_PDF",
+  DETECTING_QUESTIONS = "DETECTING_QUESTIONS",
+  CROPPING = "CROPPING",
+  ANALYZING = "ANALYZING", // New Status
+  COMPLETED = "COMPLETED",
+  ERROR = "ERROR",
+  STOPPED = "STOPPED",
 }
