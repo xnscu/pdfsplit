@@ -3,10 +3,21 @@ main = "src/worker.mjs"
 compatibility_date = "2024-09-23"
 compatibility_flags = [ "nodejs_compat" ]
 
+# D1 Database binding
 [[d1_databases]]
 binding = "DB"
 database_name = "gksx"
 database_id = "3a16e8da-382f-420e-aafb-9ba983c480cb"
 
+# Static assets binding (for Vite plugin)
+[assets]
+binding = "ASSETS"
+directory = "./dist"
+
+# Observability
 [observability.logs]
 enabled = true
+
+# Environment Variables
+[vars]
+ENVIRONMENT = "production"

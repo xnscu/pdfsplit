@@ -1,0 +1,59 @@
+-- D1 Database Schema for Exam Records
+-- This schema mirrors the ExamRecord interface from types.ts
+
+-- Main exams table - stores exam metadata
+CREATE TABLE IF NOT EXISTS exams (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    page_count INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Index for faster queries
+CREATE INDEX IF NOT EXISTS idx_exams_name ON exams(name);
+CREATE INDEX IF NOT EXISTS idx_exams_timestamp ON exams(timestamp DESC);
+
+-- Raw pages table - stores page data with detections
+-- Separated to handle large data more efficiently
+CREATE TABLE IF NOT EXISTS raw_pages (
+    id TEXT PRIMARY KEY,
+    exam_id TEXT NOT NULL,
+    page_number INTEGER NOT NULL,
+    file_name TEXT NOT NULL,
+    data_url TEXT NOT NULL,  -- Base64 encoded image
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    detections TEXT NOT NULL DEFAULT '[]',  -- JSON array of DetectedQuestion
+    FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE,
+    UNIQUE(exam_id, page_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_raw_pages_exam_id ON raw_pages(exam_id);
+
+-- Questions table - stores cropped question images with analysis
+CREATE TABLE IF NOT EXISTS questions (
+    id TEXT PRIMARY KEY,
+    exam_id TEXT NOT NULL,
+    page_number INTEGER NOT NULL,
+    file_name TEXT NOT NULL,
+    data_url TEXT NOT NULL,  -- Base64 encoded cropped image
+    original_data_url TEXT,  -- Optional, for before/after comparison
+    analysis TEXT,           -- JSON object of QuestionAnalysis
+    FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_questions_exam_id ON questions(exam_id);
+
+-- Sync tracking table - for bidirectional sync between IndexedDB and D1
+CREATE TABLE IF NOT EXISTS sync_log (
+    id TEXT PRIMARY KEY,
+    exam_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('create', 'update', 'delete')),
+    timestamp INTEGER NOT NULL,
+    synced_from TEXT NOT NULL CHECK(synced_from IN ('local', 'remote')),
+    FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_log_timestamp ON sync_log(timestamp DESC);
