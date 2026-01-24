@@ -1,9 +1,8 @@
-
-import { CropSettings } from '../services/pdfService';
-import { DetectedQuestion, DebugPageData } from '../types';
-import { reSaveExamResult, updatePageDetectionsAndQuestions } from '../services/storageService';
-import { generateQuestionsFromRawPages } from '../services/generationService';
-import { detectQuestionsOnPage } from '../services/geminiService';
+import { CropSettings } from "../services/pdfService";
+import { DetectedQuestion, DebugPageData } from "../types";
+import { generateQuestionsFromRawPages } from "../services/generationService";
+import { detectQuestionsOnPage } from "../services/geminiService";
+import { reSaveExamResultWithSync, updatePageDetectionsAndQuestionsWithSync } from "../services/syncService";
 
 interface RefinementProps {
   state: any;
@@ -19,18 +18,18 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
 
   // Helper to preserve analysis data across regenerations
   const mergeExistingAnalysis = (newQuestions: any[], fileName: string) => {
-      const existingFileQuestions = questions.filter((q: any) => q.fileName === fileName);
-      const analysisMap = new Map();
-      existingFileQuestions.forEach((q: any) => {
-          if (q.analysis) analysisMap.set(q.id, q.analysis);
-      });
+    const existingFileQuestions = questions.filter((q: any) => q.fileName === fileName);
+    const analysisMap = new Map();
+    existingFileQuestions.forEach((q: any) => {
+      if (q.analysis) analysisMap.set(q.id, q.analysis);
+    });
 
-      newQuestions.forEach((q: any) => {
-          if (analysisMap.has(q.id)) {
-              q.analysis = analysisMap.get(q.id);
-          }
-      });
-      return newQuestions;
+    newQuestions.forEach((q: any) => {
+      if (analysisMap.has(q.id)) {
+        q.analysis = analysisMap.get(q.id);
+      }
+    });
+    return newQuestions;
   };
 
   const handleRecropFile = async (fileName: string, specificSettings: CropSettings) => {
@@ -39,193 +38,199 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
     if (targetPages.length === 0) return;
 
     const taskController = new AbortController();
-    
+
     setProcessingFiles((prev: any) => new Set(prev).add(fileName));
-    setters.setRefiningFile(null); 
+    setters.setRefiningFile(null);
 
     try {
-       let newQuestions = await generateQuestionsFromRawPages(
-         targetPages, 
-         specificSettings, 
-         taskController.signal,
-         {
-             onProgress: () => setCroppingDone((p: number) => p + 1)
-         },
-         batchSize || 10
-        );
-       
-       if (!taskController.signal.aborted) {
-         newQuestions = mergeExistingAnalysis(newQuestions, fileName);
+      let newQuestions = await generateQuestionsFromRawPages(
+        targetPages,
+        specificSettings,
+        taskController.signal,
+        {
+          onProgress: () => setCroppingDone((p: number) => p + 1),
+        },
+        batchSize || 10,
+      );
 
-         setQuestions((prev: any) => {
-            const others = prev.filter((q: any) => q.fileName !== fileName);
-            const combined = [...others, ...newQuestions];
-             return combined.sort((a: any,b: any) => {
-                 if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
-                 if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
-                 return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
-              });
-         });
+      if (!taskController.signal.aborted) {
+        newQuestions = mergeExistingAnalysis(newQuestions, fileName);
 
-         await reSaveExamResult(fileName, targetPages, newQuestions);
-         await refreshHistoryList();
-         const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
-         addNotification(fileName, 'success', `Refined ${fileName} in ${duration}s`);
-       }
+        setQuestions((prev: any) => {
+          const others = prev.filter((q: any) => q.fileName !== fileName);
+          const combined = [...others, ...newQuestions];
+          return combined.sort((a: any, b: any) => {
+            if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
+            if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+            return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
+          });
+        });
+
+        await reSaveExamResultWithSync(fileName, targetPages, newQuestions);
+        await refreshHistoryList();
+        const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+        addNotification(fileName, "success", `Refined ${fileName} in ${duration}s`);
+      }
     } catch (e: any) {
-       console.error(e);
-       addNotification(fileName, 'error', `Failed to refine ${fileName}: ${e.message}`);
+      console.error(e);
+      addNotification(fileName, "error", `Failed to refine ${fileName}: ${e.message}`);
     } finally {
-       setProcessingFiles((prev: any) => {
-           const next = new Set(prev);
-           next.delete(fileName);
-           return next;
-       });
+      setProcessingFiles((prev: any) => {
+        const next = new Set(prev);
+        next.delete(fileName);
+        return next;
+      });
     }
   };
 
   const executeReanalysis = async (fileName: string) => {
     const startTimeLocal = Date.now();
-    const filePages = rawPages.filter((p: any) => p.fileName === fileName).sort((a: any,b: any) => a.pageNumber - b.pageNumber);
+    const filePages = rawPages
+      .filter((p: any) => p.fileName === fileName)
+      .sort((a: any, b: any) => a.pageNumber - b.pageNumber);
     if (filePages.length === 0) return;
 
     const taskController = new AbortController();
     const signal = taskController.signal;
 
     setProcessingFiles((prev: any) => new Set(prev).add(fileName));
-    
+
     try {
-        const updatedRawPages = [...rawPages];
-        
-        const chunks = [];
-        for (let i = 0; i < filePages.length; i += concurrency) {
-            chunks.push(filePages.slice(i, i + concurrency));
-        }
+      const updatedRawPages = [...rawPages];
 
-        const newResults: DebugPageData[] = [];
+      const chunks = [];
+      for (let i = 0; i < filePages.length; i += concurrency) {
+        chunks.push(filePages.slice(i, i + concurrency));
+      }
 
-        for (const chunk of chunks) {
-            if (signal.aborted) break;
-            
-            await Promise.all(chunk.map(async (page: DebugPageData) => {
-                const detections = await detectQuestionsOnPage(page.dataUrl, selectedModel, undefined, apiKey);
-                const newPage = { ...page, detections };
-                newResults.push(newPage);
-            }));
-        }
+      const newResults: DebugPageData[] = [];
 
-        if (signal.aborted) return;
+      for (const chunk of chunks) {
+        if (signal.aborted) break;
 
-        const mergedRawPages = updatedRawPages.map(p => {
-             const match = newResults.find(n => n.fileName === p.fileName && n.pageNumber === p.pageNumber);
-             return match ? match : p;
-        });
-        
-        setRawPages(mergedRawPages);
-        
-        const finalFilePages = mergedRawPages.filter(p => p.fileName === fileName);
-        
-        let newQuestions = await generateQuestionsFromRawPages(
-            finalFilePages, 
-            cropSettings, 
-            signal,
-            {
-                onProgress: () => setCroppingDone((p: number) => p + 1)
-            },
-            batchSize || 10
+        await Promise.all(
+          chunk.map(async (page: DebugPageData) => {
+            const detections = await detectQuestionsOnPage(page.dataUrl, selectedModel, undefined, apiKey);
+            const newPage = { ...page, detections };
+            newResults.push(newPage);
+          }),
         );
-        
-        if (!signal.aborted) {
-             newQuestions = mergeExistingAnalysis(newQuestions, fileName);
+      }
 
-             setQuestions((prev: any) => {
-                const others = prev.filter((q: any) => q.fileName !== fileName);
-                const combined = [...others, ...newQuestions];
-                 return combined.sort((a: any,b: any) => {
-                     if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
-                     if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
-                     return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
-                  });
-             });
-             
-             await reSaveExamResult(fileName, finalFilePages, newQuestions);
-             await refreshHistoryList();
-             const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
-             addNotification(fileName, 'success', `Re-scan complete for ${fileName} in ${duration}s`);
-        }
+      if (signal.aborted) return;
 
+      const mergedRawPages = updatedRawPages.map((p) => {
+        const match = newResults.find((n) => n.fileName === p.fileName && n.pageNumber === p.pageNumber);
+        return match ? match : p;
+      });
+
+      setRawPages(mergedRawPages);
+
+      const finalFilePages = mergedRawPages.filter((p) => p.fileName === fileName);
+
+      let newQuestions = await generateQuestionsFromRawPages(
+        finalFilePages,
+        cropSettings,
+        signal,
+        {
+          onProgress: () => setCroppingDone((p: number) => p + 1),
+        },
+        batchSize || 10,
+      );
+
+      if (!signal.aborted) {
+        newQuestions = mergeExistingAnalysis(newQuestions, fileName);
+
+        setQuestions((prev: any) => {
+          const others = prev.filter((q: any) => q.fileName !== fileName);
+          const combined = [...others, ...newQuestions];
+          return combined.sort((a: any, b: any) => {
+            if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
+            if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+            return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
+          });
+        });
+
+        await reSaveExamResultWithSync(fileName, finalFilePages, newQuestions);
+        await refreshHistoryList();
+        const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+        addNotification(fileName, "success", `Re-scan complete for ${fileName} in ${duration}s`);
+      }
     } catch (error: any) {
-        console.error(error);
-        addNotification(fileName, 'error', `Re-analysis failed for ${fileName}: ${error.message}`);
+      console.error(error);
+      addNotification(fileName, "error", `Re-analysis failed for ${fileName}: ${error.message}`);
     } finally {
-        setProcessingFiles((prev: any) => {
-           const next = new Set(prev);
-           next.delete(fileName);
-           return next;
-       });
+      setProcessingFiles((prev: any) => {
+        const next = new Set(prev);
+        next.delete(fileName);
+        return next;
+      });
     }
   };
 
   const handleUpdateDetections = async (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => {
-      const startTimeLocal = Date.now();
-      const updatedPages = rawPages.map((p: any) => {
-          if (p.fileName === fileName && p.pageNumber === pageNumber) {
-              return { ...p, detections: newDetections };
-          }
-          return p;
-      });
-
-      setRawPages(updatedPages);
-      setProcessingFiles((prev: any) => new Set(prev).add(fileName));
-
-      try {
-          const targetPages = updatedPages.filter((p: any) => p.fileName === fileName);
-          if (targetPages.length === 0) {
-              setProcessingFiles((prev: any) => { const n = new Set(prev); n.delete(fileName); return n; });
-              return;
-          }
-
-          const taskController = new AbortController();
-          
-          let newQuestions = await generateQuestionsFromRawPages(
-              targetPages, 
-              cropSettings, 
-              taskController.signal,
-              {
-                  onProgress: () => setCroppingDone((p: number) => p + 1)
-              },
-              batchSize || 10
-          );
-          
-          if (!taskController.signal.aborted) {
-              newQuestions = mergeExistingAnalysis(newQuestions, fileName);
-
-              await updatePageDetectionsAndQuestions(fileName, pageNumber, newDetections, newQuestions);
-              
-              setQuestions((prev: any) => {
-                  const others = prev.filter((q: any) => q.fileName !== fileName);
-                  const combined = [...others, ...newQuestions];
-                  return combined.sort((a: any,b: any) => {
-                     if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
-                     if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
-                     return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
-                  });
-              });
-              const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
-              // Optional: notification for update (can be noisy, so maybe skip or use console)
-              // addNotification(fileName, 'success', `Updated in ${duration}s`);
-          }
-
-      } catch (err: any) {
-          console.error("Failed to save or recrop", err);
-          addNotification(fileName, 'error', `Failed to save changes: ${err.message}`);
-      } finally {
-          setProcessingFiles((prev: any) => {
-             const next = new Set(prev);
-             next.delete(fileName);
-             return next;
-         });
+    const startTimeLocal = Date.now();
+    const updatedPages = rawPages.map((p: any) => {
+      if (p.fileName === fileName && p.pageNumber === pageNumber) {
+        return { ...p, detections: newDetections };
       }
+      return p;
+    });
+
+    setRawPages(updatedPages);
+    setProcessingFiles((prev: any) => new Set(prev).add(fileName));
+
+    try {
+      const targetPages = updatedPages.filter((p: any) => p.fileName === fileName);
+      if (targetPages.length === 0) {
+        setProcessingFiles((prev: any) => {
+          const n = new Set(prev);
+          n.delete(fileName);
+          return n;
+        });
+        return;
+      }
+
+      const taskController = new AbortController();
+
+      let newQuestions = await generateQuestionsFromRawPages(
+        targetPages,
+        cropSettings,
+        taskController.signal,
+        {
+          onProgress: () => setCroppingDone((p: number) => p + 1),
+        },
+        batchSize || 10,
+      );
+
+      if (!taskController.signal.aborted) {
+        newQuestions = mergeExistingAnalysis(newQuestions, fileName);
+
+        await updatePageDetectionsAndQuestionsWithSync(fileName, pageNumber, newDetections, newQuestions);
+
+        setQuestions((prev: any) => {
+          const others = prev.filter((q: any) => q.fileName !== fileName);
+          const combined = [...others, ...newQuestions];
+          return combined.sort((a: any, b: any) => {
+            if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
+            if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+            return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
+          });
+        });
+        const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+        // Optional: notification for update (can be noisy, so maybe skip or use console)
+        // addNotification(fileName, 'success', `Updated in ${duration}s`);
+      }
+    } catch (err: any) {
+      console.error("Failed to save or recrop", err);
+      addNotification(fileName, "error", `Failed to save changes: ${err.message}`);
+    } finally {
+      setProcessingFiles((prev: any) => {
+        const next = new Set(prev);
+        next.delete(fileName);
+        return next;
+      });
+    }
   };
 
   return { handleRecropFile, executeReanalysis, handleUpdateDetections };

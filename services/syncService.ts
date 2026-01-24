@@ -575,6 +575,83 @@ export const updateQuestionsWithSync = async (fileName: string, questions: ExamR
   }
 };
 
+/**
+ * Re-save exam result with sync (used for recrop operations)
+ */
+export const reSaveExamResultWithSync = async (
+  fileName: string,
+  rawPages: ExamRecord["rawPages"],
+  questions?: ExamRecord["questions"],
+): Promise<void> => {
+  // Update locally first
+  await storageService.reSaveExamResult(fileName, rawPages, questions);
+
+  // Get updated record for sync
+  const list = await storageService.getHistoryList();
+  const meta = list.find((h) => h.name === fileName);
+
+  if (meta) {
+    const exam = await storageService.loadExamResult(meta.id);
+    if (exam && syncState.isOnline) {
+      await saveRemoteExam(exam).catch(() => {
+        addPendingAction({
+          type: "save",
+          examId: meta.id,
+          timestamp: Date.now(),
+          data: exam,
+        });
+      });
+    } else if (exam) {
+      // Offline - add to pending queue
+      addPendingAction({
+        type: "save",
+        examId: meta.id,
+        timestamp: Date.now(),
+        data: exam,
+      });
+    }
+  }
+};
+
+/**
+ * Update page detections and questions with sync (used for debug box adjustments)
+ */
+export const updatePageDetectionsAndQuestionsWithSync = async (
+  fileName: string,
+  pageNumber: number,
+  newDetections: any[],
+  newFileQuestions: ExamRecord["questions"],
+): Promise<void> => {
+  // Update locally first
+  await storageService.updatePageDetectionsAndQuestions(fileName, pageNumber, newDetections, newFileQuestions);
+
+  // Get updated record for sync
+  const list = await storageService.getHistoryList();
+  const meta = list.find((h) => h.name === fileName);
+
+  if (meta) {
+    const exam = await storageService.loadExamResult(meta.id);
+    if (exam && syncState.isOnline) {
+      await saveRemoteExam(exam).catch(() => {
+        addPendingAction({
+          type: "save",
+          examId: meta.id,
+          timestamp: Date.now(),
+          data: exam,
+        });
+      });
+    } else if (exam) {
+      // Offline - add to pending queue
+      addPendingAction({
+        type: "save",
+        examId: meta.id,
+        timestamp: Date.now(),
+        data: exam,
+      });
+    }
+  }
+};
+
 // ============ Auto Sync Setup ============
 
 /**
