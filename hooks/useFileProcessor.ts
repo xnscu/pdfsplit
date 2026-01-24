@@ -8,7 +8,6 @@ import { detectQuestionsOnPage } from '../services/geminiService';
 import { loadExamResult, saveExamResult, getHistoryList } from '../services/storageService';
 import { generateQuestionsFromRawPages, CropQueue, createLogicalQuestions, processLogicalQuestion } from '../services/generationService';
 
-// We need a subset of the full state/setters
 interface ProcessorProps {
   state: any;
   setters: any;
@@ -29,6 +28,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
   } = setters;
 
   const { abortControllerRef, stopRequestedRef } = refs;
+  const { addNotification } = actions;
 
   // Global Queue for cropping tasks to ensure flattened concurrency
   const cropQueueRef = useRef(new CropQueue());
@@ -37,21 +37,20 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
   const fileResultsRef = useRef<Record<string, QuestionImage[]>>({});
   const fileCropMetaRef = useRef<Record<string, { totalQs: number, processedQs: number, saved: boolean }>>({});
 
-  // Update queue concurrency when settings change
   useEffect(() => {
     cropQueueRef.current.concurrency = batchSize || 10;
   }, [batchSize]);
 
   const processZipFiles = async (files: { blob: Blob, name: string }[]) => {
+    const startTimeLocal = Date.now();
     try {
-      setStartTime(Date.now());
+      setStartTime(startTimeLocal);
       setStatus(ProcessingStatus.LOADING_PDF);
       setDetailedStatus('Scanning ZIP contents...');
       
       const allRawPages: DebugPageData[] = [];
       const allQuestions: QuestionImage[] = [];
       
-      // Phase 1: Pre-scan to determine total work (pages)
       let totalWorkItems = 0;
       const workQueue: {
           zip: JSZip,
@@ -95,24 +94,20 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
           }
       }
 
-      // Initialize counters
       setTotal(totalWorkItems > 0 ? totalWorkItems : 1); 
       setCompletedCount(0);
       setProgress(0);
       
-      // Phase 2: Extraction
       let processedCount = 0;
 
       for (const work of workQueue) {
           const zipBaseName = work.name.replace(/\.[^/.]+$/, "");
           
-          // Process Pages
           for (const entry of work.analysisEntries) {
               const dirPrefix = entry.key.substring(0, entry.key.lastIndexOf("analysis_data.json"));
               setDetailedStatus(`Extracting: ${dirPrefix || zipBaseName}`);
 
               for (const page of entry.pages) {
-                  // Normalize filename
                   let rawFileName = page.fileName;
                   if (!rawFileName || rawFileName === "unknown_file") {
                     if (dirPrefix) rawFileName = dirPrefix.replace(/\/$/, "");
@@ -120,7 +115,6 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                   }
                   page.fileName = rawFileName;
 
-                  // Find full page image
                   let foundKey: string | undefined = undefined;
                   const candidates = [
                       `${dirPrefix}full_pages/Page_${page.pageNumber}.jpg`,
@@ -136,7 +130,6 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                   }
 
                   if (!foundKey) {
-                      // Regex fallback for loose structures
                       foundKey = Object.keys(work.zip.files).find(k => 
                           k.startsWith(dirPrefix) &&
                           !work.zip.files[k].dir &&
@@ -151,23 +144,19 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                     page.dataUrl = `data:${mime};base64,${base64}`;
                   }
 
-                  // Update Progress
                   processedCount++;
                   setCompletedCount(processedCount);
                   setProgress(processedCount);
                   
-                  // Yield to UI thread every few items to keep browser responsive
                   if (processedCount % 5 === 0) await new Promise(r => setTimeout(r, 0));
               }
               allRawPages.push(...entry.pages);
           }
 
-          // Process Pre-cut Questions (if any)
           if (work.imageKeys.length > 0) {
              setDetailedStatus(`Linking pre-cut images...`);
              const loadedQuestions: QuestionImage[] = [];
              
-             // Process in chunks to avoid blocking
              const chunkSize = 20;
              for (let i = 0; i < work.imageKeys.length; i += chunkSize) {
                  const chunk = work.imageKeys.slice(i, i + chunkSize);
@@ -180,7 +169,6 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                     let qId = "0";
                     let qFileName = allRawPages.length > 0 ? allRawPages[0].fileName : "unknown";
 
-                    // Heuristic extraction of ID and Filename
                     const flatMatch = fileNameWithExt.match(/^(.+)_Q(\d+(?:_\d+)?)\.(jpg|jpeg|png)$/i);
                     if (flatMatch) {
                         qFileName = flatMatch[1];
@@ -203,11 +191,8 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
           }
       }
 
-      // Finalize State
       setRawPages(allRawPages);
       setSourcePages(allRawPages.map(({detections, ...rest}) => rest));
-      
-      // Ensure 100% at end
       setCompletedCount(totalWorkItems > 0 ? totalWorkItems : 1);
       
       const uniqueFiles = new Set(allRawPages.map(p => p.fileName));
@@ -219,9 +204,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
         });
         setQuestions(allQuestions);
-        setStatus(ProcessingStatus.COMPLETED);
-
-        // Save Results
+        
         const savePromises = Array.from(uniqueFiles).map(fileName => {
            const filePages = allRawPages.filter(p => p.fileName === fileName);
            const fileQuestions = allQuestions.filter(q => q.fileName === fileName);
@@ -231,7 +214,6 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
         
       } else {
          if (allRawPages.length > 0) {
-            // Regenerate Crops if only raw pages found
             setStatus(ProcessingStatus.CROPPING);
             const totalQs = allRawPages.reduce((acc, p) => acc + p.detections.length, 0);
             setCroppingTotal(totalQs);
@@ -249,8 +231,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             );
             
             setQuestions(qs);
-            setStatus(ProcessingStatus.COMPLETED);
-
+            
             const savePromises = Array.from(uniqueFiles).map(fileName => {
                 const filePages = allRawPages.filter(p => p.fileName === fileName);
                 const fileQuestions = qs.filter(q => q.fileName === fileName);
@@ -262,6 +243,19 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
          }
       }
       await refreshHistoryList();
+      const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+      addNotification(null, 'success', `ZIP Processed in ${duration}s`);
+      
+      // Auto-navigate to first file
+      const allFiles = Array.from(new Set(allRawPages.map(p => p.fileName)));
+      if (allFiles.length > 0) {
+          allFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+          setters.setDebugFile(allFiles[0]);
+          setters.setLastViewedFile(allFiles[0]);
+      }
+
+      setStatus(ProcessingStatus.IDLE);
+
     } catch (err: any) {
       setError("Batch ZIP load failed: " + err.message);
       setStatus(ProcessingStatus.ERROR);
@@ -285,7 +279,8 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
     stopRequestedRef.current = false;
     const signal = abortControllerRef.current.signal;
     
-    setStartTime(Date.now());
+    const startTimeLocal = Date.now();
+    setStartTime(startTimeLocal);
     setStatus(ProcessingStatus.LOADING_PDF);
     setError(undefined);
     setSourcePages([]);
@@ -375,8 +370,19 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
       }
 
       if (filesToProcess.length === 0) {
-         setStatus(ProcessingStatus.COMPLETED);
+         setStatus(ProcessingStatus.IDLE); 
+         const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+         addNotification(null, 'success', `Loaded from history in ${duration}s`);
          setDetailedStatus(`Loaded ${cachedRawPages.length} pages from history.`);
+         
+         // Auto-navigate to first file in cache
+         const cachedFiles = Array.from(new Set(cachedRawPages.map(p => p.fileName)));
+         if (cachedFiles.length > 0) {
+             cachedFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+             setters.setDebugFile(cachedFiles[0]);
+             setters.setLastViewedFile(cachedFiles[0]);
+         }
+
          return;
       }
 
@@ -507,7 +513,22 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
               setDetailedStatus("Finalizing crops...");
               await cropQueueRef.current.onIdle();
           }
-          setStatus(ProcessingStatus.COMPLETED);
+          const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+          addNotification(null, 'success', `Processed ${allNewPages.length} pages in ${duration}s`);
+          
+          // Auto-navigate to first file (merged cache + new)
+          const allProcessedFiles = new Set<string>();
+          cachedRawPages.forEach((p: any) => allProcessedFiles.add(p.fileName));
+          allNewPages.forEach(p => allProcessedFiles.add(p.fileName));
+          
+          const sortedFiles = Array.from(allProcessedFiles).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+          
+          if (sortedFiles.length > 0) {
+               setters.setDebugFile(sortedFiles[0]);
+               setters.setLastViewedFile(sortedFiles[0]);
+          }
+
+          setStatus(ProcessingStatus.IDLE);
       }
     } catch (err: any) {
       if (err.name === 'AbortError') { setStatus(ProcessingStatus.STOPPED); return; }

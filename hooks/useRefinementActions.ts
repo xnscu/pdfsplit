@@ -13,11 +13,28 @@ interface RefinementProps {
 }
 
 export const useRefinementActions = ({ state, setters, actions, refreshHistoryList }: RefinementProps) => {
-  const { rawPages, concurrency, selectedModel, cropSettings, batchSize, apiKey } = state;
+  const { rawPages, concurrency, selectedModel, cropSettings, batchSize, apiKey, questions } = state;
   const { setQuestions, setRawPages, setProcessingFiles, setCroppingDone } = setters;
   const { addNotification } = actions;
 
+  // Helper to preserve analysis data across regenerations
+  const mergeExistingAnalysis = (newQuestions: any[], fileName: string) => {
+      const existingFileQuestions = questions.filter((q: any) => q.fileName === fileName);
+      const analysisMap = new Map();
+      existingFileQuestions.forEach((q: any) => {
+          if (q.analysis) analysisMap.set(q.id, q.analysis);
+      });
+
+      newQuestions.forEach((q: any) => {
+          if (analysisMap.has(q.id)) {
+              q.analysis = analysisMap.get(q.id);
+          }
+      });
+      return newQuestions;
+  };
+
   const handleRecropFile = async (fileName: string, specificSettings: CropSettings) => {
+    const startTimeLocal = Date.now();
     const targetPages = rawPages.filter((p: any) => p.fileName === fileName);
     if (targetPages.length === 0) return;
 
@@ -27,8 +44,7 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
     setters.setRefiningFile(null); 
 
     try {
-       // Using batchSize for purely image processing tasks
-       const newQuestions = await generateQuestionsFromRawPages(
+       let newQuestions = await generateQuestionsFromRawPages(
          targetPages, 
          specificSettings, 
          taskController.signal,
@@ -39,6 +55,8 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
         );
        
        if (!taskController.signal.aborted) {
+         newQuestions = mergeExistingAnalysis(newQuestions, fileName);
+
          setQuestions((prev: any) => {
             const others = prev.filter((q: any) => q.fileName !== fileName);
             const combined = [...others, ...newQuestions];
@@ -50,8 +68,9 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
          });
 
          await reSaveExamResult(fileName, targetPages, newQuestions);
-         await refreshHistoryList(); // Update timestamp in history
-         addNotification(fileName, 'success', `Successfully refined ${fileName}`);
+         await refreshHistoryList();
+         const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+         addNotification(fileName, 'success', `Refined ${fileName} in ${duration}s`);
        }
     } catch (e: any) {
        console.error(e);
@@ -66,6 +85,7 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
   };
 
   const executeReanalysis = async (fileName: string) => {
+    const startTimeLocal = Date.now();
     const filePages = rawPages.filter((p: any) => p.fileName === fileName).sort((a: any,b: any) => a.pageNumber - b.pageNumber);
     if (filePages.length === 0) return;
 
@@ -78,7 +98,6 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
         const updatedRawPages = [...rawPages];
         
         const chunks = [];
-        // Gemini API calls still use concurrency
         for (let i = 0; i < filePages.length; i += concurrency) {
             chunks.push(filePages.slice(i, i + concurrency));
         }
@@ -106,8 +125,7 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
         
         const finalFilePages = mergedRawPages.filter(p => p.fileName === fileName);
         
-        // Image generation uses batchSize
-        const newQuestions = await generateQuestionsFromRawPages(
+        let newQuestions = await generateQuestionsFromRawPages(
             finalFilePages, 
             cropSettings, 
             signal,
@@ -118,6 +136,8 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
         );
         
         if (!signal.aborted) {
+             newQuestions = mergeExistingAnalysis(newQuestions, fileName);
+
              setQuestions((prev: any) => {
                 const others = prev.filter((q: any) => q.fileName !== fileName);
                 const combined = [...others, ...newQuestions];
@@ -129,8 +149,9 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
              });
              
              await reSaveExamResult(fileName, finalFilePages, newQuestions);
-             await refreshHistoryList(); // Update timestamp in history
-             addNotification(fileName, 'success', `AI Analysis completed for ${fileName}`);
+             await refreshHistoryList();
+             const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+             addNotification(fileName, 'success', `Re-scan complete for ${fileName} in ${duration}s`);
         }
 
     } catch (error: any) {
@@ -146,6 +167,7 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
   };
 
   const handleUpdateDetections = async (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => {
+      const startTimeLocal = Date.now();
       const updatedPages = rawPages.map((p: any) => {
           if (p.fileName === fileName && p.pageNumber === pageNumber) {
               return { ...p, detections: newDetections };
@@ -165,8 +187,7 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
 
           const taskController = new AbortController();
           
-          // Image generation uses batchSize
-          const newQuestions = await generateQuestionsFromRawPages(
+          let newQuestions = await generateQuestionsFromRawPages(
               targetPages, 
               cropSettings, 
               taskController.signal,
@@ -177,9 +198,9 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
           );
           
           if (!taskController.signal.aborted) {
+              newQuestions = mergeExistingAnalysis(newQuestions, fileName);
+
               await updatePageDetectionsAndQuestions(fileName, pageNumber, newDetections, newQuestions);
-              // Note: manual detection updates don't usually change the exam timestamp in the DB service unless configured to do so.
-              // But if we wanted to be safe we could refresh here too.
               
               setQuestions((prev: any) => {
                   const others = prev.filter((q: any) => q.fileName !== fileName);
@@ -190,6 +211,9 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
                      return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
                   });
               });
+              const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+              // Optional: notification for update (can be noisy, so maybe skip or use console)
+              // addNotification(fileName, 'success', `Updated in ${duration}s`);
           }
 
       } catch (err: any) {

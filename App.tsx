@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
 import { ProcessingStatus } from './types';
@@ -54,6 +54,15 @@ const App: React.FC = () => {
   const [zippingFile, setZippingFile] = useState<string | null>(null);
   const [zippingProgress, setZippingProgress] = useState<string>('');
   const [showSettings, setShowSettings] = useState(false);
+  
+  // Auto-Analyze Feature State
+  const [isAutoAnalyze, setIsAutoAnalyze] = useState(false);
+  // Ref to access current value inside async functions
+  const isAutoAnalyzeRef = useRef(false);
+
+  useEffect(() => {
+      isAutoAnalyzeRef.current = isAutoAnalyze;
+  }, [isAutoAnalyze]);
 
   // Load History List on Mount
   useEffect(() => {
@@ -129,16 +138,30 @@ const App: React.FC = () => {
     return state.questions.filter(q => q.fileName === state.debugFile);
   }, [state.questions, state.debugFile]);
 
-  // Wrap analysis start to include saving logic that relies on `reSaveExamResult`
+  const updateDebugFile = (fileName: string | null) => {
+     setters.setDebugFile(fileName);
+     if (fileName) setters.setLastViewedFile(fileName);
+  };
+
+  // Wrap analysis start to include saving logic that relies on `reSaveExamResult` and auto-advance
   const handleAnalyzeWrapper = async (fileName: string) => {
       // The hook handles the process. We just trigger it.
       await handleStartAnalysis(fileName);
       await refreshHistoryList();
-  };
 
-  const updateDebugFile = (fileName: string | null) => {
-     setters.setDebugFile(fileName);
-     if (fileName) setters.setLastViewedFile(fileName);
+      // Auto-Advance Logic
+      if (isAutoAnalyzeRef.current) {
+          const currentIndex = sortedFileNames.indexOf(fileName);
+          if (currentIndex !== -1 && currentIndex < sortedFileNames.length - 1) {
+              const nextFile = sortedFileNames[currentIndex + 1];
+              // Update UI to show next file
+              updateDebugFile(nextFile);
+              // Trigger analysis for next file with a small delay to let UI render
+              setTimeout(() => {
+                  handleAnalyzeWrapper(nextFile);
+              }, 100);
+          }
+      }
   };
 
   const handleNextFile = () => {
@@ -352,6 +375,8 @@ const App: React.FC = () => {
                 currentFileIndex={sortedFileNames.indexOf(state.debugFile) + 1}
                 totalFiles={sortedFileNames.length}
                 cropSettings={state.cropSettings}
+                isAutoAnalyze={isAutoAnalyze}
+                setIsAutoAnalyze={setIsAutoAnalyze}
             />
         ) : (
              !isGlobalProcessing && sortedFileNames.length > 0 && (

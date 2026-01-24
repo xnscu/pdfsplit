@@ -23,6 +23,8 @@ interface Props {
   zippingProgress?: string;
   hasNextFile?: boolean;
   hasPrevFile?: boolean;
+  isAutoAnalyze?: boolean;
+  setIsAutoAnalyze?: (val: boolean) => void;
 }
 
 export const DebugToolbar: React.FC<Props> = ({
@@ -46,7 +48,9 @@ export const DebugToolbar: React.FC<Props> = ({
   isZipping,
   zippingProgress,
   hasNextFile,
-  hasPrevFile
+  hasPrevFile,
+  isAutoAnalyze,
+  setIsAutoAnalyze
 }) => {
   const [fileIndexInput, setFileIndexInput] = useState(currentFileIndex.toString());
 
@@ -156,26 +160,39 @@ export const DebugToolbar: React.FC<Props> = ({
 
         {/* 4. AI Solve (Content) */}
         {onAnalyze && (
-           <button
-             onClick={onAnalyze}
-             disabled={isAnalyzing}
-             className={`px-3 py-2 rounded-xl font-bold text-xs transition-colors flex items-center gap-2 shadow-lg min-w-[100px] justify-center ${
-                 isAnalyzing ? 'bg-purple-900/50 text-purple-200 cursor-wait' : 'bg-purple-600 text-white hover:bg-purple-500 shadow-purple-900/20'
-             }`}
-             title="Analyze question content (Solution, Tags, Difficulty)"
-           >
-              {isAnalyzing ? (
-                  <>
-                    <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    <span>{analyzingDone}/{analyzingTotal}</span>
-                  </>
-              ) : (
-                  <>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
-                    AI Solve
-                  </>
-              )}
-           </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onAnalyze}
+              disabled={isAnalyzing}
+              className={`px-3 py-2 rounded-xl font-bold text-xs transition-colors flex items-center gap-2 shadow-lg min-w-[100px] justify-center ${
+                  isAnalyzing ? 'bg-purple-900/50 text-purple-200 cursor-wait' : 'bg-purple-600 text-white hover:bg-purple-500 shadow-purple-900/20'
+              }`}
+              title="Analyze question content (Solution, Tags, Difficulty)"
+            >
+                {isAnalyzing ? (
+                    <>
+                      <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <span>{analyzingDone}/{analyzingTotal}</span>
+                    </>
+                ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                      AI Solve
+                    </>
+                )}
+            </button>
+            {setIsAutoAnalyze && (
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input 
+                        type="checkbox" 
+                        checked={isAutoAnalyze} 
+                        onChange={(e) => setIsAutoAnalyze(e.target.checked)} 
+                        className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 bg-slate-700 border-slate-600 cursor-pointer"
+                    />
+                    <span className="text-slate-400 text-xs font-bold uppercase">Auto-Next</span>
+                </label>
+            )}
+          </div>
         )}
         
         {/* 5. ZIP */}

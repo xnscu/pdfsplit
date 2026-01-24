@@ -34,147 +34,91 @@ export const ProcessingState: React.FC<Props> = ({
   onAbort,
   onClose
 }) => {
-  if (status === ProcessingStatus.IDLE) return null;
+  if (status === ProcessingStatus.IDLE || status === ProcessingStatus.COMPLETED) return null;
 
   const isError = status === ProcessingStatus.ERROR;
   const isStopped = status === ProcessingStatus.STOPPED;
-  const isCompleted = status === ProcessingStatus.COMPLETED;
 
   let displayPercent = 0;
-  if (isCompleted) {
-    displayPercent = 100;
-  } else if (status === ProcessingStatus.CROPPING && croppingTotal > 0) {
+  if (status === ProcessingStatus.CROPPING && croppingTotal > 0) {
     displayPercent = (croppingDone / croppingTotal) * 100;
   } else if (total > 0) {
     displayPercent = (completedCount / total) * 100;
   }
 
-  // Modal for Completion
-  if (isCompleted) {
-      return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm animate-[fade-in_0.2s_ease-out]">
-            <div className="bg-white w-full max-w-sm rounded-[2rem] p-8 text-center shadow-2xl scale-100 animate-[scale-in_0.2s_cubic-bezier(0.175,0.885,0.32,1.275)] mx-4 border border-slate-100">
-                <div className="w-20 h-20 bg-green-500 text-white rounded-full flex items-center justify-center mb-6 mx-auto shadow-xl shadow-green-200/50">
-                    <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                    </svg>
-                </div>
-                <h3 className="text-2xl font-black text-slate-900 mb-2 tracking-tight">Task Finished!</h3>
-                <p className="text-slate-400 font-medium mb-8 text-sm leading-relaxed">All pages have been analyzed and cropped successfully.</p>
-                
-                <div className="grid grid-cols-2 gap-3 w-full mb-8">
-                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Time Taken</p>
-                    <p className="text-lg font-black text-slate-800 tabular-nums">{elapsedTime}</p>
-                    </div>
-                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Items</p>
-                    <p className="text-lg font-black text-slate-800 tabular-nums">{completedCount}</p>
-                    </div>
-                </div>
-
-                <button 
-                    onClick={onClose} 
-                    className="w-full py-3.5 bg-slate-900 text-white font-black rounded-xl shadow-xl hover:bg-slate-800 transition-all active:scale-95 text-xs uppercase tracking-widest"
-                >
-                    OK
-                </button>
-            </div>
-        </div>
-      );
-  }
-
   return (
-    <div className={`flex flex-col items-center justify-center p-10 bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 mt-12 w-full max-w-2xl mx-auto transition-all duration-500 relative overflow-hidden animate-[fade-in_0.5s_ease-out]`}>
+    <div className="fixed bottom-6 right-6 z-[190] w-80 md:w-96 shadow-2xl border-2 border-slate-100 bg-white rounded-2xl p-5 animate-[fade-in_0.3s_ease-out] flex flex-col gap-4">
       
       {isError ? (
-        <div className="text-center w-full py-4">
-          <div className="bg-red-50 text-red-600 p-8 rounded-3xl mb-4 border border-red-100">
-            <svg className="w-12 h-12 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <h4 className="font-black text-xl mb-2 uppercase tracking-tight">Processing Error</h4>
-            <p className="font-medium opacity-80">{error || "An unknown error occurred. Please try again."}</p>
-          </div>
-          <button onClick={onClose} className="px-6 py-2 bg-slate-100 text-slate-500 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-slate-200 transition-all">Dismiss</button>
+        <div className="flex flex-col gap-2">
+           <div className="flex items-start gap-3">
+             <div className="w-10 h-10 rounded-full bg-red-100 text-red-500 flex items-center justify-center shrink-0">
+               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+             </div>
+             <div>
+               <h4 className="font-black text-slate-800 text-sm uppercase">Processing Error</h4>
+               <p className="text-xs text-slate-500 font-bold mt-1 leading-relaxed">{error || "Unknown error"}</p>
+             </div>
+           </div>
+           <button onClick={onClose} className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold py-2 rounded-lg mt-2 transition-colors">Dismiss</button>
         </div>
       ) : isStopped ? (
-        <div className="text-center w-full py-4">
-          <div className="bg-orange-50 text-orange-600 p-8 rounded-3xl mb-4 border border-orange-100">
-            <svg className="w-12 h-12 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <h4 className="font-black text-xl mb-2 uppercase tracking-tight">Processing Stopped</h4>
-            <p className="font-medium opacity-80">You manually aborted the process. Partial results may be available below.</p>
-          </div>
-          <button onClick={onClose} className="px-6 py-2 bg-slate-100 text-slate-500 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-slate-200 transition-all">Close Panel</button>
+        <div className="flex flex-col gap-2">
+           <div className="flex items-start gap-3">
+             <div className="w-10 h-10 rounded-full bg-orange-100 text-orange-500 flex items-center justify-center shrink-0">
+               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+             </div>
+             <div>
+               <h4 className="font-black text-slate-800 text-sm uppercase">Stopped</h4>
+               <p className="text-xs text-slate-500 font-bold mt-1">Process aborted by user.</p>
+             </div>
+           </div>
+           <button onClick={onClose} className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold py-2 rounded-lg mt-2 transition-colors">Close</button>
         </div>
       ) : (
-        <>
-          <CircularProgress 
-            progress={displayPercent} 
-            size="9rem"
-            colorClass={currentRound > 1 ? 'text-orange-500' : 'text-blue-600'}
-            className="mb-10"
-            label={
-               <>
-                  <span className={`text-3xl font-black tabular-nums ${currentRound > 1 ? 'text-orange-500' : 'text-blue-600'}`}>{Math.round(displayPercent)}%</span>
-                  {currentRound > 1 ? (
-                     <span className="text-[9px] bg-orange-100 px-2 py-0.5 rounded-full uppercase tracking-widest mt-1">Round {currentRound}</span>
-                  ) : (
-                     <span className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Active</span>
-                  )}
-               </>
-            }
-          />
-          
-          <h3 className={`text-2xl font-black mb-4 transition-colors duration-500 tracking-tight text-slate-900`}>
-            {status === ProcessingStatus.LOADING_PDF && "Loading Exam..."}
-            {status === ProcessingStatus.DETECTING_QUESTIONS && currentRound === 1 && "AI Analyzing Layout..."}
-            {status === ProcessingStatus.DETECTING_QUESTIONS && currentRound > 1 && `Retrying Failed Items...`}
-            {status === ProcessingStatus.CROPPING && "Precisely Cropping..."}
-          </h3>
-          
-          <div className="text-slate-500 font-medium text-center max-w-md min-h-[4em] flex flex-col items-center">
-              <>
-                <span className="mb-4 opacity-80 text-sm font-semibold h-5 overflow-hidden">{detailedStatus}</span>
-                
-                <div className="flex flex-wrap items-center justify-center gap-3 text-[10px] font-black uppercase tracking-widest bg-slate-50 px-6 py-3 rounded-2xl border border-slate-100 shadow-sm">
-                  {status === ProcessingStatus.DETECTING_QUESTIONS ? (
-                    <>
-                      <span className="flex items-center gap-2 text-slate-400">Total: {total}</span>
-                      {failedCount > 0 && (
-                        <span className="flex items-center gap-2 text-red-500 bg-red-50 px-2 py-0.5 rounded">Failed: {failedCount}</span>
-                      )}
-                      <span className="flex items-center gap-2 text-green-600">Done: {completedCount}</span>
-                    </>
-                  ) : status === ProcessingStatus.CROPPING ? (
-                    <>
-                      <span className="flex items-center gap-2 text-slate-400">Total Qs: {croppingTotal}</span>
-                      <span className="flex items-center gap-2 text-green-600">Cropped: {croppingDone}</span>
-                    </>
-                  ) : (
-                    <span className="text-blue-600">Page {progress} / {total}</span>
-                  )}
-                  {/* Elapsed Time Display */}
-                   <div className="flex items-center gap-2 pl-3 ml-1 border-l border-slate-200 text-slate-500 tabular-nums">
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                      {elapsedTime}
-                   </div>
-                </div>
-
-                {onAbort && (
-                  <button 
-                    onClick={onAbort}
-                    className="mt-6 px-5 py-2 rounded-xl border border-red-200 bg-white text-red-500 hover:bg-red-50 hover:border-red-300 font-bold text-xs uppercase tracking-wider transition-all shadow-sm hover:shadow-md active:scale-95 flex items-center gap-2"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
-                    Stop Processing
-                  </button>
-                )}
-              </>
+        <div className="flex items-center gap-4">
+          <div className="shrink-0">
+             <CircularProgress 
+                progress={displayPercent} 
+                size="3.5rem"
+                strokeWidth={4}
+                colorClass={currentRound > 1 ? 'text-orange-500' : 'text-blue-600'}
+                label={<span className="text-[10px] font-black text-slate-700">{Math.round(displayPercent)}%</span>}
+             />
           </div>
-        </>
+          
+          <div className="flex-1 min-w-0">
+             <h3 className="text-sm font-black text-slate-900 truncate tracking-tight mb-0.5">
+                {status === ProcessingStatus.LOADING_PDF && "Loading..."}
+                {status === ProcessingStatus.DETECTING_QUESTIONS && currentRound === 1 && "Analyzing..."}
+                {status === ProcessingStatus.DETECTING_QUESTIONS && currentRound > 1 && "Retrying..."}
+                {status === ProcessingStatus.CROPPING && "Cropping..."}
+             </h3>
+             <p className="text-[10px] font-bold text-slate-400 truncate mb-1">{detailedStatus}</p>
+             
+             <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100 self-start inline-flex">
+                 <span className="tabular-nums">{elapsedTime}</span>
+                 {status === ProcessingStatus.DETECTING_QUESTIONS && (
+                     <>
+                       <span className="w-px h-3 bg-slate-300"></span>
+                       <span>{completedCount}/{total}</span>
+                     </>
+                 )}
+                 {status === ProcessingStatus.CROPPING && (
+                     <>
+                        <span className="w-px h-3 bg-slate-300"></span>
+                        <span>{croppingDone}/{croppingTotal}</span>
+                     </>
+                 )}
+                 {onAbort && (
+                    <>
+                      <span className="w-px h-3 bg-slate-300"></span>
+                      <button onClick={onAbort} className="text-red-500 hover:text-red-600 uppercase">Stop</button>
+                    </>
+                 )}
+             </div>
+          </div>
+        </div>
       )}
     </div>
   );

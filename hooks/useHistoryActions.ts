@@ -87,8 +87,6 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
              );
 
              // 3. Update Active State if this file is currently loaded
-             // This ensures the UI reflects the changes immediately if the user is viewing this file
-             // We check against the rawPages currently in state at the start of this batch process
              const isFileLoaded = rawPages.some((p: any) => p.fileName === fileName);
              
              if (isFileLoaded) {
@@ -121,14 +119,11 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
              await new Promise(resolve => setTimeout(resolve, 20));
          }
 
-         const endTime = Date.now();
-         const durationSeconds = (endTime - startTimeLocal) / 1000;
-         const timeFormatted = durationSeconds.toFixed(1);
-
+         const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
          addNotification(
              null, 
              "success", 
-             `Batch complete: ${totalFilesProcessed} files processed in ${timeFormatted}s. ${totalChangedImages} images updated.`
+             `Batch complete: ${totalFilesProcessed} files processed in ${duration}s. ${totalChangedImages} images updated.`
          );
          await refreshHistoryList();
          
@@ -147,7 +142,8 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     resetState();
     setters.setShowHistory(false);
     setters.setIsLoadingHistory(true);
-    setStartTime(Date.now());
+    const startTimeLocal = Date.now();
+    setStartTime(startTimeLocal);
     setStatus(ProcessingStatus.LOADING_PDF);
     setDetailedStatus('Restoring from history...');
 
@@ -173,8 +169,9 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           setQuestions(result.questions);
           setCompletedCount(uniquePages.length);
           setTotal(uniquePages.length);
-          setStatus(ProcessingStatus.COMPLETED);
-          setDetailedStatus("Loaded successfully from cache.");
+          setStatus(ProcessingStatus.IDLE);
+          const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+          addNotification(result.name, 'success', `Loaded in ${duration}s`);
       } else {
           setStatus(ProcessingStatus.CROPPING);
           setDetailedStatus('Generating questions from raw data...');
@@ -197,9 +194,15 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           );
 
           setQuestions(generatedQuestions);
-          setStatus(ProcessingStatus.COMPLETED);
+          const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+          addNotification(result.name, 'success', `Loaded and cropped in ${duration}s`);
+          setStatus(ProcessingStatus.IDLE);
           setLegacySyncFiles(new Set([result.name]));
       }
+
+      // Auto-navigate to this file
+      setters.setDebugFile(result.name);
+      setters.setLastViewedFile(result.name);
 
     } catch (e: any) {
       setError("Failed to load history: " + e.message);
@@ -219,7 +222,8 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     resetState();
     setters.setShowHistory(false);
     setters.setIsLoadingHistory(true);
-    setStartTime(Date.now());
+    const startTimeLocal = Date.now();
+    setStartTime(startTimeLocal);
     setStatus(ProcessingStatus.LOADING_PDF);
     setDetailedStatus(`Queuing ${ids.length} exams...`);
 
@@ -280,7 +284,18 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
 
       setTotal(uniquePages.length);
       setCompletedCount(uniquePages.length);
-      setStatus(ProcessingStatus.COMPLETED);
+      const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+      addNotification(null, 'success', `Batch loaded in ${duration}s`);
+      
+      // Auto-navigate to first file (sorted alphabetically)
+      const allFiles = Array.from(new Set(uniquePages.map(p => p.fileName)));
+      if (allFiles.length > 0) {
+         allFiles.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+         setters.setDebugFile(allFiles[0]);
+         setters.setLastViewedFile(allFiles[0]);
+      }
+
+      setStatus(ProcessingStatus.IDLE);
 
     } catch (e: any) {
       setError("Batch load failed: " + e.message);
@@ -294,6 +309,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
      const syncSet = legacySyncFiles as Set<string>;
      if (syncSet.size === 0) return;
      setIsSyncingLegacy(true);
+     const startTimeLocal = Date.now();
      try {
          const history = await getHistoryList();
          await Promise.all(Array.from(syncSet).map(async (fileName) => {
@@ -302,7 +318,8 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
              if (historyItem) await updateExamQuestionsOnly(historyItem.id, fileQuestions);
          }));
          setLegacySyncFiles(new Set()); 
-         addNotification(null, "success", "All images saved to database.");
+         const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+         addNotification(null, "success", `Synced in ${duration}s`);
          await refreshHistoryList();
      } catch (e: any) {
          setError("Sync failed: " + e.message);

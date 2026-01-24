@@ -32,6 +32,8 @@ interface Props {
   currentFileIndex: number;
   totalFiles: number;
   cropSettings: CropSettings;
+  isAutoAnalyze?: boolean;
+  setIsAutoAnalyze?: (val: boolean) => void;
 }
 
 export const DebugRawView: React.FC<Props> = ({ 
@@ -58,7 +60,9 @@ export const DebugRawView: React.FC<Props> = ({
   processingFiles,
   currentFileIndex,
   totalFiles,
-  cropSettings
+  cropSettings,
+  isAutoAnalyze,
+  setIsAutoAnalyze
 }) => {
   // Key format: "fileName||pageNumber||detIndex"
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -337,6 +341,8 @@ export const DebugRawView: React.FC<Props> = ({
          zippingProgress={zippingProgress}
          hasNextFile={hasNextFile}
          hasPrevFile={hasPrevFile}
+         isAutoAnalyze={isAutoAnalyze}
+         setIsAutoAnalyze={setIsAutoAnalyze}
       />
 
       <div className="flex-1 flex overflow-hidden relative" ref={containerRef}>
