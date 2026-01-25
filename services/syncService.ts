@@ -15,6 +15,8 @@ import {
   ImageUploadTask,
   setBatchCheckSettings,
   getBatchCheckSettings,
+  uploadImageToR2,
+  checkImageExists,
 } from "./r2Service";
 
 // Get API URL from environment or use default
@@ -886,39 +888,179 @@ async function saveExamToLocal(exam: ExamRecord): Promise<void> {
 }
 
 /**
- * Save exam to both local and remote (with offline support)
+ * Upload images for a single exam to R2 and sync to remote D1
+ * This is the core function for incremental/fine-grained sync
+ * 
+ * @param exam - The exam record to sync
+ * @returns Object with upload stats and the exam with hashes
+ */
+async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
+  success: boolean;
+  imagesUploaded: number;
+  imagesSkipped: number;
+  error?: string;
+}> {
+  const result = {
+    success: true,
+    imagesUploaded: 0,
+    imagesSkipped: 0,
+    error: undefined as string | undefined,
+  };
+
+  try {
+    // Collect all base64 images that need to be uploaded
+    const imagesToProcess: Array<{ dataUrl: string; type: 'rawPage' | 'question' | 'originalQuestion'; index: number }> = [];
+
+    // Collect from rawPages
+    exam.rawPages.forEach((page, index) => {
+      if (!isImageHash(page.dataUrl)) {
+        imagesToProcess.push({ dataUrl: page.dataUrl, type: 'rawPage', index });
+      }
+    });
+
+    // Collect from questions
+    exam.questions.forEach((q, index) => {
+      if (!isImageHash(q.dataUrl)) {
+        imagesToProcess.push({ dataUrl: q.dataUrl, type: 'question', index });
+      }
+      if (q.originalDataUrl && !isImageHash(q.originalDataUrl)) {
+        imagesToProcess.push({ dataUrl: q.originalDataUrl, type: 'originalQuestion', index });
+      }
+    });
+
+    console.log(`[Sync] Found ${imagesToProcess.length} images to process for ${exam.name}`);
+
+    if (imagesToProcess.length === 0) {
+      // No new images, just sync metadata to remote
+      const examWithHashes = exam; // Already all hashes
+      const success = await saveRemoteExam(examWithHashes);
+      if (!success) {
+        result.success = false;
+        result.error = "Failed to sync to remote";
+      }
+      return result;
+    }
+
+    // Calculate hashes for all images
+    const hashMap = new Map<string, string>(); // dataUrl -> hash
+    const uniqueDataUrls = [...new Set(imagesToProcess.map(img => img.dataUrl))];
+    
+    console.log(`[Sync] Calculating hashes for ${uniqueDataUrls.length} unique images...`);
+    
+    for (const dataUrl of uniqueDataUrls) {
+      const hash = await calculateImageHash(dataUrl);
+      hashMap.set(dataUrl, hash);
+    }
+
+    // Check which hashes already exist in R2
+    const uniqueHashes = [...new Set(hashMap.values())];
+    console.log(`[Sync] Checking ${uniqueHashes.length} hashes in R2...`);
+    
+    const existsMap = await batchCheckImagesExist(uniqueHashes, {
+      chunkSize: syncSettings.batchCheckChunkSize,
+      concurrency: syncSettings.batchCheckConcurrency,
+    });
+
+    // Upload missing images
+    const hashesToUpload = uniqueHashes.filter(h => !existsMap[h]);
+    console.log(`[Sync] ${hashesToUpload.length} images need upload, ${uniqueHashes.length - hashesToUpload.length} already exist`);
+    
+    result.imagesSkipped = uniqueHashes.length - hashesToUpload.length;
+
+    // Create reverse map: hash -> dataUrl (for uploading)
+    const hashToDataUrl = new Map<string, string>();
+    for (const [dataUrl, hash] of hashMap.entries()) {
+      if (!hashToDataUrl.has(hash)) {
+        hashToDataUrl.set(hash, dataUrl);
+      }
+    }
+
+    // Upload missing images
+    for (const hash of hashesToUpload) {
+      const dataUrl = hashToDataUrl.get(hash);
+      if (!dataUrl) continue;
+
+      const uploaded = await uploadImageToR2(hash, dataUrl);
+      if (uploaded) {
+        result.imagesUploaded++;
+      } else {
+        console.error(`[Sync] Failed to upload image with hash: ${hash}`);
+        result.success = false;
+        result.error = `Failed to upload image`;
+        return result;
+      }
+    }
+
+    console.log(`[Sync] Uploaded ${result.imagesUploaded} images to R2`);
+
+    // Prepare exam with hashes for remote sync
+    const examWithHashes: ExamRecord = {
+      ...exam,
+      rawPages: exam.rawPages.map((page) => ({
+        ...page,
+        dataUrl: isImageHash(page.dataUrl) ? page.dataUrl : (hashMap.get(page.dataUrl) || page.dataUrl),
+      })),
+      questions: exam.questions.map((q) => ({
+        ...q,
+        dataUrl: isImageHash(q.dataUrl) ? q.dataUrl : (hashMap.get(q.dataUrl) || q.dataUrl),
+        originalDataUrl: q.originalDataUrl
+          ? isImageHash(q.originalDataUrl)
+            ? q.originalDataUrl
+            : (hashMap.get(q.originalDataUrl) || q.originalDataUrl)
+          : undefined,
+      })),
+    };
+
+    // Sync to remote D1
+    console.log(`[Sync] Syncing ${exam.name} to remote...`);
+    const syncSuccess = await saveRemoteExam(examWithHashes);
+    if (!syncSuccess) {
+      result.success = false;
+      result.error = "Failed to sync to remote D1";
+      return result;
+    }
+
+    // Also update local storage with hashes to keep in sync
+    await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions);
+    console.log(`[Sync] Successfully synced ${exam.name}: ${result.imagesUploaded} uploaded, ${result.imagesSkipped} skipped`);
+
+  } catch (e) {
+    result.success = false;
+    result.error = e instanceof Error ? e.message : String(e);
+    console.error(`[Sync] Error syncing ${exam.name}:`, e);
+  }
+
+  return result;
+}
+
+/**
+ * Save exam to local IndexedDB and sync to remote with R2 image upload
+ * This is the fine-grained sync version
  */
 export const saveExamWithSync = async (
   fileName: string,
   rawPages: ExamRecord["rawPages"],
   questions: ExamRecord["questions"] = [],
 ): Promise<string> => {
-  // Always save locally first
+  // Save locally first
   const id = await storageService.saveExamResult(fileName, rawPages, questions);
+  console.log("[Sync] Exam saved locally:", fileName, "id:", id);
 
-  // Get the full record for remote sync
-  const exam = await storageService.loadExamResult(id);
-
-  if (exam && syncState.isOnline) {
-    // Try to sync immediately if online
-    const success = await saveRemoteExam(exam);
-    if (!success) {
-      // Add to pending if remote save fails
-      addPendingAction({
-        type: "save",
-        examId: id,
-        timestamp: Date.now(),
-        data: exam,
-      });
+  // If online, sync to remote with R2 upload
+  if (syncState.isOnline) {
+    const exam = await storageService.loadExamResult(id);
+    if (exam) {
+      const result = await uploadExamImagesToR2AndSync(exam);
+      if (!result.success) {
+        console.error("[Sync] Remote sync failed:", result.error);
+        addPendingAction({
+          type: "save",
+          examId: id,
+          timestamp: Date.now(),
+          data: exam,
+        });
+      }
     }
-  } else if (exam) {
-    // Offline - add to pending queue
-    addPendingAction({
-      type: "save",
-      examId: id,
-      timestamp: Date.now(),
-      data: exam,
-    });
   }
 
   return id;
@@ -959,7 +1101,9 @@ export const deleteExamsWithSync = async (ids: string[]): Promise<void> => {
   await storageService.deleteExamResults(ids);
 
   if (syncState.isOnline) {
-    await deleteRemoteExams(ids).catch(() => {
+    // deleteRemoteExams returns boolean, not throws, so check return value
+    const success = await deleteRemoteExams(ids);
+    if (!success) {
       // Add to pending if fails
       for (const id of ids) {
         addPendingAction({
@@ -968,7 +1112,7 @@ export const deleteExamsWithSync = async (ids: string[]): Promise<void> => {
           timestamp: Date.now(),
         });
       }
-    });
+    }
   } else {
     for (const id of ids) {
       addPendingAction({
@@ -981,33 +1125,38 @@ export const deleteExamsWithSync = async (ids: string[]): Promise<void> => {
 };
 
 /**
- * Update questions with sync
+ * Update questions with sync (fine-grained: only uploads changed images)
  */
 export const updateQuestionsWithSync = async (fileName: string, questions: ExamRecord["questions"]): Promise<void> => {
-  // Update locally
+  // Update locally first
   await storageService.updateQuestionsForFile(fileName, questions);
+  console.log("[Sync] Questions updated locally for:", fileName);
 
-  // Get updated record for sync
-  const list = await storageService.getHistoryList();
-  const meta = list.find((h) => h.name === fileName);
-
-  if (meta) {
-    const exam = await storageService.loadExamResult(meta.id);
-    if (exam && syncState.isOnline) {
-      await saveRemoteExam(exam).catch(() => {
-        addPendingAction({
-          type: "save",
-          examId: meta.id,
-          timestamp: Date.now(),
-          data: exam,
-        });
-      });
+  // If online, sync to remote with R2 upload (fine-grained)
+  if (syncState.isOnline) {
+    const list = await storageService.getHistoryList();
+    const meta = list.find((h) => h.name === fileName);
+    if (meta) {
+      const exam = await storageService.loadExamResult(meta.id);
+      if (exam) {
+        const result = await uploadExamImagesToR2AndSync(exam);
+        if (!result.success) {
+          console.error("[Sync] Remote sync failed:", result.error);
+          addPendingAction({
+            type: "save",
+            examId: meta.id,
+            timestamp: Date.now(),
+            data: exam,
+          });
+        }
+      }
     }
   }
 };
 
 /**
  * Re-save exam result with sync (used for recrop operations)
+ * Fine-grained: only uploads changed images to R2 and syncs this file
  */
 export const reSaveExamResultWithSync = async (
   fileName: string,
@@ -1020,41 +1169,39 @@ export const reSaveExamResultWithSync = async (
   await storageService.reSaveExamResult(fileName, rawPages, questions);
   console.log("[Sync] Local save completed for:", fileName);
 
-  // Get updated record for sync
-  const list = await storageService.getHistoryList();
-  const meta = list.find((h) => h.name === fileName);
-
-  if (meta) {
-    const exam = await storageService.loadExamResult(meta.id);
-    if (exam && syncState.isOnline) {
-      console.log("[Sync] Online - attempting remote save for:", fileName);
-      await saveRemoteExam(exam).catch((error) => {
-        console.error("[Sync] Remote save failed:", error);
-        addPendingAction({
-          type: "save",
-          examId: meta.id,
-          timestamp: Date.now(),
-          data: exam,
-        });
-      });
-      console.log("[Sync] Remote save attempt completed for:", fileName);
-    } else if (exam) {
-      console.log("[Sync] Offline - adding to pending queue:", fileName);
-      // Offline - add to pending queue
-      addPendingAction({
-        type: "save",
-        examId: meta.id,
-        timestamp: Date.now(),
-        data: exam,
-      });
+  // If online, sync to remote with R2 upload (fine-grained)
+  if (syncState.isOnline) {
+    const list = await storageService.getHistoryList();
+    const meta = list.find((h) => h.name === fileName);
+    if (meta) {
+      const exam = await storageService.loadExamResult(meta.id);
+      if (exam) {
+        const result = await uploadExamImagesToR2AndSync(exam);
+        if (!result.success) {
+          console.error("[Sync] Remote sync failed:", result.error);
+          addPendingAction({
+            type: "save",
+            examId: meta.id,
+            timestamp: Date.now(),
+            data: exam,
+          });
+        } else {
+          console.log(`[Sync] Synced ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`);
+        }
+      }
     }
-  } else {
-    console.warn("[Sync] No metadata found for:", fileName);
   }
 };
 
 /**
  * Update page detections and questions with sync (used for debug box adjustments)
+ * Fine-grained: only uploads changed images to R2 and syncs this file
+ * 
+ * When user adjusts boundaries in debug boxes:
+ * 1. New question images are generated (base64 dataUrl)
+ * 2. This function uploads only those new images to R2
+ * 3. Updates the data_url to hash references
+ * 4. Syncs only this file to remote D1
  */
 export const updatePageDetectionsAndQuestionsWithSync = async (
   fileName: string,
@@ -1064,41 +1211,34 @@ export const updatePageDetectionsAndQuestionsWithSync = async (
 ): Promise<void> => {
   console.log("[Sync] updatePageDetectionsAndQuestionsWithSync called for:", fileName, "page:", pageNumber);
 
-  // Update locally first
+  // Update locally first - this saves the new base64 dataUrls to IndexedDB
   await storageService.updatePageDetectionsAndQuestions(fileName, pageNumber, newDetections, newFileQuestions);
   console.log("[Sync] Local detection update completed for:", fileName);
 
-  // Get updated record for sync
-  const list = await storageService.getHistoryList();
-  const meta = list.find((h) => h.name === fileName);
-
-  if (meta) {
-    const exam = await storageService.loadExamResult(meta.id);
-    console.log("[Sync] isOnline:", syncState.isOnline, "exam loaded:", !!exam);
-    if (exam && syncState.isOnline) {
-      console.log("[Sync] Online - attempting remote save for detection update:", fileName);
-      await saveRemoteExam(exam).catch((error) => {
-        console.error("[Sync] Remote save failed:", error);
-        addPendingAction({
-          type: "save",
-          examId: meta.id,
-          timestamp: Date.now(),
-          data: exam,
-        });
-      });
-      console.log("[Sync] Remote save attempt completed for:", fileName);
-    } else if (exam) {
-      console.log("[Sync] Offline - adding to pending queue:", fileName);
-      // Offline - add to pending queue
-      addPendingAction({
-        type: "save",
-        examId: meta.id,
-        timestamp: Date.now(),
-        data: exam,
-      });
+  // If online, sync to remote with R2 upload (fine-grained)
+  if (syncState.isOnline) {
+    const list = await storageService.getHistoryList();
+    const meta = list.find((h) => h.name === fileName);
+    if (meta) {
+      const exam = await storageService.loadExamResult(meta.id);
+      if (exam) {
+        console.log(`[Sync] Starting fine-grained sync for ${fileName}...`);
+        const result = await uploadExamImagesToR2AndSync(exam);
+        if (!result.success) {
+          console.error("[Sync] Remote sync failed:", result.error);
+          addPendingAction({
+            type: "save",
+            examId: meta.id,
+            timestamp: Date.now(),
+            data: exam,
+          });
+        } else {
+          console.log(`[Sync] Fine-grained sync completed for ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`);
+        }
+      }
     }
   } else {
-    console.warn("[Sync] No metadata found for:", fileName);
+    console.log("[Sync] Offline - changes saved locally, will sync when online");
   }
 };
 

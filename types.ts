@@ -34,7 +34,6 @@ export interface QuestionImage {
   pageNumber: number;
   fileName: string; // Added to track which PDF this question belongs to
   dataUrl: string;
-  originalDataUrl?: string; // Used for "Before/After" comparison if trimming occurred
   analysis?: QuestionAnalysis; // New optional field
 }
 
@@ -54,7 +53,6 @@ export interface ProcessedCanvas {
   canvas: HTMLCanvasElement | OffscreenCanvas;
   width: number;
   height: number;
-  originalDataUrl?: string;
 }
 
 export interface HistoryMetadata {
