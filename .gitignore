@@ -25,3 +25,4 @@ dist-ssr
 prompt
 pnpm-lock.yaml
 .wrangler
+package-lock.json

@@ -248,7 +248,7 @@ const App: React.FC = () => {
         const fileQs = state.questions.filter((q) => q.fileName === fileName);
         if (fileQs.length === 0) continue;
         const fileRawPages = state.rawPages.filter((p) => p.fileName === fileName);
-        const folder = isBatch ? zip.folder(fileName) : zip;
+        const folder = zip.folder(fileName);
         if (!folder) continue;
 
         const lightweightRawPages = fileRawPages.map(({ dataUrl, ...rest }) => rest);
