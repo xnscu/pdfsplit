@@ -64,18 +64,32 @@ const openDB = (): Promise<IDBDatabase> => {
 /**
  * Save an exam result to history
  * NOW SUPPORTS SAVING PROCESSED QUESTIONS
+ * 
+ * @param fileName - The name of the exam file
+ * @param rawPages - The raw page data
+ * @param questions - The question images
+ * @param preserveId - Optional: Preserve this specific ID (used for sync from remote to maintain ID consistency)
  */
 export const saveExamResult = async (
   fileName: string,
   rawPages: DebugPageData[],
   questions: QuestionImage[] = [],
+  preserveId?: string,
 ): Promise<string> => {
   const db = await openDB();
 
-  // Try to find existing record by name to update it instead of creating duplicate entries for same file name
-  const list = await getHistoryList();
-  const existing = list.find((h) => h.name === fileName);
-  const id = existing ? existing.id : crypto.randomUUID();
+  // Determine the ID to use:
+  // 1. If preserveId is provided (from remote sync), use it to maintain ID consistency across devices
+  // 2. Otherwise, try to find existing record by name to update it
+  // 3. If not found, generate a new UUID
+  let id: string;
+  if (preserveId) {
+    id = preserveId;
+  } else {
+    const list = await getHistoryList();
+    const existing = list.find((h) => h.name === fileName);
+    id = existing ? existing.id : crypto.randomUUID();
+  }
   const timestamp = Date.now();
 
   // Safety: Deduplicate pages by pageNumber before saving to prevent DB corruption

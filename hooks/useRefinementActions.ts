@@ -243,7 +243,7 @@ export const useRefinementActions = ({
 
     // Find which detection IDs were modified by comparing old vs new
     const affectedDetectionIds = new Set<string>();
-    
+
     newDetections.forEach((newDet, idx) => {
       const oldDet = oldDetections[idx];
       if (!oldDet) {
@@ -354,7 +354,7 @@ export const useRefinementActions = ({
 
           console.log(`[Refinement] Regenerating question: ${task.id}`);
           const regenerated = await processLogicalQuestion(task, cropSettings, targetWidth);
-          
+
           if (regenerated) {
             // Preserve existing analysis if any
             const existingQ = existingQuestionMap.get(task.id);

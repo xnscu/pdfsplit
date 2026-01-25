@@ -876,9 +876,13 @@ export const forceDownloadAll = async (
 
 /**
  * Save exam to local IndexedDB
+ * IMPORTANT: Must preserve the exam.id to maintain ID consistency between local and remote!
+ * This ensures that when user syncs from remote, the local ID matches the remote ID,
+ * preventing duplicate records when user later makes changes and syncs back.
  */
 async function saveExamToLocal(exam: ExamRecord): Promise<void> {
-  await storageService.saveExamResult(exam.name, exam.rawPages, exam.questions);
+  // Pass exam.id as preserveId to maintain ID consistency across devices
+  await storageService.saveExamResult(exam.name, exam.rawPages, exam.questions, exam.id);
 }
 
 /**
@@ -1007,7 +1011,8 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
     }
 
     // Also update local storage with hashes to keep in sync
-    await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions);
+    // IMPORTANT: Pass exam.id to maintain ID consistency (examWithHashes has the same id as exam)
+    await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id);
     console.log(`[Sync] Successfully synced ${exam.name}: ${result.imagesUploaded} uploaded, ${result.imagesSkipped} skipped`);
 
   } catch (e) {

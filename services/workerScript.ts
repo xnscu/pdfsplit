@@ -62,7 +62,7 @@ const checkCanvasEdges = (ctx, width, height, threshold = 230, depth = 2) => {
     }
     if (topHasInk) break;
   }
-  
+
   // Check Bottom
   for (let y = h - d; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -102,7 +102,7 @@ const getTrimmedBounds = (ctx, width, height) => {
 
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
-  const threshold = 220; 
+  const threshold = 220;
 
   const rowHasInk = (y) => {
     for (let x = 0; x < w; x++) {
@@ -147,7 +147,7 @@ const getTrimmedBounds = (ctx, width, height) => {
 
 /**
  * Enhanced Trim Whitespace with Threshold Limit (Max Cut Depth)
- * @param limit - Max pixels to remove from any side. 
+ * @param limit - Max pixels to remove from any side.
  *                If whitespace > limit, we remove 'limit' pixels and keep the rest.
  *                If whitespace < limit, we remove all of it.
  *                This preserves RELATIVE indentation if the common margin > limit.
@@ -159,7 +159,7 @@ const trimWhitespace = (ctx, width, height, limit = 0) => {
 
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
-  const threshold = 242; 
+  const threshold = 242;
 
   const isInkPixel = (x, y) => {
     const i = (y * w + x) * 4;
@@ -274,12 +274,12 @@ const processPartsRaw = async (sourceDataUrl, boxes, originalWidth, originalHeig
       }
     }
     const finalBoxes = boxes.filter((_, i) => !indicesToDrop.has(i));
-    
+
     const imgBitmap = await loadImageBitmapFromDataUrl(sourceDataUrl);
     const CROP_PADDING = settings.cropPadding;
 
     const processedFragments = [];
-    
+
     for (const box of finalBoxes) {
         const [ymin, xmin, ymax, xmax] = box;
 
@@ -297,7 +297,7 @@ const processPartsRaw = async (sourceDataUrl, boxes, originalWidth, originalHeig
         if (uW > 0 && uH > 0) {
             const { canvas: checkCanvas, context: checkCtx } = createSmartCanvas(uW, uH);
             checkCtx.drawImage(imgBitmap, uX, uY, uW, uH, 0, 0, uW, uH);
-            const edges = checkCanvasEdges(checkCtx, uW, uH, 230, 2); 
+            const edges = checkCanvasEdges(checkCtx, uW, uH, 230, 2);
             if (edges.top) pTop = 0;
             if (edges.bottom) pBottom = 0;
             if (edges.left) pLeft = 0;
@@ -343,7 +343,7 @@ const processPartsRaw = async (sourceDataUrl, boxes, originalWidth, originalHeig
     processedFragments.forEach((f) => {
         const relativeOffset = f.absInkX - minAbsInkX;
         ctx.drawImage(
-          f.sourceCanvas, 
+          f.sourceCanvas,
           f.trim.x, f.trim.y, f.trim.w, f.trim.h,
           relativeOffset, currentY, f.trim.w, f.trim.h
         );
@@ -354,7 +354,7 @@ const processPartsRaw = async (sourceDataUrl, boxes, originalWidth, originalHeig
 };
 
 const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
-    const partsImages = []; 
+    const partsImages = [];
 
     // Process each part individually using the 5-Step Pipeline
     for (const part of task.parts) {
@@ -374,16 +374,16 @@ const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
          // [STEP 2] Trim Whitespace (with Threshold):
          // Removes excess whitespace but STOPS if limit (50px) is reached.
          // This preserves relative alignment if margins are large.
-         const TRIM_LIMIT = 50; 
+         const TRIM_LIMIT = 50;
          const trim = trimWhitespace(rawRes.canvas.getContext('2d'), rawRes.canvas.width, rawRes.canvas.height, TRIM_LIMIT);
 
          // [STEP 3] Inner Padding: Add consistent aesthetic padding (canvasPadding)
          const padding = settings.canvasPadding;
-         
+
          const contentW = trim.w;
          const contentH = trim.h;
-         
-         // [STEP 4] Width Alignment: 
+
+         // [STEP 4] Width Alignment:
          // Force width to be at least targetWidth (Max AI Box Width).
          // Fill right side with whitespace.
          const finalW = Math.max(contentW, Math.floor(targetWidth)) + (padding * 2);
@@ -412,18 +412,18 @@ const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
         finalCanvas = partsImages[0].canvas;
     } else {
         const maxW = Math.max(...partsImages.map(p => p.canvas.width));
-        
+
         let composedH = 0;
         partsImages.forEach((p, i) => {
             if (i === 0) composedH += p.canvas.height;
             // mergeOverlap is usually positive (amount to overlap), so subtract it
-            else composedH += (p.canvas.height - settings.mergeOverlap); 
+            else composedH += (p.canvas.height - settings.mergeOverlap);
         });
-        
+
         const { canvas: mergedC, context: mergedCtx } = createSmartCanvas(maxW, composedH);
         mergedCtx.fillStyle = '#ffffff';
         mergedCtx.fillRect(0, 0, maxW, composedH);
-        
+
         let yPos = 0;
         partsImages.forEach((p, i) => {
             mergedCtx.drawImage(p.canvas, 0, yPos);
@@ -451,7 +451,7 @@ const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
 
 const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, originalHeight, settings, targetWidth = 0) => {
     const imgBitmap = await loadImageBitmapFromDataUrl(sourceDataUrl);
-    
+
     // Stage 1: Raw AI Detection
     const { canvas: s1Canvas, context: s1Ctx } = createSmartCanvas(1, 1);
     const s1Fragments = boxes.map(box => {
@@ -462,11 +462,11 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
          const h = ((ymax - ymin) / 1000) * originalHeight;
          return { x, y, w, h };
     });
-    
+
     const minX = Math.min(...s1Fragments.map(f => f.x));
-    const totalH = s1Fragments.reduce((acc, f) => acc + f.h + 5, 0); 
+    const totalH = s1Fragments.reduce((acc, f) => acc + f.h + 5, 0);
     const maxW = Math.max(...s1Fragments.map(f => f.w));
-    
+
     s1Canvas.width = maxW;
     s1Canvas.height = totalH;
     s1Ctx.fillStyle = '#ffffff';
@@ -481,7 +481,7 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
     // Stage 2: Smart Crop Padding
     const { canvas: s2Canvas, context: s2Ctx } = createSmartCanvas(1, 1);
     const s2Fragments = [];
-    
+
     for (const box of boxes) {
          const [ymin, xmin, ymax, xmax] = box;
          const uX = Math.floor((xmin / 1000) * originalWidth);
@@ -497,7 +497,7 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
          if (uW > 0 && uH > 0) {
             const { canvas: checkCanvas, context: checkCtx } = createSmartCanvas(uW, uH);
             checkCtx.drawImage(imgBitmap, uX, uY, uW, uH, 0, 0, uW, uH);
-            const edges = checkCanvasEdges(checkCtx, uW, uH, 230, 2); 
+            const edges = checkCanvasEdges(checkCtx, uW, uH, 230, 2);
             if (edges.top) pTop = 0;
             if (edges.bottom) pBottom = 0;
             if (edges.left) pLeft = 0;
@@ -508,7 +508,7 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
          const rawY = (ymin / 1000) * originalHeight;
          const rawW = ((xmax - xmin) / 1000) * originalWidth;
          const rawH = ((ymax - ymin) / 1000) * originalHeight;
-         
+
          const x = Math.max(0, rawX - pLeft);
          const y = Math.max(0, rawY - pTop);
          const w = Math.min(originalWidth - x, rawW + pLeft + pRight);
@@ -544,7 +544,7 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
             stage3 = await canvasToDataURL(result3.canvas);
          }
     }
-    
+
     // Stage 4: Aligned & Merged (Final)
     // To show true final output, we should run the full processLogicalQuestion logic for this part
     let stage4 = '';
@@ -554,11 +554,11 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
          const finalContentWidth = Math.max(t.w, Math.floor(targetWidth));
          const finalWidth = finalContentWidth + (padding * 2);
          const finalHeight = t.h + (padding * 2);
-         
+
          const { canvas: exportCanvas, context: exportCtx } = createSmartCanvas(finalWidth, finalHeight);
          exportCtx.fillStyle = '#ffffff';
          exportCtx.fillRect(0, 0, finalWidth, finalHeight);
-         
+
          exportCtx.drawImage(
             result3.canvas,
             t.x, t.y, t.w, t.h,
@@ -573,7 +573,7 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
 
 self.onmessage = async (e) => {
   const { id, type, payload } = e.data;
-  
+
   if (type === 'PROCESS_QUESTION') {
      try {
         const result = await processLogicalQuestion(payload.task, payload.settings, payload.targetWidth);
@@ -582,7 +582,7 @@ self.onmessage = async (e) => {
         console.error("Worker Error:", err);
         self.postMessage({ id, success: false, error: err.message });
      }
-  } 
+  }
   else if (type === 'GENERATE_DEBUG') {
       try {
           const { sourceDataUrl, boxes, originalWidth, originalHeight, settings, targetWidth } = payload;
