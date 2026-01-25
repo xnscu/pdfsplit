@@ -96,7 +96,6 @@ export function useSync(): UseSyncResult {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
       syncService.removeProgressListener(handleProgress);
-      syncService.stopAutoSync();
     };
   }, [handleProgress]);
 

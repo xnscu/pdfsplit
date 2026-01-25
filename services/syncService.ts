@@ -36,9 +36,6 @@ const SYNC_CONFIG = {
   // Local storage key for sync settings
   syncSettingsKey: "gksx_sync_settings",
 
-  // Auto-sync interval in milliseconds (5 minutes)
-  autoSyncInterval: 5 * 60 * 1000,
-
   // Maximum retries for failed sync
   maxRetries: 3,
 
@@ -187,8 +184,6 @@ let syncState: SyncState = {
   pendingActions: [],
   isOnline: typeof navigator !== "undefined" ? navigator.onLine : true,
 };
-
-let syncInterval: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Load sync state from localStorage
@@ -1120,34 +1115,6 @@ export const initSyncService = (): void => {
   if (typeof window !== "undefined") {
     window.addEventListener("online", () => updateOnlineStatus(true));
     window.addEventListener("offline", () => updateOnlineStatus(false));
-  }
-
-  // Start auto-sync interval
-  startAutoSync();
-};
-
-/**
- * Start automatic sync interval
- */
-export const startAutoSync = (): void => {
-  if (syncInterval) {
-    clearInterval(syncInterval);
-  }
-
-  syncInterval = setInterval(() => {
-    if (syncState.isOnline) {
-      fullSync().catch(console.error);
-    }
-  }, SYNC_CONFIG.autoSyncInterval);
-};
-
-/**
- * Stop automatic sync
- */
-export const stopAutoSync = (): void => {
-  if (syncInterval) {
-    clearInterval(syncInterval);
-    syncInterval = null;
   }
 };
 
