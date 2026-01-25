@@ -388,7 +388,8 @@ export class ConcurrentUploader {
  * Get R2 image URL from hash
  */
 export function getR2ImageUrl(hash: string): string {
-  return `${API_BASE_URL}/r2/${hash}`;
+  const base = API_BASE_URL.replace(/\/$/, "");
+  return `${base}/r2/${hash}`;
 }
 
 /**

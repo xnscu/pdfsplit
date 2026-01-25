@@ -144,23 +144,50 @@ class WorkerPool {
 
         const msgId = Math.random().toString(36).substring(7);
 
+        const cleanup = () => {
+          worker.removeEventListener("message", handler);
+          worker.removeEventListener("error", onError);
+          worker.removeEventListener("messageerror", onMessageError);
+        };
+
+        const onError = (e: ErrorEvent) => {
+          cleanup();
+          this.activeCount--;
+          this.workerMap.set(worker, false);
+          job.reject(new Error(e.message || "Worker error"));
+          this.processQueue();
+        };
+
+        const onMessageError = () => {
+          cleanup();
+          this.activeCount--;
+          this.workerMap.set(worker, false);
+          job.reject(new Error("Worker message deserialization error"));
+          this.processQueue();
+        };
+
         const handler = (e: MessageEvent) => {
           if (e.data.id === msgId) {
-            worker.removeEventListener("message", handler);
+            cleanup();
             this.activeCount--;
             this.workerMap.set(worker, false);
 
             if (e.data.success) {
-              job.resolve(e.data.result);
+              if (e.data.result === null || e.data.result === undefined) {
+                job.reject(new Error("Worker returned empty result"));
+              } else {
+                job.resolve(e.data.result);
+              }
             } else {
-              console.error("Worker processing error:", e.data.error);
-              job.resolve(null);
+              job.reject(new Error(e.data.error || "Worker processing error"));
             }
             this.processQueue();
           }
         };
 
         worker.addEventListener("message", handler);
+        worker.addEventListener("error", onError);
+        worker.addEventListener("messageerror", onMessageError);
         worker.postMessage({
           id: msgId,
           type: job.type,

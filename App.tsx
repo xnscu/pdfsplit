@@ -22,6 +22,7 @@ import { useRefinementActions } from "./hooks/useRefinementActions";
 import { useAnalysisProcessor } from "./hooks/useAnalysisProcessor";
 import { useSync } from "./hooks/useSync";
 import { reSaveExamResult } from "./services/storageService"; // Needed for analysis save
+import { imageRefToBlob } from "./services/imageRef";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs";
 
@@ -266,17 +267,15 @@ const App: React.FC = () => {
         }
 
         const fullPagesFolder = folder.folder("full_pages");
-        fileRawPages.forEach((page) => {
-          const base64Data = page.dataUrl.split(",")[1];
-          fullPagesFolder?.file(`Page_${page.pageNumber}.jpg`, base64Data, {
-            base64: true,
+        for (const page of fileRawPages) {
+          const blob = await imageRefToBlob(page.dataUrl);
+          fullPagesFolder?.file(`Page_${page.pageNumber}.jpg`, blob, {
             compression: "STORE",
           });
-        });
+        }
 
         const usedNames = new Set<string>();
-        fileQs.forEach((q) => {
-          const base64Data = q.dataUrl.split(",")[1];
+        for (const q of fileQs) {
           let finalName = `${q.fileName}_Q${q.id}.jpg`;
           if (usedNames.has(finalName)) {
             let counter = 1;
@@ -285,11 +284,11 @@ const App: React.FC = () => {
             finalName = `${baseName}_${counter}.jpg`;
           }
           usedNames.add(finalName);
-          folder.file(finalName, base64Data, {
-            base64: true,
+          const blob = await imageRefToBlob(q.dataUrl);
+          folder.file(finalName, blob, {
             compression: "STORE",
           });
-        });
+        }
 
         processedCount++;
         // Update progress text

@@ -1,10 +1,41 @@
 // This file contains the worker code as a string to avoid bundler configuration issues in the browser environment.
 // It replicates the logic from canvas-utils.js and pdfService.ts adapted for a Worker environment (OffscreenCanvas).
 
+// Keep in sync with services/r2Service.ts (Vite env injection)
+const getApiUrl = (): string => {
+  // @ts-ignore - Vite injects import.meta.env
+  const envUrl =
+    typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_URL;
+  return envUrl || "/api";
+};
+
+const API_BASE_URL = getApiUrl();
+const ORIGIN =
+  typeof window !== "undefined" && window.location?.origin
+    ? window.location.origin
+    : "";
+
 const WORKER_CODE = `
 /**
  * SHARED CANVAS UTILS (Inlined for Worker)
  */
+
+const API_BASE_URL = ${JSON.stringify(API_BASE_URL)};
+const ORIGIN = ${JSON.stringify(ORIGIN)};
+const toAbsoluteUrl = (url) => {
+  if (!url) return url;
+  if (/^https?:\\/\\//i.test(url)) return url;
+  if (url.startsWith('/') && ORIGIN) return ORIGIN + url;
+  return url;
+};
+const ABS_API_BASE_URL = toAbsoluteUrl(API_BASE_URL);
+const isImageHash = (value) => /^[a-f0-9]{64}$/i.test(value);
+const joinBase = (base, path) => {
+  const b = (base || '').replace(/\\/$/, '');
+  return b + path;
+};
+const resolveImageUrl = (value) => (isImageHash(value) ? joinBase(ABS_API_BASE_URL, '/r2/' + value) : value);
+
 const checkCanvasEdges = (ctx, width, height, threshold = 230, depth = 2) => {
   const w = Math.floor(width);
   const h = Math.floor(height);
@@ -205,7 +236,7 @@ const createSmartCanvas = (width, height) => {
 };
 
 const loadImageBitmapFromDataUrl = async (dataUrl) => {
-  const res = await fetch(dataUrl);
+  const res = await fetch(toAbsoluteUrl(resolveImageUrl(dataUrl)));
   const blob = await res.blob();
   return await createImageBitmap(blob);
 };

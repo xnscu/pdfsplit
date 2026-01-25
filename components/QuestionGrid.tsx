@@ -13,6 +13,7 @@ import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { resolveImageUrl } from "../services/r2Service";
+import { imageRefToBlob } from "../services/imageRef";
 
 interface Props {
   questions: QuestionImage[];
@@ -322,17 +323,15 @@ export const QuestionGrid: React.FC<Props> = ({
         }
 
         const fullPagesFolder = folder.folder("full_pages");
-        fileRawPages.forEach((page) => {
-          const base64Data = page.dataUrl.split(",")[1];
-          fullPagesFolder?.file(`Page_${page.pageNumber}.jpg`, base64Data, {
-            base64: true,
+        for (const page of fileRawPages) {
+          const blob = await imageRefToBlob(page.dataUrl);
+          fullPagesFolder?.file(`Page_${page.pageNumber}.jpg`, blob, {
             compression: "STORE",
           });
-        });
+        }
 
         const usedNames = new Set<string>();
-        fileQs.forEach((q) => {
-          const base64Data = q.dataUrl.split(",")[1];
+        for (const q of fileQs) {
           let finalName = `${q.fileName}_Q${q.id}.jpg`;
           if (usedNames.has(finalName)) {
             let counter = 1;
@@ -341,11 +340,11 @@ export const QuestionGrid: React.FC<Props> = ({
             finalName = `${baseName}_${counter}.jpg`;
           }
           usedNames.add(finalName);
-          folder.file(finalName, base64Data, {
-            base64: true,
+          const blob = await imageRefToBlob(q.dataUrl);
+          folder.file(finalName, blob, {
             compression: "STORE",
           });
-        });
+        }
 
         processedCount++;
         if (!targetFileName) {

@@ -22,7 +22,7 @@
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",
     "postdeploy": "git push",
-    "db": "wrangler d1 execute gksx --remote --yes",
+    "db": "wrangler d1 execute gksx --yes --file=migrations/tmp.sql",
     "db:init:remote": "wrangler d1 execute gksx --file=schema.sql --remote",
     "db:init": "wrangler d1 execute gksx --local --file=schema.sql"
   },

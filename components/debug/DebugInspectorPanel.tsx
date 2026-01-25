@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { DetectedQuestion, QuestionImage, DebugPageData } from "../../types";
 import { generateDebugPreviews } from "../../services/generationService";
 import { CropSettings } from "../../services/pdfService";
+import { resolveImageUrl } from "../../services/r2Service";
 
 interface Props {
   width: number;
@@ -39,11 +40,13 @@ export const DebugInspectorPanel: React.FC<Props> = ({
     stage4: string;
   } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   // Effect: Generate previews when selection changes
   useEffect(() => {
     setStages(null);
     setIsGenerating(false);
+    setPreviewError(null);
 
     if (!selectedDetection || !pageData) return;
 
@@ -83,6 +86,7 @@ export const DebugInspectorPanel: React.FC<Props> = ({
         setStages(result);
       } catch (e) {
         console.error("Error generating debug view:", e);
+        setPreviewError(e instanceof Error ? e.message : String(e));
       } finally {
         setIsGenerating(false);
       }
@@ -193,6 +197,11 @@ export const DebugInspectorPanel: React.FC<Props> = ({
 
             {/* 4 Stages */}
             <div className="space-y-6">
+              {previewError && (
+                <div className="bg-red-950/40 border border-red-900/40 text-red-200 rounded-2xl px-4 py-3 text-xs font-bold">
+                  预览生成失败：{previewError}
+                </div>
+              )}
               <PreviewCard
                 title="1. Raw AI Detection"
                 url={stages?.stage1}
@@ -213,7 +222,7 @@ export const DebugInspectorPanel: React.FC<Props> = ({
               />
               <PreviewCard
                 title="4. Final Output"
-                url={selectedImage?.dataUrl || stages?.stage4}
+                url={resolveImageUrl(selectedImage?.dataUrl) || stages?.stage4}
                 color="green"
                 desc={selectedImage ? "Full Merged Result" : "Aligned Fragment"}
               />

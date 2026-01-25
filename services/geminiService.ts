@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { DetectedQuestion, QuestionAnalysis } from "../types";
 import { PROMPTS, SCHEMAS, MODEL_IDS } from "../shared/ai-config.js";
+import { imageRefToInlineImageData } from "./imageRef";
 
 const getAiClient = (apiKey?: string) => {
   const key = apiKey || process.env.API_KEY;
@@ -34,8 +35,7 @@ export const detectQuestionsOnPage = async (
             parts: [
               {
                 inlineData: {
-                  mimeType: "image/jpeg",
-                  data: image.split(",")[1],
+                  ...(await imageRefToInlineImageData(image)),
                 },
               },
               { text: promptText },
@@ -103,8 +103,7 @@ export const analyzeQuestion = async (
             parts: [
               {
                 inlineData: {
-                  mimeType: "image/jpeg",
-                  data: image.split(",")[1],
+                  ...(await imageRefToInlineImageData(image)),
                 },
               },
               { text: promptText },
