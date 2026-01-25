@@ -181,6 +181,9 @@ async function handleApiRoutes(request, env, path, method) {
 // ============ R2 Storage Handlers ============
 
 async function handleCheckR2Image(r2, hash) {
+  if (!r2) {
+    return errorResponse('R2 storage not configured', 503);
+  }
   try {
     const object = await r2.head(hash);
     if (object) {
@@ -200,6 +203,9 @@ async function handleCheckR2Image(r2, hash) {
 }
 
 async function handleGetR2Image(r2, hash) {
+  if (!r2) {
+    return errorResponse('R2 storage not configured', 503);
+  }
   try {
     const object = await r2.get(hash);
     if (!object) {
@@ -220,6 +226,9 @@ async function handleGetR2Image(r2, hash) {
 }
 
 async function handleUploadR2Image(request, r2, hash) {
+  if (!r2) {
+    return errorResponse('R2 storage not configured', 503);
+  }
   try {
     // Check if already exists
     const existing = await r2.head(hash);
@@ -243,6 +252,9 @@ async function handleUploadR2Image(request, r2, hash) {
 }
 
 async function handleBatchCheckR2Images(r2, hashes) {
+  if (!r2) {
+    return errorResponse('R2 storage not configured', 503);
+  }
   try {
     const results = {};
     
