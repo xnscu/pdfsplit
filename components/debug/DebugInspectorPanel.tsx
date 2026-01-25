@@ -203,6 +203,12 @@ export const DebugInspectorPanel: React.FC<Props> = ({
                 </div>
               )}
               <PreviewCard
+                title="4. Final Output"
+                url={resolveImageUrl(selectedImage?.dataUrl) || stages?.stage4}
+                color="green"
+                desc={selectedImage ? "Full Merged Result" : "Aligned Fragment"}
+              />
+              <PreviewCard
                 title="1. Raw AI Detection"
                 url={stages?.stage1}
                 color="blue"
@@ -219,12 +225,6 @@ export const DebugInspectorPanel: React.FC<Props> = ({
                 url={stages?.stage3}
                 color="violet"
                 desc="Analyzed Content"
-              />
-              <PreviewCard
-                title="4. Final Output"
-                url={resolveImageUrl(selectedImage?.dataUrl) || stages?.stage4}
-                color="green"
-                desc={selectedImage ? "Full Merged Result" : "Aligned Fragment"}
               />
             </div>
 

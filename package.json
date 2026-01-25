@@ -20,6 +20,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "predeploy": "npm --no-git-tag-version version minor",
     "deploy": "vite build && wrangler deploy",
     "postdeploy": "git push",
     "db": "wrangler d1 execute gksx --yes --file=migrations/tmp.sql",
