@@ -180,9 +180,6 @@ const VirtualRow = ({ index, style, data }: ListChildComponentProps) => {
                   </span>
                 )}
               </div>
-              {q.originalDataUrl && (
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-              )}
             </div>
             <div
               className="p-4 flex items-center justify-center flex-grow cursor-zoom-in relative bg-white"
@@ -218,7 +215,6 @@ export const QuestionGrid: React.FC<Props> = ({
   const [selectedImage, setSelectedImage] = useState<QuestionImage | null>(
     null,
   );
-  const [showOriginal, setShowOriginal] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(true);
 
   // Cast imports to any to bypass type errors in some environments
@@ -251,7 +247,6 @@ export const QuestionGrid: React.FC<Props> = ({
     const currentIndex = questions.indexOf(selectedImage);
     if (currentIndex < questions.length - 1) {
       setSelectedImage(questions[currentIndex + 1]);
-      setShowOriginal(false);
     }
   }, [questions, selectedImage]);
 
@@ -260,7 +255,6 @@ export const QuestionGrid: React.FC<Props> = ({
     const currentIndex = questions.indexOf(selectedImage);
     if (currentIndex > 0) {
       setSelectedImage(questions[currentIndex - 1]);
-      setShowOriginal(false);
     }
   }, [questions, selectedImage]);
 
@@ -659,35 +653,10 @@ export const QuestionGrid: React.FC<Props> = ({
               <div
                 className={`relative h-full bg-slate-50 flex items-center justify-center p-8 overflow-auto transition-all duration-300 ${showAnalysis && selectedImage.analysis ? "w-1/2 border-r border-slate-200" : "w-full"}`}
               >
-                {selectedImage.originalDataUrl && (
-                  <div className="absolute top-6 left-6 z-20">
-                    <button
-                      onMouseDown={() => setShowOriginal(true)}
-                      onMouseUp={() => setShowOriginal(false)}
-                      onMouseLeave={() => setShowOriginal(false)}
-                      onTouchStart={() => setShowOriginal(true)}
-                      onTouchEnd={() => setShowOriginal(false)}
-                      className={`
-                        px-6 py-3 rounded-2xl font-black shadow-2xl transition-all border-2 uppercase text-[10px] tracking-widest
-                        ${
-                          showOriginal
-                            ? "bg-blue-600 text-white border-blue-700 scale-105"
-                            : "bg-white text-slate-800 border-slate-200 hover:bg-slate-50"
-                        }
-                      `}
-                    >
-                      {showOriginal ? "Showing Original" : "Hold to Compare"}
-                    </button>
-                  </div>
-                )}
                 <img
-                  src={resolveImageUrl(
-                    showOriginal && selectedImage.originalDataUrl
-                      ? selectedImage.originalDataUrl
-                      : selectedImage.dataUrl,
-                  )}
+                  src={resolveImageUrl(selectedImage.dataUrl)}
                   alt={`Full size Question ${selectedImage.id}`}
-                  className={`max-h-full max-w-full object-contain shadow-2xl transition-all duration-300 ${showOriginal ? "ring-8 ring-blue-500/20" : ""}`}
+                  className="max-h-full max-w-full object-contain shadow-2xl transition-all duration-300"
                 />
               </div>
 

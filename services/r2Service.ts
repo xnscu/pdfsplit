@@ -374,7 +374,7 @@ export interface PrepareUploadOptions {
  */
 export async function prepareUploadTasks(
   rawPages: Array<{ pageNumber: number; dataUrl: string }>,
-  questions: Array<{ id: string; dataUrl: string; originalDataUrl?: string }>,
+  questions: Array<{ id: string; dataUrl: string }>,
   options: PrepareUploadOptions = {},
 ): Promise<{
   tasks: ImageUploadTask[];
@@ -398,13 +398,6 @@ export async function prepareUploadTasks(
       dataUrl: q.dataUrl,
       type: "question",
     });
-    if (q.originalDataUrl) {
-      allDataUrls.push({
-        id: `question_original_${q.id}`,
-        dataUrl: q.originalDataUrl,
-        type: "question",
-      });
-    }
   }
 
   // Calculate all hashes with progress

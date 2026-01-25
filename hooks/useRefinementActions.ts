@@ -1,6 +1,11 @@
 import { CropSettings } from "../services/pdfService";
-import { DetectedQuestion, DebugPageData } from "../types";
-import { generateQuestionsFromRawPages } from "../services/generationService";
+import { DetectedQuestion, DebugPageData, QuestionImage } from "../types";
+import {
+  generateQuestionsFromRawPages,
+  createLogicalQuestions,
+  processLogicalQuestion,
+  globalWorkerPool,
+} from "../services/generationService";
 import { detectQuestionsOnPage } from "../services/geminiService";
 import {
   reSaveExamResultWithSync,
@@ -219,13 +224,61 @@ export const useRefinementActions = ({
     }
   };
 
+  /**
+   * Precise regeneration: only regenerate questions affected by detection changes
+   * This significantly reduces the number of images uploaded to R2
+   */
   const handleUpdateDetections = async (
     fileName: string,
     pageNumber: number,
     newDetections: DetectedQuestion[],
   ) => {
     const startTimeLocal = Date.now();
-    const updatedPages = rawPages.map((p: any) => {
+
+    // Find the old page to compare detections
+    const oldPage = rawPages.find(
+      (p: DebugPageData) => p.fileName === fileName && p.pageNumber === pageNumber,
+    );
+    const oldDetections = oldPage?.detections || [];
+
+    // Find which detection IDs were modified by comparing old vs new
+    const affectedDetectionIds = new Set<string>();
+    
+    newDetections.forEach((newDet, idx) => {
+      const oldDet = oldDetections[idx];
+      if (!oldDet) {
+        // New detection added
+        affectedDetectionIds.add(newDet.id);
+        return;
+      }
+
+      // Compare boxes_2d
+      const newBoxes = JSON.stringify(newDet.boxes_2d);
+      const oldBoxes = JSON.stringify(oldDet.boxes_2d);
+      if (newBoxes !== oldBoxes) {
+        affectedDetectionIds.add(newDet.id);
+        // Also mark continuations that follow this detection as affected
+        // (because they might be stitched together)
+      }
+    });
+
+    // Handle continuations: if a detection is affected, its following continuations are also affected
+    let lastAffected = false;
+    newDetections.forEach((det) => {
+      if (affectedDetectionIds.has(det.id)) {
+        lastAffected = true;
+      } else if (det.id === "continuation" && lastAffected) {
+        affectedDetectionIds.add(`continuation_affected_${det.id}_${Math.random()}`);
+        // We need to mark the parent question as affected instead
+      } else {
+        lastAffected = false;
+      }
+    });
+
+    console.log(`[Refinement] Affected detection IDs on page ${pageNumber}:`, [...affectedDetectionIds]);
+
+    // Update rawPages with new detections
+    const updatedPages = rawPages.map((p: DebugPageData) => {
       if (p.fileName === fileName && p.pageNumber === pageNumber) {
         return { ...p, detections: newDetections };
       }
@@ -237,7 +290,7 @@ export const useRefinementActions = ({
 
     try {
       const targetPages = updatedPages.filter(
-        (p: any) => p.fileName === fileName,
+        (p: DebugPageData) => p.fileName === fileName,
       );
       if (targetPages.length === 0) {
         setProcessingFiles((prev: any) => {
@@ -248,43 +301,119 @@ export const useRefinementActions = ({
         return;
       }
 
-      const taskController = new AbortController();
+      // Get existing questions for this file (to preserve unchanged ones)
+      const existingFileQuestions = questions.filter(
+        (q: QuestionImage) => q.fileName === fileName,
+      ) as QuestionImage[];
 
-      let newQuestions = await generateQuestionsFromRawPages(
-        targetPages,
-        cropSettings,
-        taskController.signal,
-        {
-          onProgress: () => setCroppingDone((p: number) => p + 1),
-        },
-        batchSize || 10,
+      // Build a map of detection ID -> existing question (for hash preservation)
+      const existingQuestionMap = new Map<string, QuestionImage>();
+      existingFileQuestions.forEach((q: QuestionImage) => {
+        existingQuestionMap.set(q.id, q);
+      });
+
+      // Create logical questions from the updated pages
+      const logicalQuestions = createLogicalQuestions(targetPages);
+
+      // Calculate max widths for alignment (same logic as generateQuestionsFromRawPages)
+      const pageMaxWidths = new Map<string, number>();
+      for (const page of targetPages) {
+        let maxW = 0;
+        for (const det of page.detections) {
+          const boxes = Array.isArray(det.boxes_2d[0])
+            ? det.boxes_2d
+            : [det.boxes_2d];
+          for (const box of boxes) {
+            const w = (((box as number[])[3] - (box as number[])[1]) / 1000) * page.width;
+            if (w > maxW) maxW = w;
+          }
+        }
+        const key = `${page.fileName}#${page.pageNumber}`;
+        pageMaxWidths.set(key, Math.ceil(maxW));
+      }
+
+      // Process only affected questions, keep others unchanged
+      globalWorkerPool.concurrency = batchSize || 10;
+      const newQuestions: QuestionImage[] = [];
+
+      for (const task of logicalQuestions) {
+        // Check if any part of this logical question was affected
+        const isAffected = task.parts.some((part) => {
+          // Check if this detection was on the modified page and was affected
+          if (part.pageObj.pageNumber === pageNumber) {
+            return affectedDetectionIds.has(part.detection.id);
+          }
+          return false;
+        });
+
+        if (isAffected) {
+          // Regenerate this question
+          const pObj = task.parts[0].pageObj;
+          const key = `${pObj.fileName}#${pObj.pageNumber}`;
+          const targetWidth = pageMaxWidths.get(key) || 0;
+
+          console.log(`[Refinement] Regenerating question: ${task.id}`);
+          const regenerated = await processLogicalQuestion(task, cropSettings, targetWidth);
+          
+          if (regenerated) {
+            // Preserve existing analysis if any
+            const existingQ = existingQuestionMap.get(task.id);
+            if (existingQ?.analysis) {
+              regenerated.analysis = existingQ.analysis;
+            }
+            newQuestions.push(regenerated);
+          }
+        } else {
+          // Keep existing question unchanged (preserves hash reference)
+          const existingQ = existingQuestionMap.get(task.id);
+          if (existingQ) {
+            console.log(`[Refinement] Keeping unchanged question: ${task.id}`);
+            newQuestions.push(existingQ);
+          } else {
+            // Question didn't exist before, generate it
+            const pObj = task.parts[0].pageObj;
+            const key = `${pObj.fileName}#${pObj.pageNumber}`;
+            const targetWidth = pageMaxWidths.get(key) || 0;
+
+            console.log(`[Refinement] Generating new question: ${task.id}`);
+            const generated = await processLogicalQuestion(task, cropSettings, targetWidth);
+            if (generated) {
+              newQuestions.push(generated);
+            }
+          }
+        }
+      }
+
+      // Sort questions
+      newQuestions.sort((a, b) => {
+        if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+        return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
+      });
+
+      console.log(`[Refinement] Total questions: ${newQuestions.length}, affected: ${affectedDetectionIds.size}`);
+
+      await updatePageDetectionsAndQuestionsWithSync(
+        fileName,
+        pageNumber,
+        newDetections,
+        newQuestions,
       );
 
-      if (!taskController.signal.aborted) {
-        newQuestions = mergeExistingAnalysis(newQuestions, fileName);
-
-        await updatePageDetectionsAndQuestionsWithSync(
-          fileName,
-          pageNumber,
-          newDetections,
-          newQuestions,
-        );
-
-        setQuestions((prev: any) => {
-          const others = prev.filter((q: any) => q.fileName !== fileName);
-          const combined = [...others, ...newQuestions];
-          return combined.sort((a: any, b: any) => {
-            if (a.fileName !== b.fileName)
-              return a.fileName.localeCompare(b.fileName);
-            if (a.pageNumber !== b.pageNumber)
-              return a.pageNumber - b.pageNumber;
-            return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
-          });
+      setQuestions((prev: any) => {
+        const others = prev.filter((q: any) => q.fileName !== fileName);
+        const combined = [...others, ...newQuestions];
+        return combined.sort((a: any, b: any) => {
+          if (a.fileName !== b.fileName)
+            return a.fileName.localeCompare(b.fileName);
+          if (a.pageNumber !== b.pageNumber)
+            return a.pageNumber - b.pageNumber;
+          return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
         });
-        const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
-        // Optional: notification for update (can be noisy, so maybe skip or use console)
-        // addNotification(fileName, 'success', `Updated in ${duration}s`);
-      }
+      });
+
+      const affectedCount = [...affectedDetectionIds].filter(id => !id.startsWith('continuation_affected_')).length;
+      const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
+      console.log(`[Refinement] Completed in ${duration}s, regenerated ${affectedCount} questions`);
     } catch (err: any) {
       console.error("Failed to save or recrop", err);
       addNotification(

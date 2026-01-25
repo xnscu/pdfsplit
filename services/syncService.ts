@@ -547,7 +547,7 @@ export const forceUploadAll = async (
 
     // Collect all images from all exams
     const allRawPages: Array<{ examId: string; pageNumber: number; dataUrl: string }> = [];
-    const allQuestions: Array<{ examId: string; id: string; dataUrl: string; originalDataUrl?: string }> = [];
+    const allQuestions: Array<{ examId: string; id: string; dataUrl: string }> = [];
     const examDataMap = new Map<string, ExamRecord>();
 
     for (let i = 0; i < localList.length; i++) {
@@ -574,7 +574,6 @@ export const forceUploadAll = async (
             examId: exam.id,
             id: q.id,
             dataUrl: q.dataUrl,
-            originalDataUrl: q.originalDataUrl && !isImageHash(q.originalDataUrl) ? q.originalDataUrl : undefined,
           });
         }
       }
@@ -584,7 +583,7 @@ export const forceUploadAll = async (
     // The prepareUploadTasks function now handles progress for both hashing and checking
     const { tasks, hashMap, existingHashes } = await prepareUploadTasks(
       allRawPages.map((p) => ({ pageNumber: p.pageNumber, dataUrl: p.dataUrl })),
-      allQuestions.map((q) => ({ id: q.id, dataUrl: q.dataUrl, originalDataUrl: q.originalDataUrl })),
+      allQuestions.map((q) => ({ id: q.id, dataUrl: q.dataUrl })),
       {
         onProgress: (prepareProgress) => {
           // Forward hashing and checking progress directly
@@ -762,11 +761,6 @@ function prepareExamForRemote(exam: ExamRecord, hashMap: Map<string, string>): E
   const questions = exam.questions.map((q) => ({
     ...q,
     dataUrl: isImageHash(q.dataUrl) ? q.dataUrl : (hashMap.get(q.dataUrl) || q.dataUrl),
-    originalDataUrl: q.originalDataUrl
-      ? isImageHash(q.originalDataUrl)
-        ? q.originalDataUrl
-        : (hashMap.get(q.originalDataUrl) || q.originalDataUrl)
-      : undefined,
   }));
 
   return {
@@ -890,7 +884,7 @@ async function saveExamToLocal(exam: ExamRecord): Promise<void> {
 /**
  * Upload images for a single exam to R2 and sync to remote D1
  * This is the core function for incremental/fine-grained sync
- * 
+ *
  * @param exam - The exam record to sync
  * @returns Object with upload stats and the exam with hashes
  */
@@ -909,7 +903,7 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
 
   try {
     // Collect all base64 images that need to be uploaded
-    const imagesToProcess: Array<{ dataUrl: string; type: 'rawPage' | 'question' | 'originalQuestion'; index: number }> = [];
+    const imagesToProcess: Array<{ dataUrl: string; type: 'rawPage' | 'question'; index: number }> = [];
 
     // Collect from rawPages
     exam.rawPages.forEach((page, index) => {
@@ -922,9 +916,6 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
     exam.questions.forEach((q, index) => {
       if (!isImageHash(q.dataUrl)) {
         imagesToProcess.push({ dataUrl: q.dataUrl, type: 'question', index });
-      }
-      if (q.originalDataUrl && !isImageHash(q.originalDataUrl)) {
-        imagesToProcess.push({ dataUrl: q.originalDataUrl, type: 'originalQuestion', index });
       }
     });
 
@@ -944,9 +935,9 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
     // Calculate hashes for all images
     const hashMap = new Map<string, string>(); // dataUrl -> hash
     const uniqueDataUrls = [...new Set(imagesToProcess.map(img => img.dataUrl))];
-    
+
     console.log(`[Sync] Calculating hashes for ${uniqueDataUrls.length} unique images...`);
-    
+
     for (const dataUrl of uniqueDataUrls) {
       const hash = await calculateImageHash(dataUrl);
       hashMap.set(dataUrl, hash);
@@ -955,7 +946,7 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
     // Check which hashes already exist in R2
     const uniqueHashes = [...new Set(hashMap.values())];
     console.log(`[Sync] Checking ${uniqueHashes.length} hashes in R2...`);
-    
+
     const existsMap = await batchCheckImagesExist(uniqueHashes, {
       chunkSize: syncSettings.batchCheckChunkSize,
       concurrency: syncSettings.batchCheckConcurrency,
@@ -964,7 +955,7 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
     // Upload missing images
     const hashesToUpload = uniqueHashes.filter(h => !existsMap[h]);
     console.log(`[Sync] ${hashesToUpload.length} images need upload, ${uniqueHashes.length - hashesToUpload.length} already exist`);
-    
+
     result.imagesSkipped = uniqueHashes.length - hashesToUpload.length;
 
     // Create reverse map: hash -> dataUrl (for uploading)
@@ -1003,11 +994,6 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
       questions: exam.questions.map((q) => ({
         ...q,
         dataUrl: isImageHash(q.dataUrl) ? q.dataUrl : (hashMap.get(q.dataUrl) || q.dataUrl),
-        originalDataUrl: q.originalDataUrl
-          ? isImageHash(q.originalDataUrl)
-            ? q.originalDataUrl
-            : (hashMap.get(q.originalDataUrl) || q.originalDataUrl)
-          : undefined,
       })),
     };
 
@@ -1196,7 +1182,7 @@ export const reSaveExamResultWithSync = async (
 /**
  * Update page detections and questions with sync (used for debug box adjustments)
  * Fine-grained: only uploads changed images to R2 and syncs this file
- * 
+ *
  * When user adjusts boundaries in debug boxes:
  * 1. New question images are generated (base64 dataUrl)
  * 2. This function uploads only those new images to R2

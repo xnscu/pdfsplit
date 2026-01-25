@@ -350,30 +350,7 @@ const processPartsRaw = async (sourceDataUrl, boxes, originalWidth, originalHeig
         currentY += f.trim.h + fragmentGap;
     });
 
-    // Generate Original (Raw) Data URL for comparison
-    let originalDataUrl = undefined;
-    const exportPadding = 10; 
-    const maxRawWidth = Math.max(...processedFragments.map(f => f.sourceCanvas.width));
-    const finalRawWidth = maxRawWidth + (exportPadding * 2);
-    const finalRawHeight = processedFragments.reduce((acc, f) => acc + f.sourceCanvas.height, 0) + (fragmentGap * (Math.max(0, processedFragments.length - 1))) + (exportPadding * 2);
-
-    const { canvas: rawCanvas, context: rawCtx } = createSmartCanvas(finalRawWidth, finalRawHeight);
-    rawCtx.fillStyle = '#ffffff';
-    rawCtx.fillRect(0, 0, finalRawWidth, finalRawHeight);
-    let currentRawY = exportPadding;
-    processedFragments.forEach(f => {
-        rawCtx.drawImage(f.sourceCanvas, exportPadding, currentRawY);
-        currentRawY += f.sourceCanvas.height + fragmentGap;
-    });
-    
-    const blob = await rawCanvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
-    originalDataUrl = await new Promise(r => {
-        const reader = new FileReader();
-        reader.onloadend = () => r(reader.result);
-        reader.readAsDataURL(blob);
-    });
-
-    return { canvas, originalDataUrl };
+    return { canvas };
 };
 
 const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
@@ -423,7 +400,7 @@ const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
             padding, padding, trim.w, trim.h
          );
 
-         partsImages.push({ canvas: partCanvas, originalDataUrl: rawRes.originalDataUrl });
+         partsImages.push({ canvas: partCanvas });
     }
 
     if (partsImages.length === 0) return null;
@@ -468,8 +445,7 @@ const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
         id: task.id,
         pageNumber: task.parts[0].pageObj.pageNumber,
         fileName: task.fileId,
-        dataUrl: finalDataUrl,
-        originalDataUrl: partsImages[0].originalDataUrl
+        dataUrl: finalDataUrl
     };
 };
 
