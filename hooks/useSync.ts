@@ -53,6 +53,14 @@ export function useSync(): UseSyncResult {
 
   const isPausedRef = useRef(false);
 
+  const handleProgress = useCallback((progress: SyncProgress) => {
+    setStatus((prev) => ({
+      ...prev,
+      progress,
+      isSyncing: progress.phase !== "completed",
+    }));
+  }, []);
+
   // Load initial state
   useEffect(() => {
     const state = syncService.loadSyncState();
@@ -81,12 +89,16 @@ export function useSync(): UseSyncResult {
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
 
+    // Register progress listener
+    syncService.addProgressListener(handleProgress);
+
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+      syncService.removeProgressListener(handleProgress);
       syncService.stopAutoSync();
     };
-  }, []);
+  }, [handleProgress]);
 
   // Update pending count periodically
   useEffect(() => {
@@ -124,14 +136,6 @@ export function useSync(): UseSyncResult {
         error: e instanceof Error ? e.message : "Sync failed",
       }));
     }
-  }, []);
-
-  const handleProgress = useCallback((progress: SyncProgress) => {
-    setStatus((prev) => ({
-      ...prev,
-      progress,
-      isSyncing: progress.phase !== "completed",
-    }));
   }, []);
 
   const forceUpload = useCallback(async () => {

@@ -143,6 +143,34 @@ export interface SyncProgress {
 // Global uploader instance for pause/resume control
 let globalUploader: ConcurrentUploader | null = null;
 let currentSyncAbortController: AbortController | null = null;
+let lastProgress: SyncProgress | null = null;
+const progressListeners = new Set<SyncProgressCallback>();
+
+/**
+ * Register a progress listener
+ */
+export const addProgressListener = (callback: SyncProgressCallback): void => {
+  progressListeners.add(callback);
+  // Send last progress if available
+  if (lastProgress) {
+    callback(lastProgress);
+  }
+};
+
+/**
+ * Remove a progress listener
+ */
+export const removeProgressListener = (callback: SyncProgressCallback): void => {
+  progressListeners.delete(callback);
+};
+
+/**
+ * Notify all progress listeners
+ */
+const notifyProgress = (progress: SyncProgress): void => {
+  lastProgress = progress;
+  progressListeners.forEach((callback) => callback(progress));
+};
 
 interface ConflictInfo {
   id: string;
@@ -489,11 +517,16 @@ export const forceUploadAll = async (
     imagesSkipped: 0,
   };
 
+  const handleProgress = (progress: SyncProgress) => {
+    onProgress?.(progress);
+    notifyProgress(progress);
+  };
+
   currentSyncAbortController = new AbortController();
 
   try {
     // Phase 0: Load local exam data
-    onProgress?.({
+    handleProgress({
       phase: "hashing",
       message: "正在加载本地数据...",
       current: 0,
@@ -505,7 +538,7 @@ export const forceUploadAll = async (
     const totalExams = localList.length;
 
     if (totalExams === 0) {
-      onProgress?.({
+      handleProgress({
         phase: "completed",
         message: "没有数据需要同步",
         current: 0,
@@ -559,7 +592,7 @@ export const forceUploadAll = async (
         onProgress: (prepareProgress) => {
           // Forward hashing and checking progress directly
           if (prepareProgress.phase === "hashing") {
-            onProgress?.({
+            handleProgress({
               phase: "hashing",
               message: prepareProgress.message,
               current: prepareProgress.current,
@@ -567,7 +600,7 @@ export const forceUploadAll = async (
               percentage: prepareProgress.percentage,
             });
           } else if (prepareProgress.phase === "checking") {
-            onProgress?.({
+            handleProgress({
               phase: "checking",
               message: prepareProgress.message,
               current: prepareProgress.current,
@@ -592,7 +625,7 @@ export const forceUploadAll = async (
     // Use batchCheckConcurrency for upload concurrency as well (user expectation)
     const uploadConcurrency = syncSettings.batchCheckConcurrency;
 
-    onProgress?.({
+    handleProgress({
       phase: "uploading",
       message: `准备上传 ${totalImages} 张图片 (${existingHashes.size} 张已存在, 并发: ${uploadConcurrency})`,
       current: 0,
@@ -603,7 +636,7 @@ export const forceUploadAll = async (
     if (totalImages > 0) {
       globalUploader = new ConcurrentUploader(uploadConcurrency);
       globalUploader.setOnProgress((uploadProgress) => {
-        onProgress?.({
+        handleProgress({
           phase: "uploading",
           message: uploadProgress.message,
           current: uploadProgress.current,
@@ -626,7 +659,7 @@ export const forceUploadAll = async (
         result.errors.push(`${failedUploads.length} 张图片上传失败`);
         result.success = false;
 
-        onProgress?.({
+        handleProgress({
           phase: "completed",
           message: `上传失败: ${failedUploads.length} 张图片未能上传到 R2，数据同步已中止`,
           current: 0,
@@ -642,7 +675,7 @@ export const forceUploadAll = async (
         result.errors.push(`上传已取消，${cancelledUploads.length} 张图片未上传`);
         result.success = false;
 
-        onProgress?.({
+        handleProgress({
           phase: "completed",
           message: `上传已取消`,
           current: result.imagesUploaded,
@@ -654,7 +687,7 @@ export const forceUploadAll = async (
     }
 
     // Phase 4: Sync exams to D1 with hash references
-    onProgress?.({
+    handleProgress({
       phase: "syncing",
       message: "正在同步数据到云端...",
       current: 0,
@@ -679,7 +712,7 @@ export const forceUploadAll = async (
       }
 
       const percentage = Math.round(((i + 1) / totalExams) * 100);
-      onProgress?.({
+      handleProgress({
         phase: "syncing",
         message: `正在同步: ${meta.name} (${i + 1}/${totalExams})`,
         current: i + 1,
@@ -695,7 +728,7 @@ export const forceUploadAll = async (
       ? `同步完成: ${result.pushed} 个试卷, ${result.imagesUploaded} 张图片上传`
       : `同步部分完成，但有错误: ${result.errors.join(", ")}`;
 
-    onProgress?.({
+    handleProgress({
       phase: "completed",
       message: finalMessage,
       current: totalExams,
@@ -705,7 +738,7 @@ export const forceUploadAll = async (
   } catch (e) {
     result.success = false;
     result.errors.push(`Force upload failed: ${e}`);
-    onProgress?.({
+    handleProgress({
       phase: "completed",
       message: `同步失败: ${e}`,
       current: 0,
@@ -761,10 +794,15 @@ export const forceDownloadAll = async (
     errors: [],
   };
 
+  const handleProgress = (progress: SyncProgress) => {
+    onProgress?.(progress);
+    notifyProgress(progress);
+  };
+
   currentSyncAbortController = new AbortController();
 
   try {
-    onProgress?.({
+    handleProgress({
       phase: "downloading",
       message: "正在获取远程数据列表...",
       current: 0,
@@ -776,7 +814,7 @@ export const forceDownloadAll = async (
     const total = remoteList.length;
 
     if (total === 0) {
-      onProgress?.({
+      handleProgress({
         phase: "completed",
         message: "没有数据需要下载",
         current: 0,
@@ -786,7 +824,7 @@ export const forceDownloadAll = async (
       return result;
     }
 
-    onProgress?.({
+    handleProgress({
       phase: "downloading",
       message: `准备下载 ${total} 个试卷`,
       current: 0,
@@ -797,7 +835,7 @@ export const forceDownloadAll = async (
     for (let i = 0; i < remoteList.length; i++) {
       const meta = remoteList[i];
 
-      onProgress?.({
+      handleProgress({
         phase: "downloading",
         message: `正在下载: ${meta.name}`,
         current: i,
@@ -819,7 +857,7 @@ export const forceDownloadAll = async (
     syncState.lastSyncTime = Date.now();
     saveSyncState();
 
-    onProgress?.({
+    handleProgress({
       phase: "completed",
       message: `下载完成: ${result.pulled} 个试卷`,
       current: total,
@@ -829,7 +867,7 @@ export const forceDownloadAll = async (
   } catch (e) {
     result.success = false;
     result.errors.push(`Force download failed: ${e}`);
-    onProgress?.({
+    handleProgress({
       phase: "completed",
       message: `下载失败: ${e}`,
       current: 0,
