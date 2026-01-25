@@ -586,6 +586,8 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated }) => {
           border-radius: 8px;
           padding: 10px;
           margin-bottom: 10px;
+          max-height: 200px;
+          overflow-y: auto;
         }
 
         .sync-result-header {
@@ -639,6 +641,8 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated }) => {
           display: flex;
           flex-wrap: wrap;
           gap: 4px;
+          max-height: 200px;
+          overflow-y: auto;
         }
 
         .sync-name-tag {
