@@ -4,14 +4,15 @@
  * Supports progress display, pause/resume functionality
  */
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { useSync } from "../hooks/useSync";
 
 interface Props {
   onSyncComplete?: () => void;
+  onFilesUpdated?: (pulledNames: string[]) => void;
 }
 
-const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
+const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated }) => {
   const {
     status,
     sync,
@@ -22,6 +23,20 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
     resumeSync,
     cancelSync,
   } = useSync();
+
+  // Track previous syncing state to detect when sync completes
+  const wasSyncingRef = useRef(false);
+
+  // Detect when sync completes and notify about pulled files
+  useEffect(() => {
+    if (wasSyncingRef.current && !status.isSyncing) {
+      // Sync just completed
+      if (status.lastSyncResult?.pulledNames?.length) {
+        onFilesUpdated?.(status.lastSyncResult.pulledNames);
+      }
+    }
+    wasSyncingRef.current = status.isSyncing;
+  }, [status.isSyncing, status.lastSyncResult, onFilesUpdated]);
 
   const handleSync = async () => {
     await sync();
@@ -113,6 +128,79 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
             <line x1="12" y1="17" x2="12.01" y2="17" />
           </svg>
           <span className="error-text">{status.error}</span>
+        </div>
+      )}
+
+      {/* Sync Result Details */}
+      {status.lastSyncResult && !status.isSyncing && (status.lastSyncResult.pushed > 0 || status.lastSyncResult.pulled > 0) && (
+        <div className="sync-result">
+          <div className="sync-result-header">
+            <svg
+              className="success-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+            <span className="sync-result-title">同步完成</span>
+          </div>
+
+          {status.lastSyncResult.pushed > 0 && (
+            <div className="sync-result-section">
+              <div className="sync-result-label">
+                <svg className="arrow-icon upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                推送 ({status.lastSyncResult.pushed})
+              </div>
+              <div className="sync-result-names">
+                {status.lastSyncResult.pushedNames.map((name, i) => (
+                  <span key={i} className="sync-name-tag pushed">{name}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {status.lastSyncResult.pulled > 0 && (
+            <div className="sync-result-section">
+              <div className="sync-result-label">
+                <svg className="arrow-icon download" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                拉取 ({status.lastSyncResult.pulled})
+              </div>
+              <div className="sync-result-names">
+                {status.lastSyncResult.pulledNames.map((name, i) => (
+                  <span key={i} className="sync-name-tag pulled">{name}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* No changes message */}
+      {status.lastSyncResult && !status.isSyncing && status.lastSyncResult.pushed === 0 && status.lastSyncResult.pulled === 0 && !status.error && (
+        <div className="sync-no-changes">
+          <svg
+            className="check-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          <span>已是最新，无需同步</span>
         </div>
       )}
 
@@ -490,6 +578,110 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
 
         @keyframes spin {
           to { transform: rotate(360deg); }
+        }
+
+        .sync-result {
+          background: #f0fdf4;
+          border: 1px solid #bbf7d0;
+          border-radius: 8px;
+          padding: 10px;
+          margin-bottom: 10px;
+        }
+
+        .sync-result-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin-bottom: 8px;
+        }
+
+        .success-icon {
+          width: 16px;
+          height: 16px;
+          color: #22c55e;
+        }
+
+        .sync-result-title {
+          font-size: 12px;
+          font-weight: 700;
+          color: #166534;
+        }
+
+        .sync-result-section {
+          margin-top: 6px;
+        }
+
+        .sync-result-label {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 10px;
+          font-weight: 700;
+          color: #475569;
+          margin-bottom: 4px;
+          text-transform: uppercase;
+        }
+
+        .arrow-icon {
+          width: 12px;
+          height: 12px;
+        }
+
+        .arrow-icon.upload {
+          color: #3b82f6;
+        }
+
+        .arrow-icon.download {
+          color: #22c55e;
+        }
+
+        .sync-result-names {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+        }
+
+        .sync-name-tag {
+          font-size: 10px;
+          font-weight: 600;
+          padding: 2px 6px;
+          border-radius: 4px;
+          max-width: 150px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .sync-name-tag.pushed {
+          background: #dbeafe;
+          color: #1e40af;
+        }
+
+        .sync-name-tag.pulled {
+          background: #dcfce7;
+          color: #166534;
+        }
+
+        .sync-no-changes {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 10px;
+          background: #f1f5f9;
+          border-radius: 8px;
+          margin-bottom: 10px;
+        }
+
+        .sync-no-changes .check-icon {
+          width: 14px;
+          height: 14px;
+          color: #22c55e;
+        }
+
+        .sync-no-changes span {
+          font-size: 11px;
+          font-weight: 600;
+          color: #64748b;
         }
       `}</style>
     </div>

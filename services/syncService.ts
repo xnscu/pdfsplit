@@ -123,6 +123,9 @@ interface SyncResult {
   errors: string[];
   imagesUploaded?: number;
   imagesSkipped?: number;
+  // Detailed sync info for UI display
+  pushedNames?: string[];
+  pulledNames?: string[];
 }
 
 // Progress callback type
@@ -465,6 +468,13 @@ export const syncFromRemote = async (): Promise<SyncResult> => {
 
 /**
  * Full bidirectional sync
+ *
+ * This performs a proper bidirectional sync:
+ * 1. Get all local exams and their timestamps
+ * 2. Get all remote exams and their timestamps
+ * 3. Compare to determine what needs to be pushed vs pulled
+ * 4. Push local changes (exams modified since last sync)
+ * 5. Pull remote changes (exams modified on remote since last sync)
  */
 export const fullSync = async (): Promise<SyncResult> => {
   const result: SyncResult = {
@@ -473,21 +483,155 @@ export const fullSync = async (): Promise<SyncResult> => {
     pulled: 0,
     conflicts: [],
     errors: [],
+    pushedNames: [],
+    pulledNames: [],
   };
 
-  // First push local changes
-  const pushResult = await syncToRemote();
-  result.pushed = pushResult.pushed;
-  result.errors.push(...pushResult.errors);
+  if (!syncState.isOnline) {
+    result.success = false;
+    result.errors.push("离线模式 - 无法同步");
+    return result;
+  }
 
-  // Then pull remote changes
-  const pullResult = await syncFromRemote();
-  result.pulled = pullResult.pulled;
-  result.conflicts = pullResult.conflicts;
-  result.errors.push(...pullResult.errors);
+  try {
+    // Step 1: Get local exam list
+    const localList = await storageService.getHistoryList();
+    const localMap = new Map(localList.map((l) => [l.id, l]));
+
+    // Step 2: Get remote exam list
+    const remoteList = await getRemoteExamList();
+    const remoteMap = new Map(remoteList.map((r) => [r.id, r]));
+
+    // Step 3: Find exams that need to be pushed (local changes)
+    // An exam needs to be pushed if:
+    // - It doesn't exist on remote, OR
+    // - Its local timestamp > lastSyncTime (was modified locally since last sync)
+    const examsToPush: string[] = [];
+    for (const local of localList) {
+      const remote = remoteMap.get(local.id);
+      if (!remote) {
+        // Doesn't exist on remote - push it
+        examsToPush.push(local.id);
+      } else if (local.timestamp > syncState.lastSyncTime) {
+        // Local was modified since last sync
+        // Check for conflict: was remote also modified?
+        if (remote.timestamp > syncState.lastSyncTime) {
+          // Conflict: both sides modified
+          // For now, use "last write wins" - the more recent one wins
+          if (local.timestamp > remote.timestamp) {
+            examsToPush.push(local.id);
+          }
+          // If remote is newer, it will be pulled later
+          result.conflicts.push({
+            id: local.id,
+            name: local.name,
+            localTimestamp: local.timestamp,
+            remoteTimestamp: remote.timestamp,
+            resolution: local.timestamp > remote.timestamp ? "local" : "remote",
+          });
+        } else {
+          // Only local was modified - push it
+          examsToPush.push(local.id);
+        }
+      }
+    }
+
+    // Step 4: Push local changes
+    for (const examId of examsToPush) {
+      try {
+        const exam = await storageService.loadExamResult(examId);
+        if (!exam) continue;
+
+        // Upload images and sync to remote
+        const uploadResult = await uploadExamImagesToR2AndSync(exam);
+        if (uploadResult.success) {
+          result.pushed++;
+          result.pushedNames!.push(exam.name);
+        } else {
+          result.errors.push(`推送失败: ${exam.name} - ${uploadResult.error}`);
+        }
+      } catch (e) {
+        const local = localMap.get(examId);
+        result.errors.push(`推送失败: ${local?.name || examId} - ${e}`);
+      }
+    }
+
+    // Also process any pending actions (from previous failed syncs)
+    const pendingActions = [...syncState.pendingActions];
+    for (const action of pendingActions) {
+      try {
+        if (action.type === "save" && action.data) {
+          // Skip if we already pushed this exam above
+          if (examsToPush.includes(action.examId)) {
+            syncState.pendingActions = syncState.pendingActions.filter((a) => a.examId !== action.examId);
+            continue;
+          }
+          const uploadResult = await uploadExamImagesToR2AndSync(action.data);
+          if (uploadResult.success) {
+            result.pushed++;
+            result.pushedNames!.push(action.data.name);
+            syncState.pendingActions = syncState.pendingActions.filter((a) => a.examId !== action.examId);
+          }
+        } else if (action.type === "delete") {
+          const success = await deleteRemoteExam(action.examId);
+          if (success) {
+            syncState.pendingActions = syncState.pendingActions.filter((a) => a.examId !== action.examId);
+          }
+        }
+      } catch (e) {
+        result.errors.push(`待同步操作失败: ${action.examId} - ${e}`);
+      }
+    }
+
+    // Step 5: Pull remote changes
+    // Get changes since last sync time
+    const pullResult = await apiRequest<{
+      exams: ExamRecord[];
+      deleted: string[];
+      syncTime: number;
+    }>("/sync/pull", {
+      method: "POST",
+      body: JSON.stringify({ since: syncState.lastSyncTime }),
+    });
+
+    // Process remote exam updates
+    for (const remoteExam of pullResult.exams) {
+      // Skip if we just pushed this exam (we have the latest version)
+      if (examsToPush.includes(remoteExam.id)) {
+        continue;
+      }
+
+      // Check if this is a conflict we already handled
+      const conflict = result.conflicts.find((c) => c.id === remoteExam.id);
+      if (conflict && conflict.resolution === "local") {
+        // We chose local version, skip remote
+        continue;
+      }
+
+      // Save remote version locally
+      await saveExamToLocal(remoteExam);
+      result.pulled++;
+      result.pulledNames!.push(remoteExam.name);
+    }
+
+    // Process remote deletions
+    for (const deletedId of pullResult.deleted) {
+      // Only delete if we didn't just push it
+      if (!examsToPush.includes(deletedId)) {
+        await storageService.deleteExamResult(deletedId);
+      }
+    }
+
+    // Update sync time
+    syncState.lastSyncTime = pullResult.syncTime;
+    saveSyncState();
+
+  } catch (e) {
+    result.success = false;
+    result.errors.push(`同步失败: ${e}`);
+  }
 
   result.success = result.errors.length === 0;
-
   return result;
 };
 
@@ -1123,24 +1267,37 @@ export const updateQuestionsWithSync = async (fileName: string, questions: ExamR
   await storageService.updateQuestionsForFile(fileName, questions);
   console.log("[Sync] Questions updated locally for:", fileName);
 
+  const list = await storageService.getHistoryList();
+  const meta = list.find((h) => h.name === fileName);
+
+  if (!meta) return;
+
   // If online, sync to remote with R2 upload (fine-grained)
   if (syncState.isOnline) {
-    const list = await storageService.getHistoryList();
-    const meta = list.find((h) => h.name === fileName);
-    if (meta) {
-      const exam = await storageService.loadExamResult(meta.id);
-      if (exam) {
-        const result = await uploadExamImagesToR2AndSync(exam);
-        if (!result.success) {
-          console.error("[Sync] Remote sync failed:", result.error);
-          addPendingAction({
-            type: "save",
-            examId: meta.id,
-            timestamp: Date.now(),
-            data: exam,
-          });
-        }
+    const exam = await storageService.loadExamResult(meta.id);
+    if (exam) {
+      const result = await uploadExamImagesToR2AndSync(exam);
+      if (!result.success) {
+        console.error("[Sync] Remote sync failed:", result.error);
+        addPendingAction({
+          type: "save",
+          examId: meta.id,
+          timestamp: Date.now(),
+          data: exam,
+        });
       }
+    }
+  } else {
+    // Offline - add to pending queue for later sync
+    console.log("[Sync] Offline - adding to pending queue:", fileName);
+    const exam = await storageService.loadExamResult(meta.id);
+    if (exam) {
+      addPendingAction({
+        type: "save",
+        examId: meta.id,
+        timestamp: Date.now(),
+        data: exam,
+      });
     }
   }
 };
@@ -1160,26 +1317,39 @@ export const reSaveExamResultWithSync = async (
   await storageService.reSaveExamResult(fileName, rawPages, questions);
   console.log("[Sync] Local save completed for:", fileName);
 
+  const list = await storageService.getHistoryList();
+  const meta = list.find((h) => h.name === fileName);
+
+  if (!meta) return;
+
   // If online, sync to remote with R2 upload (fine-grained)
   if (syncState.isOnline) {
-    const list = await storageService.getHistoryList();
-    const meta = list.find((h) => h.name === fileName);
-    if (meta) {
-      const exam = await storageService.loadExamResult(meta.id);
-      if (exam) {
-        const result = await uploadExamImagesToR2AndSync(exam);
-        if (!result.success) {
-          console.error("[Sync] Remote sync failed:", result.error);
-          addPendingAction({
-            type: "save",
-            examId: meta.id,
-            timestamp: Date.now(),
-            data: exam,
-          });
-        } else {
-          console.log(`[Sync] Synced ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`);
-        }
+    const exam = await storageService.loadExamResult(meta.id);
+    if (exam) {
+      const result = await uploadExamImagesToR2AndSync(exam);
+      if (!result.success) {
+        console.error("[Sync] Remote sync failed:", result.error);
+        addPendingAction({
+          type: "save",
+          examId: meta.id,
+          timestamp: Date.now(),
+          data: exam,
+        });
+      } else {
+        console.log(`[Sync] Synced ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`);
       }
+    }
+  } else {
+    // Offline - add to pending queue for later sync
+    console.log("[Sync] Offline - adding to pending queue:", fileName);
+    const exam = await storageService.loadExamResult(meta.id);
+    if (exam) {
+      addPendingAction({
+        type: "save",
+        examId: meta.id,
+        timestamp: Date.now(),
+        data: exam,
+      });
     }
   }
 };
@@ -1206,30 +1376,41 @@ export const updatePageDetectionsAndQuestionsWithSync = async (
   await storageService.updatePageDetectionsAndQuestions(fileName, pageNumber, newDetections, newFileQuestions);
   console.log("[Sync] Local detection update completed for:", fileName);
 
+  const list = await storageService.getHistoryList();
+  const meta = list.find((h) => h.name === fileName);
+
+  if (!meta) return;
+
   // If online, sync to remote with R2 upload (fine-grained)
   if (syncState.isOnline) {
-    const list = await storageService.getHistoryList();
-    const meta = list.find((h) => h.name === fileName);
-    if (meta) {
-      const exam = await storageService.loadExamResult(meta.id);
-      if (exam) {
-        console.log(`[Sync] Starting fine-grained sync for ${fileName}...`);
-        const result = await uploadExamImagesToR2AndSync(exam);
-        if (!result.success) {
-          console.error("[Sync] Remote sync failed:", result.error);
-          addPendingAction({
-            type: "save",
-            examId: meta.id,
-            timestamp: Date.now(),
-            data: exam,
-          });
-        } else {
-          console.log(`[Sync] Fine-grained sync completed for ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`);
-        }
+    const exam = await storageService.loadExamResult(meta.id);
+    if (exam) {
+      console.log(`[Sync] Starting fine-grained sync for ${fileName}...`);
+      const result = await uploadExamImagesToR2AndSync(exam);
+      if (!result.success) {
+        console.error("[Sync] Remote sync failed:", result.error);
+        addPendingAction({
+          type: "save",
+          examId: meta.id,
+          timestamp: Date.now(),
+          data: exam,
+        });
+      } else {
+        console.log(`[Sync] Fine-grained sync completed for ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`);
       }
     }
   } else {
-    console.log("[Sync] Offline - changes saved locally, will sync when online");
+    // Offline - add to pending queue for later sync
+    console.log("[Sync] Offline - adding to pending queue:", fileName);
+    const exam = await storageService.loadExamResult(meta.id);
+    if (exam) {
+      addPendingAction({
+        type: "save",
+        examId: meta.id,
+        timestamp: Date.now(),
+        data: exam,
+      });
+    }
   }
 };
 

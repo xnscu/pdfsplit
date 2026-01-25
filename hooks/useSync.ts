@@ -18,6 +18,13 @@ export interface SyncStatus {
   uploadConcurrency: number;
   batchCheckChunkSize: number;
   batchCheckConcurrency: number;
+  // Detailed sync result for UI display
+  lastSyncResult: {
+    pushed: number;
+    pulled: number;
+    pushedNames: string[];
+    pulledNames: string[];
+  } | null;
 }
 
 export interface UseSyncResult {
@@ -48,6 +55,7 @@ export function useSync(): UseSyncResult {
       uploadConcurrency: settings.uploadConcurrency,
       batchCheckChunkSize: settings.batchCheckChunkSize,
       batchCheckConcurrency: settings.batchCheckConcurrency,
+      lastSyncResult: null,
     };
   });
 
@@ -115,7 +123,7 @@ export function useSync(): UseSyncResult {
   }, []);
 
   const sync = useCallback(async () => {
-    setStatus((prev) => ({ ...prev, isSyncing: true, error: null }));
+    setStatus((prev) => ({ ...prev, isSyncing: true, error: null, lastSyncResult: null }));
 
     try {
       const result = await syncService.fullSync();
@@ -127,12 +135,19 @@ export function useSync(): UseSyncResult {
         pendingCount: state.pendingActions.length,
         lastSyncTime: state.lastSyncTime,
         error: result.errors.length > 0 ? result.errors.join(", ") : null,
+        lastSyncResult: {
+          pushed: result.pushed,
+          pulled: result.pulled,
+          pushedNames: result.pushedNames || [],
+          pulledNames: result.pulledNames || [],
+        },
       }));
     } catch (e) {
       setStatus((prev) => ({
         ...prev,
         isSyncing: false,
         error: e instanceof Error ? e.message : "Sync failed",
+        lastSyncResult: null,
       }));
     }
   }, []);

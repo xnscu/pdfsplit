@@ -441,6 +441,82 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     }
   };
 
+  /**
+   * Handle files that were updated during sync
+   * If any of the pulled files match currently loaded files, reload their data
+   */
+  const handleFilesUpdated = async (pulledNames: string[]) => {
+    if (pulledNames.length === 0) return;
+
+    // Get list of currently loaded file names
+    const loadedFileNames = new Set(rawPages.map((p: DebugPageData) => p.fileName));
+
+    // Find files that were updated and are currently loaded
+    const filesToReload = pulledNames.filter((name) => loadedFileNames.has(name));
+
+    if (filesToReload.length === 0) return;
+
+    console.log("[Sync] Reloading updated files:", filesToReload);
+
+    try {
+      // Get the history list to find IDs for the file names
+      const history = await getHistoryList();
+
+      for (const fileName of filesToReload) {
+        const historyItem = history.find((h) => h.name === fileName);
+        if (!historyItem) continue;
+
+        const result = await loadExamResult(historyItem.id);
+        if (!result) continue;
+
+        // Update rawPages for this file
+        setRawPages((prev: DebugPageData[]) => {
+          const others = prev.filter((p) => p.fileName !== fileName);
+          const uniqueNewPages = Array.from(
+            new Map(result.rawPages.map((p: any) => [p.pageNumber, p])).values(),
+          ) as DebugPageData[];
+          uniqueNewPages.sort((a, b) => a.pageNumber - b.pageNumber);
+          return [...others, ...uniqueNewPages].sort((a, b) => {
+            if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
+            return a.pageNumber - b.pageNumber;
+          });
+        });
+
+        // Update questions for this file
+        if (result.questions && result.questions.length > 0) {
+          setQuestions((prev: QuestionImage[]) => {
+            const others = prev.filter((q) => q.fileName !== fileName);
+            return [...others, ...result.questions].sort((a, b) => {
+              if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
+              if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+              return (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0);
+            });
+          });
+        }
+
+        // Update sourcePages for this file
+        setSourcePages((prev: any[]) => {
+          const others = prev.filter((p: any) => p.fileName !== fileName);
+          const newSourcePages = result.rawPages.map((rp: any) => ({
+            dataUrl: rp.dataUrl,
+            width: rp.width,
+            height: rp.height,
+            pageNumber: rp.pageNumber,
+            fileName: rp.fileName,
+          }));
+          return [...others, ...newSourcePages].sort((a: any, b: any) => {
+            if (a.fileName !== b.fileName) return a.fileName.localeCompare(b.fileName);
+            return a.pageNumber - b.pageNumber;
+          });
+        });
+
+        addNotification(fileName, "success", "已从云端同步更新");
+      }
+    } catch (e: any) {
+      console.error("[Sync] Failed to reload updated files:", e);
+    }
+  };
+
   return {
     handleCleanupAllHistory,
     handleLoadHistory,
@@ -450,5 +526,6 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     refreshHistoryList,
     handleDeleteHistoryItem,
     handleBatchDeleteHistoryItems,
+    handleFilesUpdated,
   };
 };

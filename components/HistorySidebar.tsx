@@ -19,6 +19,7 @@ interface Props {
   onCleanupAll: () => void;
   onDeleteHistory: (id: string, name?: string) => Promise<void>;
   onBatchDelete: (ids: string[]) => Promise<void>;
+  onFilesUpdated?: (pulledNames: string[]) => void;
 }
 
 type SortOption = "name_asc" | "name_desc" | "date_newest" | "date_oldest";
@@ -41,6 +42,7 @@ export const HistorySidebar: React.FC<Props> = ({
   onCleanupAll,
   onDeleteHistory,
   onBatchDelete,
+  onFilesUpdated,
 }) => {
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
   const [isCleaning, setIsCleaning] = useState(false);
@@ -231,7 +233,7 @@ export const HistorySidebar: React.FC<Props> = ({
 
             <div className="flex flex-col gap-3 pt-2">
               {/* Sync Status Section */}
-              <SyncStatus onSyncComplete={onRefreshList} />
+              <SyncStatus onSyncComplete={onRefreshList} onFilesUpdated={onFilesUpdated} />
 
               {/* Sorting Controls */}
               <div className="flex items-center gap-2">
