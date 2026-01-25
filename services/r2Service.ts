@@ -73,36 +73,65 @@ export async function checkImageExists(hash: string): Promise<boolean> {
 /**
  * Batch check if images exist in R2
  * Returns map of hash -> exists
+ *
+ * Note: Cloudflare Workers has a limit of ~1000 R2 API calls per invocation.
+ * This function automatically splits large batches into smaller chunks.
  */
+const BATCH_CHECK_CHUNK_SIZE = 50; // Stay well under 1000 limit for safety
+
 export async function batchCheckImagesExist(hashes: string[]): Promise<Record<string, boolean>> {
   if (hashes.length === 0) {
     return {};
   }
 
-  try {
-    const response = await fetch(`${API_BASE_URL}/r2/check-batch`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ hashes }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Batch check failed: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data.results || {};
-  } catch (error) {
-    console.error("Batch check failed:", error);
-    // Fall back to individual checks
-    const results: Record<string, boolean> = {};
-    for (const hash of hashes) {
-      results[hash] = await checkImageExists(hash);
-    }
-    return results;
+  // Split into chunks to avoid Cloudflare Worker limits
+  const chunks: string[][] = [];
+  for (let i = 0; i < hashes.length; i += BATCH_CHECK_CHUNK_SIZE) {
+    chunks.push(hashes.slice(i, i + BATCH_CHECK_CHUNK_SIZE));
   }
+
+  console.log(
+    `[R2] Batch checking ${hashes.length} hashes in ${chunks.length} chunks (max ${BATCH_CHECK_CHUNK_SIZE} per chunk)`,
+  );
+
+  const allResults: Record<string, boolean> = {};
+
+  // Process chunks sequentially to avoid overwhelming the worker
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    console.log(`[R2] Processing chunk ${i + 1}/${chunks.length} (${chunk.length} hashes)`);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/r2/check-batch`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ hashes: chunk }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Batch check failed: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      const chunkResults = data.results || {};
+
+      // Merge results
+      for (const [hash, exists] of Object.entries(chunkResults)) {
+        allResults[hash] = exists as boolean;
+      }
+    } catch (error) {
+      console.error(`[R2] Chunk ${i + 1} failed, falling back to individual checks:`, error);
+      // Fall back to individual checks for this chunk only
+      for (const hash of chunk) {
+        allResults[hash] = await checkImageExists(hash);
+      }
+    }
+  }
+
+  return allResults;
 }
 
 /**
