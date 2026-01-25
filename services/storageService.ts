@@ -64,7 +64,7 @@ const openDB = (): Promise<IDBDatabase> => {
 /**
  * Save an exam result to history
  * NOW SUPPORTS SAVING PROCESSED QUESTIONS
- * 
+ *
  * @param fileName - The name of the exam file
  * @param rawPages - The raw page data
  * @param questions - The question images

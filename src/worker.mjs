@@ -339,7 +339,8 @@ async function handleSaveExam(db, examData) {
     return errorResponse('Missing required fields: id, name');
   }
 
-  // Use transaction-like batch operations
+  // Use transaction-like batch operations with INCREMENTAL updates
+  // Instead of delete-all-then-insert, we use UPSERT and selective deletion
   const statements = [];
 
   // Upsert exam record
@@ -355,19 +356,24 @@ async function handleSaveExam(db, examData) {
     `).bind(id, name, timestamp || Date.now(), pageCount || 0)
   );
 
-  // Delete existing pages and questions for this exam (will be re-inserted)
-  statements.push(db.prepare('DELETE FROM raw_pages WHERE exam_id = ?').bind(id));
-  statements.push(db.prepare('DELETE FROM questions WHERE exam_id = ?').bind(id));
-
-  // Insert raw pages
+  // === INCREMENTAL UPDATE for raw_pages ===
+  // Use UPSERT based on UNIQUE(exam_id, page_number) constraint
+  const incomingPageNumbers = [];
   if (rawPages && rawPages.length > 0) {
     for (const page of rawPages) {
+      incomingPageNumbers.push(page.pageNumber);
       statements.push(
         db.prepare(`
           INSERT INTO raw_pages (id, exam_id, page_number, file_name, data_url, width, height, detections)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(exam_id, page_number) DO UPDATE SET
+            file_name = excluded.file_name,
+            data_url = excluded.data_url,
+            width = excluded.width,
+            height = excluded.height,
+            detections = excluded.detections
         `).bind(
-          crypto.randomUUID(),
+          crypto.randomUUID(), // Only used for new inserts
           id,
           page.pageNumber,
           page.fileName,
@@ -380,15 +386,39 @@ async function handleSaveExam(db, examData) {
     }
   }
 
-  // Insert questions with UPSERT
+  // Delete pages that are no longer in the incoming data
+  if (incomingPageNumbers.length > 0) {
+    // Delete pages not in the incoming list
+    const placeholders = incomingPageNumbers.map(() => '?').join(',');
+    statements.push(
+      db.prepare(`
+        DELETE FROM raw_pages 
+        WHERE exam_id = ? AND page_number NOT IN (${placeholders})
+      `).bind(id, ...incomingPageNumbers)
+    );
+  } else {
+    // No pages incoming, delete all
+    statements.push(db.prepare('DELETE FROM raw_pages WHERE exam_id = ?').bind(id));
+  }
+
+  // === INCREMENTAL UPDATE for questions ===
+  // Use UPSERT based on PRIMARY KEY(exam_id, id)
+  const incomingQuestionIds = [];
   if (questions && questions.length > 0) {
     for (const q of questions) {
+      const qId = q.id || crypto.randomUUID();
+      incomingQuestionIds.push(qId);
       statements.push(
         db.prepare(`
-          INSERT OR REPLACE INTO questions (id, exam_id, page_number, file_name, data_url, analysis)
+          INSERT INTO questions (id, exam_id, page_number, file_name, data_url, analysis)
           VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(exam_id, id) DO UPDATE SET
+            page_number = excluded.page_number,
+            file_name = excluded.file_name,
+            data_url = excluded.data_url,
+            analysis = excluded.analysis
         `).bind(
-          q.id || crypto.randomUUID(),
+          qId,
           id,
           q.pageNumber,
           q.fileName,
@@ -397,6 +427,21 @@ async function handleSaveExam(db, examData) {
         )
       );
     }
+  }
+
+  // Delete questions that are no longer in the incoming data
+  if (incomingQuestionIds.length > 0) {
+    // Delete questions not in the incoming list
+    const placeholders = incomingQuestionIds.map(() => '?').join(',');
+    statements.push(
+      db.prepare(`
+        DELETE FROM questions 
+        WHERE exam_id = ? AND id NOT IN (${placeholders})
+      `).bind(id, ...incomingQuestionIds)
+    );
+  } else {
+    // No questions incoming, delete all
+    statements.push(db.prepare('DELETE FROM questions WHERE exam_id = ?').bind(id));
   }
 
   // Add sync log entry
@@ -632,6 +677,7 @@ async function getFullExam(db, id) {
 async function saveExamToDb(db, examData, source) {
   const { id, name, timestamp, pageCount, rawPages, questions } = examData;
 
+  // Use INCREMENTAL updates instead of delete-all-then-insert
   const statements = [];
 
   statements.push(
@@ -646,15 +692,21 @@ async function saveExamToDb(db, examData, source) {
     `).bind(id, name, timestamp || Date.now(), pageCount || 0)
   );
 
-  statements.push(db.prepare('DELETE FROM raw_pages WHERE exam_id = ?').bind(id));
-  statements.push(db.prepare('DELETE FROM questions WHERE exam_id = ?').bind(id));
-
+  // === INCREMENTAL UPDATE for raw_pages ===
+  const incomingPageNumbers = [];
   if (rawPages && rawPages.length > 0) {
     for (const page of rawPages) {
+      incomingPageNumbers.push(page.pageNumber);
       statements.push(
         db.prepare(`
           INSERT INTO raw_pages (id, exam_id, page_number, file_name, data_url, width, height, detections)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(exam_id, page_number) DO UPDATE SET
+            file_name = excluded.file_name,
+            data_url = excluded.data_url,
+            width = excluded.width,
+            height = excluded.height,
+            detections = excluded.detections
         `).bind(
           crypto.randomUUID(),
           id,
@@ -669,14 +721,36 @@ async function saveExamToDb(db, examData, source) {
     }
   }
 
+  // Delete pages not in incoming data
+  if (incomingPageNumbers.length > 0) {
+    const placeholders = incomingPageNumbers.map(() => '?').join(',');
+    statements.push(
+      db.prepare(`
+        DELETE FROM raw_pages 
+        WHERE exam_id = ? AND page_number NOT IN (${placeholders})
+      `).bind(id, ...incomingPageNumbers)
+    );
+  } else {
+    statements.push(db.prepare('DELETE FROM raw_pages WHERE exam_id = ?').bind(id));
+  }
+
+  // === INCREMENTAL UPDATE for questions ===
+  const incomingQuestionIds = [];
   if (questions && questions.length > 0) {
     for (const q of questions) {
+      const qId = q.id || crypto.randomUUID();
+      incomingQuestionIds.push(qId);
       statements.push(
         db.prepare(`
-          INSERT OR REPLACE INTO questions (id, exam_id, page_number, file_name, data_url, analysis)
+          INSERT INTO questions (id, exam_id, page_number, file_name, data_url, analysis)
           VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(exam_id, id) DO UPDATE SET
+            page_number = excluded.page_number,
+            file_name = excluded.file_name,
+            data_url = excluded.data_url,
+            analysis = excluded.analysis
         `).bind(
-          q.id || crypto.randomUUID(),
+          qId,
           id,
           q.pageNumber,
           q.fileName,
@@ -685,6 +759,19 @@ async function saveExamToDb(db, examData, source) {
         )
       );
     }
+  }
+
+  // Delete questions not in incoming data
+  if (incomingQuestionIds.length > 0) {
+    const placeholders = incomingQuestionIds.map(() => '?').join(',');
+    statements.push(
+      db.prepare(`
+        DELETE FROM questions 
+        WHERE exam_id = ? AND id NOT IN (${placeholders})
+      `).bind(id, ...incomingQuestionIds)
+    );
+  } else {
+    statements.push(db.prepare('DELETE FROM questions WHERE exam_id = ?').bind(id));
   }
 
   statements.push(
