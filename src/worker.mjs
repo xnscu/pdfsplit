@@ -211,14 +211,14 @@ async function handleGetR2Image(r2, hash) {
     if (!object) {
       return errorResponse('Image not found', 404);
     }
-    
+
     const headers = {
       ...corsHeaders,
       'Content-Type': object.httpMetadata?.contentType || 'image/png',
       'Content-Length': object.size.toString(),
       'Cache-Control': 'public, max-age=31536000, immutable',
     };
-    
+
     return new Response(object.body, { status: 200, headers });
   } catch (error) {
     return errorResponse(`R2 get failed: ${error.message}`, 500);
@@ -235,16 +235,16 @@ async function handleUploadR2Image(request, r2, hash) {
     if (existing) {
       return jsonResponse({ success: true, hash, existed: true });
     }
-    
+
     // Get content type from header
     const contentType = request.headers.get('Content-Type') || 'image/png';
-    
+
     // Upload to R2
     const body = await request.arrayBuffer();
     await r2.put(hash, body, {
       httpMetadata: { contentType },
     });
-    
+
     return jsonResponse({ success: true, hash, existed: false });
   } catch (error) {
     return errorResponse(`R2 upload failed: ${error.message}`, 500);
@@ -257,19 +257,19 @@ async function handleBatchCheckR2Images(r2, hashes) {
   }
   try {
     const results = {};
-    
+
     // Check each hash in parallel
     const checks = hashes.map(async (hash) => {
       const object = await r2.head(hash);
       return { hash, exists: !!object };
     });
-    
+
     const checkResults = await Promise.all(checks);
-    
+
     for (const { hash, exists } of checkResults) {
       results[hash] = exists;
     }
-    
+
     return jsonResponse({ results });
   } catch (error) {
     return errorResponse(`R2 batch check failed: ${error.message}`, 500);
