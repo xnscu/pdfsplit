@@ -310,10 +310,10 @@ export const ConfigurationPanel: React.FC<Props> = ({
               <div className="space-y-3">
                 <div className="flex justify-between">
                   <label className="font-bold text-slate-700">
-                    Batch Check Concurrency
+                    Image Sync Concurrency
                   </label>
                   <span className="font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-lg text-xs">
-                    {batchCheckConcurrency} Requests
+                    {batchCheckConcurrency} Parallel
                   </span>
                 </div>
                 <input
@@ -328,7 +328,7 @@ export const ConfigurationPanel: React.FC<Props> = ({
                   className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                 />
                 <p className="text-xs text-slate-400 font-medium">
-                  Parallel batch check requests. Higher values = faster checking but more network load.
+                  Parallel requests for both image checking and uploading. Higher values = faster sync but more network load.
                 </p>
               </div>
             )}

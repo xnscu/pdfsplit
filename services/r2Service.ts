@@ -500,24 +500,33 @@ export async function prepareUploadTasks(
 }
 
 /**
- * Concurrent upload controller
+ * Upload progress callback
+ */
+export interface UploadProgress {
+  phase: "uploading" | "retrying" | "completed";
+  message: string;
+  current: number;
+  total: number;
+  percentage: number;
+  round: number;
+  failedCount: number;
+}
+
+/**
+ * Concurrent upload controller with retry support
  */
 export class ConcurrentUploader {
   private concurrency: number;
-  private tasks: ImageUploadTask[] = [];
   private hashMap: Map<string, string> = new Map();
-  private results: ImageUploadResult[] = [];
-  private completed = 0;
-  private total = 0;
   private isPaused = false;
   private isCancelled = false;
-  private onProgress?: (completed: number, total: number) => void;
+  private onProgress?: (progress: UploadProgress) => void;
 
   constructor(concurrency: number = 10) {
     this.concurrency = concurrency;
   }
 
-  setOnProgress(callback: (completed: number, total: number) => void) {
+  setOnProgress(callback: (progress: UploadProgress) => void) {
     this.onProgress = callback;
   }
 
@@ -538,12 +547,8 @@ export class ConcurrentUploader {
     this.isPaused = false;
   }
 
-  getProgress(): { completed: number; total: number; percentage: number } {
-    return {
-      completed: this.completed,
-      total: this.total,
-      percentage: this.total > 0 ? Math.round((this.completed / this.total) * 100) : 0,
-    };
+  getIsPaused(): boolean {
+    return this.isPaused;
   }
 
   private async waitWhilePaused(): Promise<void> {
@@ -587,52 +592,146 @@ export class ConcurrentUploader {
     }
   }
 
+  /**
+   * Upload tasks with automatic retry for failed uploads
+   * Retries infinitely until all uploads succeed or cancelled
+   */
   async upload(
     tasks: ImageUploadTask[],
     hashMap: Map<string, string>,
   ): Promise<ImageUploadResult[]> {
-    this.tasks = tasks;
     this.hashMap = hashMap;
-    this.results = [];
-    this.completed = 0;
-    this.total = tasks.length;
     this.isPaused = false;
     this.isCancelled = false;
 
     if (tasks.length === 0) {
+      this.onProgress?.({
+        phase: "completed",
+        message: "没有需要上传的图片",
+        current: 0,
+        total: 0,
+        percentage: 100,
+        round: 1,
+        failedCount: 0,
+      });
       return [];
     }
 
-    // Process tasks with concurrency control
-    let index = 0;
-    const executing: Promise<void>[] = [];
+    const totalTasks = tasks.length;
+    const allResults: Map<string, ImageUploadResult> = new Map();
+    let pendingTasks = [...tasks];
+    let round = 1;
 
-    while (index < tasks.length) {
-      await this.waitWhilePaused();
-      if (this.isCancelled) break;
-
-      // Fill up to concurrency limit
-      while (executing.length < this.concurrency && index < tasks.length) {
-        const task = tasks[index++];
-        const promise = this.uploadTask(task).then((result) => {
-          this.results.push(result);
-          this.completed++;
-          this.onProgress?.(this.completed, this.total);
-          executing.splice(executing.indexOf(promise), 1);
-        });
-        executing.push(promise);
+    while (pendingTasks.length > 0) {
+      if (this.isCancelled) {
+        // Mark remaining as cancelled
+        for (const task of pendingTasks) {
+          const hash = this.hashMap.get(task.dataUrl) || "";
+          allResults.set(task.id, {
+            id: task.id,
+            hash,
+            type: task.type,
+            success: false,
+            error: "Cancelled",
+          });
+        }
+        break;
       }
 
-      // Wait for at least one to complete
-      if (executing.length >= this.concurrency) {
-        await Promise.race(executing);
+      const phaseMessage = round === 1 ? "uploading" : "retrying";
+
+      console.log(
+        `[R2 Upload] Round ${round}: Uploading ${pendingTasks.length} images (concurrency: ${this.concurrency})`,
+      );
+
+      this.onProgress?.({
+        phase: phaseMessage,
+        message: round === 1
+          ? `正在上传 ${pendingTasks.length} 张图片...`
+          : `第 ${round} 轮重试: 上传 ${pendingTasks.length} 张失败的图片...`,
+        current: 0,
+        total: pendingTasks.length,
+        percentage: 0,
+        round,
+        failedCount: pendingTasks.length,
+      });
+
+      const failedTasks: ImageUploadTask[] = [];
+      let completedInRound = 0;
+
+      // Process tasks with concurrency control
+      let index = 0;
+      const executing: Promise<void>[] = [];
+
+      while (index < pendingTasks.length || executing.length > 0) {
+        await this.waitWhilePaused();
+        if (this.isCancelled) break;
+
+        // Fill up to concurrency limit
+        while (executing.length < this.concurrency && index < pendingTasks.length) {
+          const task = pendingTasks[index++];
+          const promise = this.uploadTask(task).then((result) => {
+            if (result.success) {
+              allResults.set(task.id, result);
+            } else if (result.error !== "Cancelled") {
+              // Failed, add to retry list
+              failedTasks.push(task);
+            } else {
+              // Cancelled
+              allResults.set(task.id, result);
+            }
+
+            completedInRound++;
+            const percentage = Math.round((completedInRound / pendingTasks.length) * 100);
+            this.onProgress?.({
+              phase: phaseMessage,
+              message: round === 1
+                ? `正在上传图片 ${completedInRound}/${pendingTasks.length} (${percentage}%)`
+                : `第 ${round} 轮重试: ${completedInRound}/${pendingTasks.length} (${percentage}%)`,
+              current: completedInRound,
+              total: pendingTasks.length,
+              percentage,
+              round,
+              failedCount: failedTasks.length,
+            });
+
+            executing.splice(executing.indexOf(promise), 1);
+          });
+          executing.push(promise);
+        }
+
+        // Wait for at least one to complete if at concurrency limit
+        if (executing.length > 0 && (executing.length >= this.concurrency || index >= pendingTasks.length)) {
+          await Promise.race(executing);
+        }
+      }
+
+      // Prepare for next round if there are failed tasks
+      if (failedTasks.length > 0 && !this.isCancelled) {
+        console.log(`[R2 Upload] Round ${round} completed with ${failedTasks.length} failures. Retrying...`);
+        pendingTasks = failedTasks;
+        round++;
+
+        // Add a small delay before retrying
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } else {
+        pendingTasks = [];
       }
     }
 
-    // Wait for remaining tasks
-    await Promise.all(executing);
+    const successCount = Array.from(allResults.values()).filter((r) => r.success).length;
 
-    return this.results;
+    this.onProgress?.({
+      phase: "completed",
+      message: `上传完成: ${successCount}/${totalTasks} 张图片成功`,
+      current: totalTasks,
+      total: totalTasks,
+      percentage: 100,
+      round,
+      failedCount: 0,
+    });
+
+    return Array.from(allResults.values());
   }
 }
 

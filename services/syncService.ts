@@ -589,39 +589,43 @@ export const forceUploadAll = async (
     const totalImages = tasks.length;
 
     // Phase 3: Upload images to R2 with concurrency control
+    // Use batchCheckConcurrency for upload concurrency as well (user expectation)
+    const uploadConcurrency = syncSettings.batchCheckConcurrency;
+
     onProgress?.({
       phase: "uploading",
-      message: `准备上传 ${totalImages} 张图片 (${existingHashes.size} 张已存在)`,
+      message: `准备上传 ${totalImages} 张图片 (${existingHashes.size} 张已存在, 并发: ${uploadConcurrency})`,
       current: 0,
       total: totalImages,
       percentage: 0,
     });
 
     if (totalImages > 0) {
-      globalUploader = new ConcurrentUploader(syncSettings.uploadConcurrency);
-      globalUploader.setOnProgress((completed, total) => {
-        const percentage = Math.round((completed / total) * 100);
+      globalUploader = new ConcurrentUploader(uploadConcurrency);
+      globalUploader.setOnProgress((uploadProgress) => {
         onProgress?.({
           phase: "uploading",
-          message: `正在上传图片 ${completed}/${total} (${percentage}%)`,
-          current: completed,
-          total,
-          percentage,
+          message: uploadProgress.message,
+          current: uploadProgress.current,
+          total: uploadProgress.total,
+          percentage: uploadProgress.percentage,
+          round: uploadProgress.round,
+          failedCount: uploadProgress.failedCount,
         });
       });
 
       const uploadResults = await globalUploader.upload(tasks, hashMap);
       globalUploader = null;
 
-      // Count successful uploads
+      // Count successful uploads (with retry, all should succeed unless cancelled)
       result.imagesUploaded = uploadResults.filter((r) => r.success).length;
-      const failedUploads = uploadResults.filter((r) => !r.success);
+      const failedUploads = uploadResults.filter((r) => !r.success && r.error !== "Cancelled");
 
       if (failedUploads.length > 0) {
+        // This should rarely happen now with infinite retry
         result.errors.push(`${failedUploads.length} 张图片上传失败`);
         result.success = false;
 
-        // 如果有图片上传失败，不要继续同步 exam 数据，因为数据不完整
         onProgress?.({
           phase: "completed",
           message: `上传失败: ${failedUploads.length} 张图片未能上传到 R2，数据同步已中止`,
@@ -632,13 +636,21 @@ export const forceUploadAll = async (
         return result;
       }
 
-      onProgress?.({
-        phase: "uploading",
-        message: `上传完成: ${totalImages} 张图片`,
-        current: totalImages,
-        total: totalImages,
-        percentage: 100,
-      });
+      // Check if cancelled
+      const cancelledUploads = uploadResults.filter((r) => r.error === "Cancelled");
+      if (cancelledUploads.length > 0) {
+        result.errors.push(`上传已取消，${cancelledUploads.length} 张图片未上传`);
+        result.success = false;
+
+        onProgress?.({
+          phase: "completed",
+          message: `上传已取消`,
+          current: result.imagesUploaded,
+          total: totalImages,
+          percentage: 0,
+        });
+        return result;
+      }
     }
 
     // Phase 4: Sync exams to D1 with hash references
@@ -1172,7 +1184,7 @@ export const cancelSync = (): void => {
  */
 export const isSyncPaused = (): boolean => {
   if (globalUploader) {
-    return globalUploader.getProgress().completed < globalUploader.getProgress().total;
+    return globalUploader.getIsPaused();
   }
   return false;
 };
