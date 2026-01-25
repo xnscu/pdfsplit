@@ -287,17 +287,18 @@ export const getRemoteExam = async (id: string): Promise<ExamRecord | null> => {
 
 /**
  * Save exam to remote
+ * Returns the server timestamp if successful, null if failed
  */
-export const saveRemoteExam = async (exam: ExamRecord): Promise<boolean> => {
+export const saveRemoteExam = async (exam: ExamRecord): Promise<number | null> => {
   try {
-    await apiRequest<{ success: boolean }>("/exams", {
+    const result = await apiRequest<{ success: boolean; id: string; timestamp: number }>("/exams", {
       method: "POST",
       body: JSON.stringify(exam),
     });
-    return true;
+    return result.timestamp || null;
   } catch (e) {
     console.error("Failed to save exam to remote:", e);
-    return false;
+    return null;
   }
 };
 
@@ -368,12 +369,13 @@ export const syncToRemote = async (): Promise<SyncResult> => {
   for (const action of pendingActions) {
     try {
       if (action.type === "save" && action.data) {
-        const success = await saveRemoteExam(action.data);
-        if (success) {
+        // Re-upload images and sync (action.data might be stale, so use uploadExamImagesToR2AndSync)
+        const uploadResult = await uploadExamImagesToR2AndSync(action.data);
+        if (uploadResult.success) {
           result.pushed++;
           syncState.pendingActions = syncState.pendingActions.filter((a) => a.examId !== action.examId);
         } else {
-          result.errors.push(`Failed to sync exam: ${action.examId}`);
+          result.errors.push(`Failed to sync exam: ${action.examId} - ${uploadResult.error}`);
         }
       } else if (action.type === "delete") {
         const success = await deleteRemoteExam(action.examId);
@@ -843,8 +845,10 @@ export const forceUploadAll = async (
       // Replace dataUrls with hashes
       const examWithHashes = prepareExamForRemote(exam, hashMap);
 
-      const success = await saveRemoteExam(examWithHashes);
-      if (success) {
+      const serverTimestamp = await saveRemoteExam(examWithHashes);
+      if (serverTimestamp) {
+        // Update local storage with server timestamp to keep in sync
+        await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id, serverTimestamp);
         result.pushed++;
       } else {
         result.errors.push(`Failed to upload: ${meta.name}`);
@@ -1020,13 +1024,15 @@ export const forceDownloadAll = async (
 
 /**
  * Save exam to local IndexedDB
- * IMPORTANT: Must preserve the exam.id to maintain ID consistency between local and remote!
- * This ensures that when user syncs from remote, the local ID matches the remote ID,
- * preventing duplicate records when user later makes changes and syncs back.
+ * IMPORTANT: Must preserve both exam.id and exam.timestamp to maintain consistency between local and remote!
+ * - Preserving ID prevents duplicate records
+ * - Preserving timestamp ensures sync logic correctly detects which version is newer
+ * Without preserving timestamp, a pulled exam would get a new timestamp (Date.now()), making it appear
+ * newer than the remote version, causing the next sync to incorrectly push it back.
  */
 async function saveExamToLocal(exam: ExamRecord): Promise<void> {
-  // Pass exam.id as preserveId to maintain ID consistency across devices
-  await storageService.saveExamResult(exam.name, exam.rawPages, exam.questions, exam.id);
+  // Pass exam.id and exam.timestamp to maintain consistency across devices
+  await storageService.saveExamResult(exam.name, exam.rawPages, exam.questions, exam.id, exam.timestamp);
 }
 
 /**
@@ -1072,11 +1078,14 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
     if (imagesToProcess.length === 0) {
       // No new images, just sync metadata to remote
       const examWithHashes = exam; // Already all hashes
-      const success = await saveRemoteExam(examWithHashes);
-      if (!success) {
+      const serverTimestamp = await saveRemoteExam(examWithHashes);
+      if (!serverTimestamp) {
         result.success = false;
         result.error = "Failed to sync to remote";
+        return result;
       }
+      // Update local storage with server timestamp to keep in sync
+      await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id, serverTimestamp);
       return result;
     }
 
@@ -1147,16 +1156,18 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
 
     // Sync to remote D1
     console.log(`[Sync] Syncing ${exam.name} to remote...`);
-    const syncSuccess = await saveRemoteExam(examWithHashes);
-    if (!syncSuccess) {
+    const serverTimestamp = await saveRemoteExam(examWithHashes);
+    if (!serverTimestamp) {
       result.success = false;
       result.error = "Failed to sync to remote D1";
       return result;
     }
 
-    // Also update local storage with hashes to keep in sync
-    // IMPORTANT: Pass exam.id to maintain ID consistency (examWithHashes has the same id as exam)
-    await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id);
+    // Also update local storage with hashes and server timestamp to keep in sync
+    // IMPORTANT: Pass exam.id and serverTimestamp to maintain consistency
+    // The server timestamp ensures that local and remote timestamps match,
+    // preventing the next sync from incorrectly thinking the local version is newer.
+    await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id, serverTimestamp);
     console.log(`[Sync] Successfully synced ${exam.name}: ${result.imagesUploaded} uploaded, ${result.imagesSkipped} skipped`);
 
   } catch (e) {

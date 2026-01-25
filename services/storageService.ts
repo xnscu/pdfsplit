@@ -69,12 +69,14 @@ const openDB = (): Promise<IDBDatabase> => {
  * @param rawPages - The raw page data
  * @param questions - The question images
  * @param preserveId - Optional: Preserve this specific ID (used for sync from remote to maintain ID consistency)
+ * @param preserveTimestamp - Optional: Preserve this timestamp (used for sync from remote to maintain timestamp consistency)
  */
 export const saveExamResult = async (
   fileName: string,
   rawPages: DebugPageData[],
   questions: QuestionImage[] = [],
   preserveId?: string,
+  preserveTimestamp?: number,
 ): Promise<string> => {
   const db = await openDB();
 
@@ -90,7 +92,11 @@ export const saveExamResult = async (
     const existing = list.find((h) => h.name === fileName);
     id = existing ? existing.id : crypto.randomUUID();
   }
-  const timestamp = Date.now();
+  // IMPORTANT: If preserveTimestamp is provided (from remote sync), use it to maintain timestamp consistency.
+  // Otherwise, use current time (for local modifications).
+  // This ensures that when we pull from remote, the local timestamp matches remote, preventing
+  // the next sync from incorrectly thinking the local version is newer.
+  const timestamp = preserveTimestamp !== undefined ? preserveTimestamp : Date.now();
 
   // Safety: Deduplicate pages by pageNumber before saving to prevent DB corruption
   const uniquePages = Array.from(

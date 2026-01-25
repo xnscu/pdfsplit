@@ -461,7 +461,8 @@ async function handleSaveExam(db, examData) {
   // Execute batch
   await db.batch(statements);
 
-  return jsonResponse({ success: true, id });
+  // Return the server timestamp so client can update local timestamp to match
+  return jsonResponse({ success: true, id, timestamp: serverTimestamp });
 }
 
 async function handleDeleteExam(db, id) {
