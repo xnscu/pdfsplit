@@ -188,7 +188,7 @@ export async function batchCheckImagesExist(
     }
 
     const phaseMessage = round === 1 ? "checking" : "retrying";
-    
+
     // Split into chunks
     const chunks: string[][] = [];
     for (let i = 0; i < pendingHashes.length; i += chunkSize) {
@@ -201,8 +201,8 @@ export async function batchCheckImagesExist(
 
     options.onProgress?.({
       phase: phaseMessage,
-      message: round === 1 
-        ? `正在检查 ${pendingHashes.length} 张图片...` 
+      message: round === 1
+        ? `正在检查 ${pendingHashes.length} 张图片...`
         : `第 ${round} 轮重试: 检查 ${pendingHashes.length} 张失败的图片...`,
       current: 0,
       total: pendingHashes.length,
@@ -229,7 +229,7 @@ export async function batchCheckImagesExist(
           }
           // Collect failed hashes
           failedHashes.push(...chunkFailed);
-          
+
           // Update progress
           completedInRound += chunk.length;
           const percentage = Math.round((completedInRound / pendingHashes.length) * 100);
@@ -244,7 +244,7 @@ export async function batchCheckImagesExist(
             round,
             failedCount: failedHashes.length,
           });
-          
+
           executing.splice(executing.indexOf(promise), 1);
         });
         executing.push(promise);
@@ -261,7 +261,7 @@ export async function batchCheckImagesExist(
       console.log(`[R2] Round ${round} completed with ${failedHashes.length} failures. Retrying...`);
       pendingHashes = failedHashes;
       round++;
-      
+
       // Add a small delay before retrying to avoid hammering the server
       await new Promise((resolve) => setTimeout(resolve, 1000));
     } else {

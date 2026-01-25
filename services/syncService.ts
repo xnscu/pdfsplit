@@ -597,7 +597,7 @@ export const forceUploadAll = async (
       if (failedUploads.length > 0) {
         result.errors.push(`${failedUploads.length} 张图片上传失败`);
         result.success = false;
-        
+
         // 如果有图片上传失败，不要继续同步 exam 数据，因为数据不完整
         onProgress?.({
           phase: "completed",
