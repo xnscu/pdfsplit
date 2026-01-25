@@ -1,0 +1,1 @@
+select id, exam_id from questions;
