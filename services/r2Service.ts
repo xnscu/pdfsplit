@@ -77,59 +77,208 @@ export async function checkImageExists(hash: string): Promise<boolean> {
  * Note: Cloudflare Workers has a limit of ~1000 R2 API calls per invocation.
  * This function automatically splits large batches into smaller chunks.
  */
-const BATCH_CHECK_CHUNK_SIZE = 50; // Stay well under 1000 limit for safety
 
-export async function batchCheckImagesExist(hashes: string[]): Promise<Record<string, boolean>> {
+// Default values (can be overridden via options or global settings)
+let globalBatchCheckChunkSize = 50;
+let globalBatchCheckConcurrency = 100;
+
+/**
+ * Set global batch check settings
+ */
+export function setBatchCheckSettings(settings: { chunkSize?: number; concurrency?: number }): void {
+  if (settings.chunkSize !== undefined) {
+    globalBatchCheckChunkSize = settings.chunkSize;
+  }
+  if (settings.concurrency !== undefined) {
+    globalBatchCheckConcurrency = settings.concurrency;
+  }
+}
+
+/**
+ * Get current batch check settings
+ */
+export function getBatchCheckSettings(): { chunkSize: number; concurrency: number } {
+  return {
+    chunkSize: globalBatchCheckChunkSize,
+    concurrency: globalBatchCheckConcurrency,
+  };
+}
+
+export interface BatchCheckOptions {
+  chunkSize?: number; // Hashes per chunk (default: 50)
+  concurrency?: number; // Concurrent requests (default: 100)
+  onProgress?: (progress: BatchCheckProgress) => void; // Progress callback
+  maxRetries?: number; // Max retries for failed hashes (default: infinite until all succeed)
+}
+
+export interface BatchCheckProgress {
+  phase: "checking" | "retrying" | "completed";
+  message: string;
+  current: number;
+  total: number;
+  percentage: number;
+  round: number; // Current retry round (1 = first attempt)
+  failedCount: number; // Number of hashes that failed in this round
+}
+
+/**
+ * Process a single chunk of hashes
+ * Returns { results, failedHashes }
+ */
+async function checkChunk(
+  chunk: string[],
+): Promise<{ results: Record<string, boolean>; failedHashes: string[] }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/r2/check-batch`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ hashes: chunk }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Batch check failed: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    return { results: data.results || {}, failedHashes: [] };
+  } catch (error) {
+    console.error(`[R2] Chunk failed:`, error);
+    // Return all hashes as failed
+    return { results: {}, failedHashes: chunk };
+  }
+}
+
+export async function batchCheckImagesExist(
+  hashes: string[],
+  options: BatchCheckOptions = {},
+): Promise<Record<string, boolean>> {
   if (hashes.length === 0) {
+    options.onProgress?.({
+      phase: "completed",
+      message: "没有需要检查的图片",
+      current: 0,
+      total: 0,
+      percentage: 100,
+      round: 1,
+      failedCount: 0,
+    });
     return {};
   }
 
-  // Split into chunks to avoid Cloudflare Worker limits
-  const chunks: string[][] = [];
-  for (let i = 0; i < hashes.length; i += BATCH_CHECK_CHUNK_SIZE) {
-    chunks.push(hashes.slice(i, i + BATCH_CHECK_CHUNK_SIZE));
-  }
-
-  console.log(
-    `[R2] Batch checking ${hashes.length} hashes in ${chunks.length} chunks (max ${BATCH_CHECK_CHUNK_SIZE} per chunk)`,
-  );
+  const chunkSize = options.chunkSize ?? globalBatchCheckChunkSize;
+  const concurrency = options.concurrency ?? globalBatchCheckConcurrency;
+  const maxRetries = options.maxRetries; // undefined = infinite retries
 
   const allResults: Record<string, boolean> = {};
+  let pendingHashes = [...hashes];
+  let round = 1;
 
-  // Process chunks sequentially to avoid overwhelming the worker
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    console.log(`[R2] Processing chunk ${i + 1}/${chunks.length} (${chunk.length} hashes)`);
+  while (pendingHashes.length > 0) {
+    // Check if max retries exceeded
+    if (maxRetries !== undefined && round > maxRetries + 1) {
+      console.error(`[R2] Max retries (${maxRetries}) exceeded. ${pendingHashes.length} hashes still failed.`);
+      // Mark remaining as false
+      for (const hash of pendingHashes) {
+        allResults[hash] = false;
+      }
+      break;
+    }
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/r2/check-batch`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ hashes: chunk }),
-      });
+    const phaseMessage = round === 1 ? "checking" : "retrying";
+    
+    // Split into chunks
+    const chunks: string[][] = [];
+    for (let i = 0; i < pendingHashes.length; i += chunkSize) {
+      chunks.push(pendingHashes.slice(i, i + chunkSize));
+    }
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Batch check failed: ${response.status} - ${errorText}`);
+    console.log(
+      `[R2] Round ${round}: Batch checking ${pendingHashes.length} hashes in ${chunks.length} chunks (max ${chunkSize} per chunk, concurrency: ${concurrency})`,
+    );
+
+    options.onProgress?.({
+      phase: phaseMessage,
+      message: round === 1 
+        ? `正在检查 ${pendingHashes.length} 张图片...` 
+        : `第 ${round} 轮重试: 检查 ${pendingHashes.length} 张失败的图片...`,
+      current: 0,
+      total: pendingHashes.length,
+      percentage: 0,
+      round,
+      failedCount: pendingHashes.length,
+    });
+
+    const failedHashes: string[] = [];
+    let completedInRound = 0;
+
+    // Process chunks with concurrency control
+    let index = 0;
+    const executing: Promise<void>[] = [];
+
+    while (index < chunks.length || executing.length > 0) {
+      // Fill up to concurrency limit
+      while (executing.length < concurrency && index < chunks.length) {
+        const chunk = chunks[index++];
+        const promise = checkChunk(chunk).then(({ results, failedHashes: chunkFailed }) => {
+          // Merge results
+          for (const [hash, exists] of Object.entries(results)) {
+            allResults[hash] = exists as boolean;
+          }
+          // Collect failed hashes
+          failedHashes.push(...chunkFailed);
+          
+          // Update progress
+          completedInRound += chunk.length;
+          const percentage = Math.round((completedInRound / pendingHashes.length) * 100);
+          options.onProgress?.({
+            phase: phaseMessage,
+            message: round === 1
+              ? `正在检查图片 ${completedInRound}/${pendingHashes.length} (${percentage}%)`
+              : `第 ${round} 轮重试: ${completedInRound}/${pendingHashes.length} (${percentage}%)`,
+            current: completedInRound,
+            total: pendingHashes.length,
+            percentage,
+            round,
+            failedCount: failedHashes.length,
+          });
+          
+          executing.splice(executing.indexOf(promise), 1);
+        });
+        executing.push(promise);
       }
 
-      const data = await response.json();
-      const chunkResults = data.results || {};
-
-      // Merge results
-      for (const [hash, exists] of Object.entries(chunkResults)) {
-        allResults[hash] = exists as boolean;
-      }
-    } catch (error) {
-      console.error(`[R2] Chunk ${i + 1} failed, falling back to individual checks:`, error);
-      // Fall back to individual checks for this chunk only
-      for (const hash of chunk) {
-        allResults[hash] = await checkImageExists(hash);
+      // Wait for at least one to complete if at concurrency limit
+      if (executing.length > 0 && (executing.length >= concurrency || index >= chunks.length)) {
+        await Promise.race(executing);
       }
     }
+
+    // Prepare for next round if there are failed hashes
+    if (failedHashes.length > 0) {
+      console.log(`[R2] Round ${round} completed with ${failedHashes.length} failures. Retrying...`);
+      pendingHashes = failedHashes;
+      round++;
+      
+      // Add a small delay before retrying to avoid hammering the server
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    } else {
+      // All succeeded
+      pendingHashes = [];
+    }
   }
+
+  options.onProgress?.({
+    phase: "completed",
+    message: `检查完成: ${hashes.length} 张图片`,
+    current: hashes.length,
+    total: hashes.length,
+    percentage: 100,
+    round,
+    failedCount: 0,
+  });
 
   return allResults;
 }

@@ -544,6 +544,10 @@ const App: React.FC = () => {
         setApiKey={setters.setApiKey}
         syncConcurrency={syncHook.status.uploadConcurrency}
         setSyncConcurrency={syncHook.setUploadConcurrency}
+        batchCheckChunkSize={syncHook.status.batchCheckChunkSize}
+        setBatchCheckChunkSize={syncHook.setBatchCheckChunkSize}
+        batchCheckConcurrency={syncHook.status.batchCheckConcurrency}
+        setBatchCheckConcurrency={syncHook.setBatchCheckConcurrency}
       />
       {state.refiningFile && (
         <RefinementModal

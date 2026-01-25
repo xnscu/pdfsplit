@@ -20,6 +20,10 @@ interface Props {
   setApiKey?: (key: string) => void;
   syncConcurrency?: number;
   setSyncConcurrency?: (c: number) => void;
+  batchCheckChunkSize?: number;
+  setBatchCheckChunkSize?: (c: number) => void;
+  batchCheckConcurrency?: number;
+  setBatchCheckConcurrency?: (c: number) => void;
 }
 
 export const ConfigurationPanel: React.FC<Props> = ({
@@ -41,6 +45,10 @@ export const ConfigurationPanel: React.FC<Props> = ({
   setApiKey,
   syncConcurrency = 10,
   setSyncConcurrency,
+  batchCheckChunkSize = 50,
+  setBatchCheckChunkSize,
+  batchCheckConcurrency = 100,
+  setBatchCheckConcurrency,
 }) => {
   if (!isOpen) return null;
 
@@ -267,6 +275,60 @@ export const ConfigurationPanel: React.FC<Props> = ({
                 />
                 <p className="text-xs text-slate-400 font-medium">
                   Parallel image uploads during cloud sync. Higher values = faster sync but more network load.
+                </p>
+              </div>
+            )}
+
+            {setBatchCheckChunkSize && (
+              <div className="space-y-3">
+                <div className="flex justify-between">
+                  <label className="font-bold text-slate-700">
+                    Batch Check Chunk Size
+                  </label>
+                  <span className="font-black text-cyan-600 bg-cyan-50 px-3 py-1 rounded-lg text-xs">
+                    {batchCheckChunkSize} Hashes/Request
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="200"
+                  step="10"
+                  value={batchCheckChunkSize}
+                  onChange={(e) =>
+                    setBatchCheckChunkSize(parseInt(e.target.value))
+                  }
+                  className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-cyan-600"
+                />
+                <p className="text-xs text-slate-400 font-medium">
+                  Number of image hashes to check per API request. Higher values = fewer requests but larger payloads.
+                </p>
+              </div>
+            )}
+
+            {setBatchCheckConcurrency && (
+              <div className="space-y-3">
+                <div className="flex justify-between">
+                  <label className="font-bold text-slate-700">
+                    Batch Check Concurrency
+                  </label>
+                  <span className="font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-lg text-xs">
+                    {batchCheckConcurrency} Requests
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="200"
+                  step="10"
+                  value={batchCheckConcurrency}
+                  onChange={(e) =>
+                    setBatchCheckConcurrency(parseInt(e.target.value))
+                  }
+                  className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+                <p className="text-xs text-slate-400 font-medium">
+                  Parallel batch check requests. Higher values = faster checking but more network load.
                 </p>
               </div>
             )}

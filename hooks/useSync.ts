@@ -16,6 +16,8 @@ export interface SyncStatus {
   error: string | null;
   progress: SyncProgress | null;
   uploadConcurrency: number;
+  batchCheckChunkSize: number;
+  batchCheckConcurrency: number;
 }
 
 export interface UseSyncResult {
@@ -28,18 +30,25 @@ export interface UseSyncResult {
   resumeSync: () => void;
   cancelSync: () => void;
   setUploadConcurrency: (concurrency: number) => void;
+  setBatchCheckChunkSize: (chunkSize: number) => void;
+  setBatchCheckConcurrency: (concurrency: number) => void;
 }
 
 export function useSync(): UseSyncResult {
-  const [status, setStatus] = useState<SyncStatus>({
-    isOnline: true,
-    isSyncing: false,
-    isPaused: false,
-    pendingCount: 0,
-    lastSyncTime: 0,
-    error: null,
-    progress: null,
-    uploadConcurrency: syncService.getSyncSettings().uploadConcurrency,
+  const [status, setStatus] = useState<SyncStatus>(() => {
+    const settings = syncService.getSyncSettings();
+    return {
+      isOnline: true,
+      isSyncing: false,
+      isPaused: false,
+      pendingCount: 0,
+      lastSyncTime: 0,
+      error: null,
+      progress: null,
+      uploadConcurrency: settings.uploadConcurrency,
+      batchCheckChunkSize: settings.batchCheckChunkSize,
+      batchCheckConcurrency: settings.batchCheckConcurrency,
+    };
   });
 
   const isPausedRef = useRef(false);
@@ -54,6 +63,8 @@ export function useSync(): UseSyncResult {
       pendingCount: state.pendingActions.length,
       lastSyncTime: state.lastSyncTime,
       uploadConcurrency: settings.uploadConcurrency,
+      batchCheckChunkSize: settings.batchCheckChunkSize,
+      batchCheckConcurrency: settings.batchCheckConcurrency,
     }));
 
     // Initialize sync service
@@ -219,6 +230,16 @@ export function useSync(): UseSyncResult {
     setStatus((prev) => ({ ...prev, uploadConcurrency: concurrency }));
   }, []);
 
+  const setBatchCheckChunkSize = useCallback((chunkSize: number) => {
+    syncService.setBatchCheckChunkSize(chunkSize);
+    setStatus((prev) => ({ ...prev, batchCheckChunkSize: chunkSize }));
+  }, []);
+
+  const setBatchCheckConcurrency = useCallback((concurrency: number) => {
+    syncService.setBatchCheckConcurrency(concurrency);
+    setStatus((prev) => ({ ...prev, batchCheckConcurrency: concurrency }));
+  }, []);
+
   const clearPending = useCallback(() => {
     syncService.clearPendingActions();
     setStatus((prev) => ({ ...prev, pendingCount: 0 }));
@@ -234,6 +255,8 @@ export function useSync(): UseSyncResult {
     resumeSync,
     cancelSync,
     setUploadConcurrency,
+    setBatchCheckChunkSize,
+    setBatchCheckConcurrency,
   };
 }
 

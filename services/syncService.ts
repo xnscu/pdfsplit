@@ -13,6 +13,8 @@ import {
   batchCheckImagesExist,
   isImageHash,
   ImageUploadTask,
+  setBatchCheckSettings,
+  getBatchCheckSettings,
 } from "./r2Service";
 
 // Get API URL from environment or use default
@@ -47,11 +49,15 @@ const SYNC_CONFIG = {
 // Sync settings interface
 export interface SyncSettings {
   uploadConcurrency: number;
+  batchCheckChunkSize: number;
+  batchCheckConcurrency: number;
 }
 
 // Default sync settings
 const defaultSyncSettings: SyncSettings = {
   uploadConcurrency: SYNC_CONFIG.defaultConcurrency,
+  batchCheckChunkSize: 50,
+  batchCheckConcurrency: 100,
 };
 
 // Current sync settings
@@ -66,6 +72,11 @@ export const loadSyncSettings = (): SyncSettings => {
     if (saved) {
       syncSettings = { ...defaultSyncSettings, ...JSON.parse(saved) };
     }
+    // Sync batch check settings to r2Service
+    setBatchCheckSettings({
+      chunkSize: syncSettings.batchCheckChunkSize,
+      concurrency: syncSettings.batchCheckConcurrency,
+    });
   } catch (e) {
     console.warn("Failed to load sync settings:", e);
   }
@@ -1149,4 +1160,34 @@ export const setUploadConcurrency = (concurrency: number): void => {
   if (globalUploader) {
     globalUploader.setConcurrency(concurrency);
   }
+};
+
+/**
+ * Get batch check chunk size
+ */
+export const getBatchCheckChunkSize = (): number => {
+  return syncSettings.batchCheckChunkSize;
+};
+
+/**
+ * Set batch check chunk size
+ */
+export const setBatchCheckChunkSize = (chunkSize: number): void => {
+  saveSyncSettings({ batchCheckChunkSize: chunkSize });
+  setBatchCheckSettings({ chunkSize });
+};
+
+/**
+ * Get batch check concurrency
+ */
+export const getBatchCheckConcurrency = (): number => {
+  return syncSettings.batchCheckConcurrency;
+};
+
+/**
+ * Set batch check concurrency
+ */
+export const setBatchCheckConcurrency = (concurrency: number): void => {
+  saveSyncSettings({ batchCheckConcurrency: concurrency });
+  setBatchCheckSettings({ concurrency });
 };
