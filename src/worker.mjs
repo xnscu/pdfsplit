@@ -333,7 +333,7 @@ async function handleGetExam(db, id) {
 }
 
 async function handleSaveExam(db, examData) {
-  const { id, name, timestamp, pageCount, rawPages, questions } = examData;
+  const { id, name, pageCount, rawPages, questions } = examData;
 
   if (!id || !name) {
     return errorResponse('Missing required fields: id, name');
@@ -342,6 +342,12 @@ async function handleSaveExam(db, examData) {
   // Use transaction-like batch operations with INCREMENTAL updates
   // Instead of delete-all-then-insert, we use UPSERT and selective deletion
   const statements = [];
+
+  // IMPORTANT: Always use server time as timestamp to ensure sync/pull can detect changes.
+  // Previously we used client-provided timestamp, but client-side update operations
+  // (like updateQuestionsForFile) don't always update the timestamp, causing sync/pull
+  // to miss updates. Using server time ensures any push will be detectable by subsequent pulls.
+  const serverTimestamp = Date.now();
 
   // Upsert exam record
   statements.push(
@@ -353,7 +359,7 @@ async function handleSaveExam(db, examData) {
         timestamp = excluded.timestamp,
         page_count = excluded.page_count,
         updated_at = datetime('now')
-    `).bind(id, name, timestamp || Date.now(), pageCount || 0)
+    `).bind(id, name, serverTimestamp, pageCount || 0)
   );
 
   // === INCREMENTAL UPDATE for raw_pages ===
@@ -533,9 +539,18 @@ async function handleUpdateQuestions(db, examId, questions) {
     }
   }
 
-  // Update exam timestamp
+  // IMPORTANT: Update both timestamp and updated_at to ensure sync/pull can detect changes
+  const serverTimestamp = Date.now();
   statements.push(
-    db.prepare('UPDATE exams SET updated_at = datetime(\'now\') WHERE id = ?').bind(examId)
+    db.prepare('UPDATE exams SET timestamp = ?, updated_at = datetime(\'now\') WHERE id = ?').bind(serverTimestamp, examId)
+  );
+
+  // Add sync log entry for tracking
+  statements.push(
+    db.prepare(`
+      INSERT INTO sync_log (id, exam_id, action, timestamp, synced_from)
+      VALUES (?, ?, 'update', ?, 'remote')
+    `).bind(crypto.randomUUID(), examId, serverTimestamp)
   );
 
   await db.batch(statements);
@@ -675,10 +690,13 @@ async function getFullExam(db, id) {
 }
 
 async function saveExamToDb(db, examData, source) {
-  const { id, name, timestamp, pageCount, rawPages, questions } = examData;
+  const { id, name, pageCount, rawPages, questions } = examData;
 
   // Use INCREMENTAL updates instead of delete-all-then-insert
   const statements = [];
+
+  // IMPORTANT: Always use server time as timestamp to ensure sync/pull can detect changes.
+  const serverTimestamp = Date.now();
 
   statements.push(
     db.prepare(`
@@ -689,7 +707,7 @@ async function saveExamToDb(db, examData, source) {
         timestamp = excluded.timestamp,
         page_count = excluded.page_count,
         updated_at = datetime('now')
-    `).bind(id, name, timestamp || Date.now(), pageCount || 0)
+    `).bind(id, name, serverTimestamp, pageCount || 0)
   );
 
   // === INCREMENTAL UPDATE for raw_pages ===
