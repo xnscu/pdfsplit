@@ -585,10 +585,21 @@ export const forceUploadAll = async (
 
       if (failedUploads.length > 0) {
         result.errors.push(`${failedUploads.length} 张图片上传失败`);
+        result.success = false;
+        
+        // 如果有图片上传失败，不要继续同步 exam 数据，因为数据不完整
+        onProgress?.({
+          phase: "completed",
+          message: `上传失败: ${failedUploads.length} 张图片未能上传到 R2，数据同步已中止`,
+          current: 0,
+          total: totalExams,
+          percentage: 0,
+        });
+        return result;
       }
     }
 
-    // Step 3: Sync exams to D1 with hash references
+    // Step 3: Sync exams to D1 with hash references (only if all images uploaded successfully)
     onProgress?.({
       phase: "syncing",
       message: "正在同步数据到云端...",
@@ -610,6 +621,7 @@ export const forceUploadAll = async (
         result.pushed++;
       } else {
         result.errors.push(`Failed to upload: ${meta.name}`);
+        result.success = false;
       }
 
       onProgress?.({
@@ -624,12 +636,16 @@ export const forceUploadAll = async (
     syncState.lastSyncTime = Date.now();
     saveSyncState();
 
+    const finalMessage = result.success
+      ? `同步完成: ${result.pushed} 个试卷, ${result.imagesUploaded} 张图片上传`
+      : `同步部分完成，但有错误: ${result.errors.join(", ")}`;
+
     onProgress?.({
       phase: "completed",
-      message: `同步完成: ${result.pushed} 个试卷, ${result.imagesUploaded} 张图片上传`,
+      message: finalMessage,
       current: totalExams,
       total: totalExams,
-      percentage: 100,
+      percentage: result.success ? 100 : 0,
     });
   } catch (e) {
     result.success = false;

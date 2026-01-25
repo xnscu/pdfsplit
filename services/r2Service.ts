@@ -397,3 +397,13 @@ export function getR2ImageUrl(hash: string): string {
 export function isImageHash(value: string): boolean {
   return /^[a-f0-9]{64}$/i.test(value);
 }
+
+/**
+ * Resolve an image reference for display:
+ * - If it's a SHA-256 hash, return the fetchable R2 URL (/api/r2/:hash or VITE_API_URL-based)
+ * - Otherwise (data URL / normal URL), return as-is
+ */
+export function resolveImageUrl(value?: string): string | undefined {
+  if (!value) return value;
+  return isImageHash(value) ? getR2ImageUrl(value) : value;
+}

@@ -22,8 +22,9 @@
     "preview": "vite preview",
     "deploy": "vite build && wrangler deploy",
     "postdeploy": "git push",
-    "db:init": "wrangler d1 execute gksx --file=schema.sql --remote",
-    "db:init:local": "wrangler d1 execute gksx --local --file=schema.sql"
+    "db": "wrangler d1 execute gksx --remote --yes",
+    "db:init:remote": "wrangler d1 execute gksx --file=schema.sql --remote",
+    "db:init": "wrangler d1 execute gksx --local --file=schema.sql"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.21.2",

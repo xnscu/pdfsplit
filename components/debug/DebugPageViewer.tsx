@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import { DebugPageData, DetectedQuestion } from "../../types";
+import { resolveImageUrl } from "../../services/r2Service";
 
 interface Props {
   width: number;
@@ -274,7 +275,7 @@ export const DebugPageViewer: React.FC<Props> = ({
 
             <div className="relative w-full shadow-2xl shadow-black/50 rounded-sm overflow-hidden bg-white ring-1 ring-slate-800 select-none">
               <img
-                src={page.dataUrl}
+                src={resolveImageUrl(page.dataUrl)}
                 alt={`Page ${page.pageNumber}`}
                 className="block w-full h-auto opacity-90 transition-opacity hover:opacity-100 pointer-events-none"
               />

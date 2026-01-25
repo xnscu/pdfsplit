@@ -12,6 +12,7 @@ import { QuestionImage, DebugPageData } from "../types";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import { resolveImageUrl } from "../services/r2Service";
 
 interface Props {
   questions: QuestionImage[];
@@ -187,7 +188,7 @@ const VirtualRow = ({ index, style, data }: ListChildComponentProps) => {
               onClick={() => setSelectedImage(q)}
             >
               <img
-                src={q.dataUrl}
+                src={resolveImageUrl(q.dataUrl)}
                 alt={`Q${q.id}`}
                 className="max-w-full max-h-[260px] w-auto h-auto object-contain transition-transform duration-300 group-hover:scale-105"
                 loading="lazy"
@@ -681,11 +682,11 @@ export const QuestionGrid: React.FC<Props> = ({
                   </div>
                 )}
                 <img
-                  src={
+                  src={resolveImageUrl(
                     showOriginal && selectedImage.originalDataUrl
                       ? selectedImage.originalDataUrl
-                      : selectedImage.dataUrl
-                  }
+                      : selectedImage.dataUrl,
+                  )}
                   alt={`Full size Question ${selectedImage.id}`}
                   className={`max-h-full max-w-full object-contain shadow-2xl transition-all duration-300 ${showOriginal ? "ring-8 ring-blue-500/20" : ""}`}
                 />
@@ -799,7 +800,7 @@ export const QuestionGrid: React.FC<Props> = ({
                 Arrows to navigate • Esc to close
               </span>
               <a
-                href={selectedImage.dataUrl}
+                href={resolveImageUrl(selectedImage.dataUrl)}
                 download={`${selectedImage.fileName}_Q${selectedImage.id}.jpg`}
                 className="bg-white text-slate-950 px-8 py-3.5 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-slate-200 transition-all flex items-center gap-3 active:scale-95 shadow-2xl shadow-white/5"
               >

@@ -3,6 +3,7 @@ import { QuestionImage } from "../../types";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import { resolveImageUrl } from "../../services/r2Service";
 
 interface Props {
   questions: QuestionImage[];
@@ -75,7 +76,7 @@ export const DebugPreviewGrid: React.FC<Props> = ({
                 title={`Click to debug Question ${q.id}`}
               >
                 <img
-                  src={q.dataUrl}
+                  src={resolveImageUrl(q.dataUrl)}
                   alt=""
                   className="max-w-full h-auto object-contain block select-none"
                   loading="lazy"
