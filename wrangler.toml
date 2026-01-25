@@ -5,7 +5,7 @@ compatibility_flags = [ "nodejs_compat" ]
 
 # Routes configuration
 routes = [
-  { pattern = "gksx.xnscu.com", zone_name = "xnscu.com", custom_domain = true }
+  { pattern = "gksx.xnscu.com", zone_name = "xnscu.com", custom_domain = true,  workers_dev=false,preview_urls= false }
 ]
 
 # D1 Database binding
