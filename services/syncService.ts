@@ -1,10 +1,19 @@
 /**
  * Sync Service for bidirectional synchronization between IndexedDB and D1
  * Handles conflict resolution, offline mode, and background sync
+ * Images are stored in R2, with hashes stored in D1
  */
 
 import { ExamRecord, HistoryMetadata } from "../types";
 import * as storageService from "./storageService";
+import {
+  calculateImageHash,
+  prepareUploadTasks,
+  ConcurrentUploader,
+  batchCheckImagesExist,
+  isImageHash,
+  ImageUploadTask,
+} from "./r2Service";
 
 // Get API URL from environment or use default
 const getApiUrl = (): string => {
@@ -22,11 +31,64 @@ const SYNC_CONFIG = {
   // Local storage key for sync state
   syncStateKey: "gksx_sync_state",
 
+  // Local storage key for sync settings
+  syncSettingsKey: "gksx_sync_settings",
+
   // Auto-sync interval in milliseconds (5 minutes)
   autoSyncInterval: 5 * 60 * 1000,
 
   // Maximum retries for failed sync
   maxRetries: 3,
+
+  // Default concurrency for image uploads
+  defaultConcurrency: 10,
+};
+
+// Sync settings interface
+export interface SyncSettings {
+  uploadConcurrency: number;
+}
+
+// Default sync settings
+const defaultSyncSettings: SyncSettings = {
+  uploadConcurrency: SYNC_CONFIG.defaultConcurrency,
+};
+
+// Current sync settings
+let syncSettings: SyncSettings = { ...defaultSyncSettings };
+
+/**
+ * Load sync settings from localStorage
+ */
+export const loadSyncSettings = (): SyncSettings => {
+  try {
+    const saved = localStorage.getItem(SYNC_CONFIG.syncSettingsKey);
+    if (saved) {
+      syncSettings = { ...defaultSyncSettings, ...JSON.parse(saved) };
+    }
+  } catch (e) {
+    console.warn("Failed to load sync settings:", e);
+  }
+  return syncSettings;
+};
+
+/**
+ * Save sync settings to localStorage
+ */
+export const saveSyncSettings = (settings: Partial<SyncSettings>): void => {
+  syncSettings = { ...syncSettings, ...settings };
+  try {
+    localStorage.setItem(SYNC_CONFIG.syncSettingsKey, JSON.stringify(syncSettings));
+  } catch (e) {
+    console.warn("Failed to save sync settings:", e);
+  }
+};
+
+/**
+ * Get current sync settings
+ */
+export const getSyncSettings = (): SyncSettings => {
+  return { ...syncSettings };
 };
 
 // Sync state interface
@@ -49,7 +111,24 @@ interface SyncResult {
   pulled: number;
   conflicts: ConflictInfo[];
   errors: string[];
+  imagesUploaded?: number;
+  imagesSkipped?: number;
 }
+
+// Progress callback type
+export type SyncProgressCallback = (progress: SyncProgress) => void;
+
+export interface SyncProgress {
+  phase: "preparing" | "uploading" | "syncing" | "downloading" | "completed";
+  message: string;
+  current: number;
+  total: number;
+  percentage: number;
+}
+
+// Global uploader instance for pause/resume control
+let globalUploader: ConcurrentUploader | null = null;
+let currentSyncAbortController: AbortController | null = null;
 
 interface ConflictInfo {
   id: string;
@@ -374,46 +453,235 @@ export const fullSync = async (): Promise<SyncResult> => {
 };
 
 /**
- * Force sync all local data to remote
+ * Force sync all local data to remote with R2 image upload
+ * Supports progress callback, pause/resume
  */
-export const forceUploadAll = async (): Promise<SyncResult> => {
+export const forceUploadAll = async (
+  onProgress?: SyncProgressCallback,
+): Promise<SyncResult> => {
   const result: SyncResult = {
     success: true,
     pushed: 0,
     pulled: 0,
     conflicts: [],
     errors: [],
+    imagesUploaded: 0,
+    imagesSkipped: 0,
   };
 
-  try {
-    const localList = await storageService.getHistoryList();
+  currentSyncAbortController = new AbortController();
 
-    for (const meta of localList) {
+  try {
+    onProgress?.({
+      phase: "preparing",
+      message: "正在准备同步任务...",
+      current: 0,
+      total: 0,
+      percentage: 0,
+    });
+
+    const localList = await storageService.getHistoryList();
+    const totalExams = localList.length;
+
+    if (totalExams === 0) {
+      onProgress?.({
+        phase: "completed",
+        message: "没有数据需要同步",
+        current: 0,
+        total: 0,
+        percentage: 100,
+      });
+      return result;
+    }
+
+    // Step 1: Collect all images and calculate hashes
+    onProgress?.({
+      phase: "preparing",
+      message: "正在计算图片哈希值...",
+      current: 0,
+      total: totalExams,
+      percentage: 0,
+    });
+
+    // Collect all images from all exams
+    const allRawPages: Array<{ examId: string; pageNumber: number; dataUrl: string }> = [];
+    const allQuestions: Array<{ examId: string; id: string; dataUrl: string; originalDataUrl?: string }> = [];
+    const examDataMap = new Map<string, ExamRecord>();
+
+    for (let i = 0; i < localList.length; i++) {
+      const meta = localList[i];
       const exam = await storageService.loadExamResult(meta.id);
-      if (exam) {
-        const success = await saveRemoteExam(exam);
-        if (success) {
-          result.pushed++;
-        } else {
-          result.errors.push(`Failed to upload: ${meta.name}`);
+      if (!exam) continue;
+
+      examDataMap.set(exam.id, exam);
+
+      for (const page of exam.rawPages) {
+        // Skip if already a hash
+        if (!isImageHash(page.dataUrl)) {
+          allRawPages.push({
+            examId: exam.id,
+            pageNumber: page.pageNumber,
+            dataUrl: page.dataUrl,
+          });
         }
       }
+
+      for (const q of exam.questions) {
+        if (!isImageHash(q.dataUrl)) {
+          allQuestions.push({
+            examId: exam.id,
+            id: q.id,
+            dataUrl: q.dataUrl,
+            originalDataUrl: q.originalDataUrl && !isImageHash(q.originalDataUrl) ? q.originalDataUrl : undefined,
+          });
+        }
+      }
+
+      onProgress?.({
+        phase: "preparing",
+        message: `正在分析: ${meta.name}`,
+        current: i + 1,
+        total: totalExams,
+        percentage: Math.round(((i + 1) / totalExams) * 30), // 0-30% for preparation
+      });
+    }
+
+    // Prepare upload tasks
+    const { tasks, hashMap, existingHashes } = await prepareUploadTasks(
+      allRawPages.map((p) => ({ pageNumber: p.pageNumber, dataUrl: p.dataUrl })),
+      allQuestions.map((q) => ({ id: q.id, dataUrl: q.dataUrl, originalDataUrl: q.originalDataUrl })),
+    );
+
+    result.imagesSkipped = existingHashes.size;
+    const totalImages = tasks.length;
+
+    onProgress?.({
+      phase: "uploading",
+      message: `准备上传 ${totalImages} 张图片 (${existingHashes.size} 张已存在)`,
+      current: 0,
+      total: totalImages,
+      percentage: 30,
+    });
+
+    // Step 2: Upload images to R2 with concurrency control
+    if (totalImages > 0) {
+      globalUploader = new ConcurrentUploader(syncSettings.uploadConcurrency);
+      globalUploader.setOnProgress((completed, total) => {
+        onProgress?.({
+          phase: "uploading",
+          message: `正在上传图片 ${completed}/${total}`,
+          current: completed,
+          total,
+          percentage: 30 + Math.round((completed / total) * 40), // 30-70% for uploads
+        });
+      });
+
+      const uploadResults = await globalUploader.upload(tasks, hashMap);
+      globalUploader = null;
+
+      // Count successful uploads
+      result.imagesUploaded = uploadResults.filter((r) => r.success).length;
+      const failedUploads = uploadResults.filter((r) => !r.success);
+
+      if (failedUploads.length > 0) {
+        result.errors.push(`${failedUploads.length} 张图片上传失败`);
+      }
+    }
+
+    // Step 3: Sync exams to D1 with hash references
+    onProgress?.({
+      phase: "syncing",
+      message: "正在同步数据到云端...",
+      current: 0,
+      total: totalExams,
+      percentage: 70,
+    });
+
+    for (let i = 0; i < localList.length; i++) {
+      const meta = localList[i];
+      const exam = examDataMap.get(meta.id);
+      if (!exam) continue;
+
+      // Replace dataUrls with hashes
+      const examWithHashes = prepareExamForRemote(exam, hashMap);
+
+      const success = await saveRemoteExam(examWithHashes);
+      if (success) {
+        result.pushed++;
+      } else {
+        result.errors.push(`Failed to upload: ${meta.name}`);
+      }
+
+      onProgress?.({
+        phase: "syncing",
+        message: `正在同步: ${meta.name}`,
+        current: i + 1,
+        total: totalExams,
+        percentage: 70 + Math.round(((i + 1) / totalExams) * 30), // 70-100% for sync
+      });
     }
 
     syncState.lastSyncTime = Date.now();
     saveSyncState();
+
+    onProgress?.({
+      phase: "completed",
+      message: `同步完成: ${result.pushed} 个试卷, ${result.imagesUploaded} 张图片上传`,
+      current: totalExams,
+      total: totalExams,
+      percentage: 100,
+    });
   } catch (e) {
     result.success = false;
     result.errors.push(`Force upload failed: ${e}`);
+    onProgress?.({
+      phase: "completed",
+      message: `同步失败: ${e}`,
+      current: 0,
+      total: 0,
+      percentage: 0,
+    });
+  } finally {
+    globalUploader = null;
+    currentSyncAbortController = null;
   }
 
   return result;
 };
 
 /**
- * Force download all remote data to local
+ * Prepare exam data for remote storage by replacing dataUrls with hashes
  */
-export const forceDownloadAll = async (): Promise<SyncResult> => {
+function prepareExamForRemote(exam: ExamRecord, hashMap: Map<string, string>): ExamRecord {
+  const rawPages = exam.rawPages.map((page) => ({
+    ...page,
+    dataUrl: isImageHash(page.dataUrl) ? page.dataUrl : (hashMap.get(page.dataUrl) || page.dataUrl),
+  }));
+
+  const questions = exam.questions.map((q) => ({
+    ...q,
+    dataUrl: isImageHash(q.dataUrl) ? q.dataUrl : (hashMap.get(q.dataUrl) || q.dataUrl),
+    originalDataUrl: q.originalDataUrl
+      ? isImageHash(q.originalDataUrl)
+        ? q.originalDataUrl
+        : (hashMap.get(q.originalDataUrl) || q.originalDataUrl)
+      : undefined,
+  }));
+
+  return {
+    ...exam,
+    rawPages,
+    questions,
+  };
+}
+
+/**
+ * Force download all remote data to local
+ * Note: Downloaded data keeps hash references; frontend handles URL resolution
+ */
+export const forceDownloadAll = async (
+  onProgress?: SyncProgressCallback,
+): Promise<SyncResult> => {
   const result: SyncResult = {
     success: true,
     pushed: 0,
@@ -422,12 +690,54 @@ export const forceDownloadAll = async (): Promise<SyncResult> => {
     errors: [],
   };
 
-  try {
-    const remoteList = await getRemoteExamList();
+  currentSyncAbortController = new AbortController();
 
-    for (const meta of remoteList) {
+  try {
+    onProgress?.({
+      phase: "preparing",
+      message: "正在获取远程数据列表...",
+      current: 0,
+      total: 0,
+      percentage: 0,
+    });
+
+    const remoteList = await getRemoteExamList();
+    const total = remoteList.length;
+
+    if (total === 0) {
+      onProgress?.({
+        phase: "completed",
+        message: "没有数据需要下载",
+        current: 0,
+        total: 0,
+        percentage: 100,
+      });
+      return result;
+    }
+
+    onProgress?.({
+      phase: "downloading",
+      message: `准备下载 ${total} 个试卷`,
+      current: 0,
+      total,
+      percentage: 0,
+    });
+
+    for (let i = 0; i < remoteList.length; i++) {
+      const meta = remoteList[i];
+
+      onProgress?.({
+        phase: "downloading",
+        message: `正在下载: ${meta.name}`,
+        current: i,
+        total,
+        percentage: Math.round((i / total) * 100),
+      });
+
       const exam = await getRemoteExam(meta.id);
       if (exam) {
+        // Downloaded exam may have hash references instead of data URLs
+        // The frontend will handle resolving these to actual URLs
         await saveExamToLocal(exam);
         result.pulled++;
       } else {
@@ -437,9 +747,26 @@ export const forceDownloadAll = async (): Promise<SyncResult> => {
 
     syncState.lastSyncTime = Date.now();
     saveSyncState();
+
+    onProgress?.({
+      phase: "completed",
+      message: `下载完成: ${result.pulled} 个试卷`,
+      current: total,
+      total,
+      percentage: 100,
+    });
   } catch (e) {
     result.success = false;
     result.errors.push(`Force download failed: ${e}`);
+    onProgress?.({
+      phase: "completed",
+      message: `下载失败: ${e}`,
+      current: 0,
+      total: 0,
+      percentage: 0,
+    });
+  } finally {
+    currentSyncAbortController = null;
   }
 
   return result;
@@ -747,4 +1074,63 @@ export const resetSyncState = (): void => {
     isOnline: navigator.onLine,
   };
   saveSyncState();
+};
+
+// ============ Sync Control Functions ============
+
+/**
+ * Pause current sync operation
+ */
+export const pauseSync = (): void => {
+  if (globalUploader) {
+    globalUploader.pause();
+  }
+};
+
+/**
+ * Resume paused sync operation
+ */
+export const resumeSync = (): void => {
+  if (globalUploader) {
+    globalUploader.resume();
+  }
+};
+
+/**
+ * Cancel current sync operation
+ */
+export const cancelSync = (): void => {
+  if (globalUploader) {
+    globalUploader.cancel();
+  }
+  if (currentSyncAbortController) {
+    currentSyncAbortController.abort();
+  }
+};
+
+/**
+ * Check if sync is currently paused
+ */
+export const isSyncPaused = (): boolean => {
+  if (globalUploader) {
+    return globalUploader.getProgress().completed < globalUploader.getProgress().total;
+  }
+  return false;
+};
+
+/**
+ * Get upload concurrency setting
+ */
+export const getUploadConcurrency = (): number => {
+  return syncSettings.uploadConcurrency;
+};
+
+/**
+ * Set upload concurrency
+ */
+export const setUploadConcurrency = (concurrency: number): void => {
+  saveSyncSettings({ uploadConcurrency: concurrency });
+  if (globalUploader) {
+    globalUploader.setConcurrency(concurrency);
+  }
 };

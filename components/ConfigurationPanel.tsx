@@ -18,6 +18,8 @@ interface Props {
   setBatchSize?: (b: number) => void;
   apiKey?: string;
   setApiKey?: (key: string) => void;
+  syncConcurrency?: number;
+  setSyncConcurrency?: (c: number) => void;
 }
 
 export const ConfigurationPanel: React.FC<Props> = ({
@@ -37,6 +39,8 @@ export const ConfigurationPanel: React.FC<Props> = ({
   setBatchSize,
   apiKey,
   setApiKey,
+  syncConcurrency = 10,
+  setSyncConcurrency,
 }) => {
   if (!isOpen) return null;
 
@@ -238,6 +242,32 @@ export const ConfigurationPanel: React.FC<Props> = ({
                   onChange={(e) => setBatchSize(parseInt(e.target.value))}
                   className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
                 />
+              </div>
+            )}
+
+            {setSyncConcurrency && (
+              <div className="space-y-3">
+                <div className="flex justify-between">
+                  <label className="font-bold text-slate-700">
+                    Cloud Sync Concurrency
+                  </label>
+                  <span className="font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-lg text-xs">
+                    {syncConcurrency} Uploads
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="50"
+                  value={syncConcurrency}
+                  onChange={(e) =>
+                    setSyncConcurrency(parseInt(e.target.value))
+                  }
+                  className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                />
+                <p className="text-xs text-slate-400 font-medium">
+                  Parallel image uploads during cloud sync. Higher values = faster sync but more network load.
+                </p>
               </div>
             )}
 

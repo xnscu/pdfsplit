@@ -3,15 +3,19 @@
  * Provides easy access to sync status and operations in components
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import * as syncService from "../services/syncService";
+import { SyncProgress } from "../services/syncService";
 
 export interface SyncStatus {
   isOnline: boolean;
   isSyncing: boolean;
+  isPaused: boolean;
   pendingCount: number;
   lastSyncTime: number;
   error: string | null;
+  progress: SyncProgress | null;
+  uploadConcurrency: number;
 }
 
 export interface UseSyncResult {
@@ -20,25 +24,36 @@ export interface UseSyncResult {
   forceUpload: () => Promise<void>;
   forceDownload: () => Promise<void>;
   clearPending: () => void;
+  pauseSync: () => void;
+  resumeSync: () => void;
+  cancelSync: () => void;
+  setUploadConcurrency: (concurrency: number) => void;
 }
 
 export function useSync(): UseSyncResult {
   const [status, setStatus] = useState<SyncStatus>({
     isOnline: true,
     isSyncing: false,
+    isPaused: false,
     pendingCount: 0,
     lastSyncTime: 0,
     error: null,
+    progress: null,
+    uploadConcurrency: syncService.getSyncSettings().uploadConcurrency,
   });
+
+  const isPausedRef = useRef(false);
 
   // Load initial state
   useEffect(() => {
     const state = syncService.loadSyncState();
+    const settings = syncService.loadSyncSettings();
     setStatus((prev) => ({
       ...prev,
       isOnline: state.isOnline,
       pendingCount: state.pendingActions.length,
       lastSyncTime: state.lastSyncTime,
+      uploadConcurrency: settings.uploadConcurrency,
     }));
 
     // Initialize sync service
@@ -100,50 +115,108 @@ export function useSync(): UseSyncResult {
     }
   }, []);
 
-  const forceUpload = useCallback(async () => {
-    setStatus((prev) => ({ ...prev, isSyncing: true, error: null }));
-
-    try {
-      const result = await syncService.forceUploadAll();
-      const state = syncService.getSyncState();
-
-      setStatus((prev) => ({
-        ...prev,
-        isSyncing: false,
-        pendingCount: state.pendingActions.length,
-        lastSyncTime: state.lastSyncTime,
-        error: result.errors.length > 0 ? result.errors.join(", ") : null,
-      }));
-    } catch (e) {
-      setStatus((prev) => ({
-        ...prev,
-        isSyncing: false,
-        error: e instanceof Error ? e.message : "Upload failed",
-      }));
-    }
+  const handleProgress = useCallback((progress: SyncProgress) => {
+    setStatus((prev) => ({
+      ...prev,
+      progress,
+      isSyncing: progress.phase !== "completed",
+    }));
   }, []);
 
-  const forceDownload = useCallback(async () => {
-    setStatus((prev) => ({ ...prev, isSyncing: true, error: null }));
+  const forceUpload = useCallback(async () => {
+    setStatus((prev) => ({
+      ...prev,
+      isSyncing: true,
+      isPaused: false,
+      error: null,
+      progress: null,
+    }));
+    isPausedRef.current = false;
 
     try {
-      const result = await syncService.forceDownloadAll();
+      const result = await syncService.forceUploadAll(handleProgress);
       const state = syncService.getSyncState();
 
       setStatus((prev) => ({
         ...prev,
         isSyncing: false,
+        isPaused: false,
         pendingCount: state.pendingActions.length,
         lastSyncTime: state.lastSyncTime,
         error: result.errors.length > 0 ? result.errors.join(", ") : null,
+        progress: null,
       }));
     } catch (e) {
       setStatus((prev) => ({
         ...prev,
         isSyncing: false,
-        error: e instanceof Error ? e.message : "Download failed",
+        isPaused: false,
+        error: e instanceof Error ? e.message : "Upload failed",
+        progress: null,
       }));
     }
+  }, [handleProgress]);
+
+  const forceDownload = useCallback(async () => {
+    setStatus((prev) => ({
+      ...prev,
+      isSyncing: true,
+      isPaused: false,
+      error: null,
+      progress: null,
+    }));
+    isPausedRef.current = false;
+
+    try {
+      const result = await syncService.forceDownloadAll(handleProgress);
+      const state = syncService.getSyncState();
+
+      setStatus((prev) => ({
+        ...prev,
+        isSyncing: false,
+        isPaused: false,
+        pendingCount: state.pendingActions.length,
+        lastSyncTime: state.lastSyncTime,
+        error: result.errors.length > 0 ? result.errors.join(", ") : null,
+        progress: null,
+      }));
+    } catch (e) {
+      setStatus((prev) => ({
+        ...prev,
+        isSyncing: false,
+        isPaused: false,
+        error: e instanceof Error ? e.message : "Download failed",
+        progress: null,
+      }));
+    }
+  }, [handleProgress]);
+
+  const pauseSync = useCallback(() => {
+    syncService.pauseSync();
+    isPausedRef.current = true;
+    setStatus((prev) => ({ ...prev, isPaused: true }));
+  }, []);
+
+  const resumeSync = useCallback(() => {
+    syncService.resumeSync();
+    isPausedRef.current = false;
+    setStatus((prev) => ({ ...prev, isPaused: false }));
+  }, []);
+
+  const cancelSync = useCallback(() => {
+    syncService.cancelSync();
+    isPausedRef.current = false;
+    setStatus((prev) => ({
+      ...prev,
+      isSyncing: false,
+      isPaused: false,
+      progress: null,
+    }));
+  }, []);
+
+  const setUploadConcurrency = useCallback((concurrency: number) => {
+    syncService.setUploadConcurrency(concurrency);
+    setStatus((prev) => ({ ...prev, uploadConcurrency: concurrency }));
   }, []);
 
   const clearPending = useCallback(() => {
@@ -157,6 +230,10 @@ export function useSync(): UseSyncResult {
     forceUpload,
     forceDownload,
     clearPending,
+    pauseSync,
+    resumeSync,
+    cancelSync,
+    setUploadConcurrency,
   };
 }
 

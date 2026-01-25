@@ -78,6 +78,36 @@ export default {
  */
 async function handleApiRoutes(request, env, path, method) {
   const db = env.DB;
+  const r2 = env.R2;
+
+  // === R2 Storage Routes ===
+
+  // HEAD /api/r2/:hash - Check if image exists in R2
+  if (path.match(/^\/api\/r2\/[^/]+$/) && method === 'HEAD') {
+    const hash = path.split('/').pop();
+    return handleCheckR2Image(r2, hash);
+  }
+
+  // GET /api/r2/:hash - Get image from R2
+  if (path.match(/^\/api\/r2\/[^/]+$/) && method === 'GET') {
+    const hash = path.split('/').pop();
+    return handleGetR2Image(r2, hash);
+  }
+
+  // PUT /api/r2/:hash - Upload image to R2
+  if (path.match(/^\/api\/r2\/[^/]+$/) && method === 'PUT') {
+    const hash = path.split('/').pop();
+    return handleUploadR2Image(request, r2, hash);
+  }
+
+  // POST /api/r2/check-batch - Batch check if images exist
+  if (path === '/api/r2/check-batch' && method === 'POST') {
+    const body = await parseBody(request);
+    if (!body || !Array.isArray(body.hashes)) {
+      return errorResponse('Invalid request: expected { hashes: string[] }');
+    }
+    return handleBatchCheckR2Images(r2, body.hashes);
+  }
 
   // === Exam Routes ===
 
@@ -146,6 +176,92 @@ async function handleApiRoutes(request, env, path, method) {
   }
 
   return errorResponse('Not Found', 404);
+}
+
+// ============ R2 Storage Handlers ============
+
+async function handleCheckR2Image(r2, hash) {
+  try {
+    const object = await r2.head(hash);
+    if (object) {
+      return new Response(null, {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': object.httpMetadata?.contentType || 'image/png',
+          'Content-Length': object.size.toString(),
+        },
+      });
+    }
+    return new Response(null, { status: 404, headers: corsHeaders });
+  } catch (error) {
+    return errorResponse(`R2 check failed: ${error.message}`, 500);
+  }
+}
+
+async function handleGetR2Image(r2, hash) {
+  try {
+    const object = await r2.get(hash);
+    if (!object) {
+      return errorResponse('Image not found', 404);
+    }
+    
+    const headers = {
+      ...corsHeaders,
+      'Content-Type': object.httpMetadata?.contentType || 'image/png',
+      'Content-Length': object.size.toString(),
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    };
+    
+    return new Response(object.body, { status: 200, headers });
+  } catch (error) {
+    return errorResponse(`R2 get failed: ${error.message}`, 500);
+  }
+}
+
+async function handleUploadR2Image(request, r2, hash) {
+  try {
+    // Check if already exists
+    const existing = await r2.head(hash);
+    if (existing) {
+      return jsonResponse({ success: true, hash, existed: true });
+    }
+    
+    // Get content type from header
+    const contentType = request.headers.get('Content-Type') || 'image/png';
+    
+    // Upload to R2
+    const body = await request.arrayBuffer();
+    await r2.put(hash, body, {
+      httpMetadata: { contentType },
+    });
+    
+    return jsonResponse({ success: true, hash, existed: false });
+  } catch (error) {
+    return errorResponse(`R2 upload failed: ${error.message}`, 500);
+  }
+}
+
+async function handleBatchCheckR2Images(r2, hashes) {
+  try {
+    const results = {};
+    
+    // Check each hash in parallel
+    const checks = hashes.map(async (hash) => {
+      const object = await r2.head(hash);
+      return { hash, exists: !!object };
+    });
+    
+    const checkResults = await Promise.all(checks);
+    
+    for (const { hash, exists } of checkResults) {
+      results[hash] = exists;
+    }
+    
+    return jsonResponse({ results });
+  } catch (error) {
+    return errorResponse(`R2 batch check failed: ${error.message}`, 500);
+  }
 }
 
 // ============ Exam Handlers ============

@@ -18,6 +18,11 @@ directory = "./dist"
 [observability.logs]
 enabled = true
 
+# R2 Storage binding (for image storage)
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "gksx"
+
 # Environment Variables
 [vars]
 ENVIRONMENT = "production"

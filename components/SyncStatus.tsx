@@ -1,6 +1,7 @@
 /**
  * Sync Status Component
  * Displays sync status and provides sync controls in the UI
+ * Supports progress display, pause/resume functionality
  */
 
 import React from "react";
@@ -11,7 +12,16 @@ interface Props {
 }
 
 const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
-  const { status, sync, forceUpload, forceDownload, clearPending } = useSync();
+  const {
+    status,
+    sync,
+    forceUpload,
+    forceDownload,
+    clearPending,
+    pauseSync,
+    resumeSync,
+    cancelSync,
+  } = useSync();
 
   const handleSync = async () => {
     await sync();
@@ -26,6 +36,18 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
   const handleForceDownload = async () => {
     await forceDownload();
     onSyncComplete?.();
+  };
+
+  const handlePauseResume = () => {
+    if (status.isPaused) {
+      resumeSync();
+    } else {
+      pauseSync();
+    }
+  };
+
+  const handleCancel = () => {
+    cancelSync();
   };
 
   const formatTime = (timestamp: number): string => {
@@ -53,6 +75,27 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
         <div className="last-sync-time">上次同步: {formatTime(status.lastSyncTime)}</div>
       </div>
 
+      {/* Progress display */}
+      {status.progress && status.isSyncing && (
+        <div className="sync-progress">
+          <div className="progress-header">
+            <span className="progress-message">{status.progress.message}</span>
+            <span className="progress-percentage">{status.progress.percentage}%</span>
+          </div>
+          <div className="progress-bar-container">
+            <div
+              className={`progress-bar ${status.isPaused ? "paused" : ""}`}
+              style={{ width: `${status.progress.percentage}%` }}
+            />
+          </div>
+          {status.progress.total > 0 && (
+            <div className="progress-detail">
+              {status.progress.current} / {status.progress.total}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Error display */}
       {status.error && (
         <div className="sync-error">
@@ -75,14 +118,67 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
 
       {/* Sync controls */}
       <div className="sync-controls">
-        <button className="sync-button primary" onClick={handleSync} disabled={status.isSyncing || !status.isOnline}>
-          {status.isSyncing ? (
-            <>
-              <span className="spinner" />
-              同步中...
-            </>
-          ) : (
-            <>
+        {status.isSyncing ? (
+          <>
+            {/* Pause/Resume button */}
+            <button
+              className={`sync-button ${status.isPaused ? "primary" : "warning"}`}
+              onClick={handlePauseResume}
+            >
+              {status.isPaused ? (
+                <>
+                  <svg
+                    className="icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
+                  继续
+                </>
+              ) : (
+                <>
+                  <svg
+                    className="icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="6" y="4" width="4" height="16" />
+                    <rect x="14" y="4" width="4" height="16" />
+                  </svg>
+                  暂停
+                </>
+              )}
+            </button>
+
+            {/* Cancel button */}
+            <button className="sync-button danger" onClick={handleCancel}>
+              <svg
+                className="icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+              取消
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="sync-button primary" onClick={handleSync} disabled={!status.isOnline}>
               <svg
                 className="icon"
                 viewBox="0 0 24 24"
@@ -98,73 +194,73 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
                 <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
               </svg>
               同步
-            </>
-          )}
-        </button>
+            </button>
 
-        <button
-          className="sync-button"
-          onClick={handleForceUpload}
-          disabled={status.isSyncing || !status.isOnline}
-          title="上传所有本地数据到云端"
-        >
-          <svg
-            className="icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
-          上传全部
-        </button>
-
-        <button
-          className="sync-button"
-          onClick={handleForceDownload}
-          disabled={status.isSyncing || !status.isOnline}
-          title="从云端下载所有数据到本地"
-        >
-          <svg
-            className="icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
-          </svg>
-          下载全部
-        </button>
-
-        {status.pendingCount > 0 && (
-          <button className="sync-button danger" onClick={clearPending} title="清除待同步操作（谨慎使用）">
-            <svg
-              className="icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+            <button
+              className="sync-button"
+              onClick={handleForceUpload}
+              disabled={!status.isOnline}
+              title="上传所有本地数据到云端"
             >
-              <path d="M3 6h18" />
-              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-              <line x1="10" y1="11" x2="10" y2="17" />
-              <line x1="14" y1="11" x2="14" y2="17" />
-            </svg>
-            清除
-          </button>
+              <svg
+                className="icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              上传全部
+            </button>
+
+            <button
+              className="sync-button"
+              onClick={handleForceDownload}
+              disabled={!status.isOnline}
+              title="从云端下载所有数据到本地"
+            >
+              <svg
+                className="icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              下载全部
+            </button>
+
+            {status.pendingCount > 0 && (
+              <button className="sync-button danger" onClick={clearPending} title="清除待同步操作（谨慎使用）">
+                <svg
+                  className="icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M3 6h18" />
+                  <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                  <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                  <line x1="10" y1="11" x2="10" y2="17" />
+                  <line x1="14" y1="11" x2="14" y2="17" />
+                </svg>
+                清除
+              </button>
+            )}
+          </>
         )}
       </div>
 
@@ -226,6 +322,59 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
           font-size: 11px;
           font-weight: 500;
           color: #94a3b8;
+        }
+
+        .sync-progress {
+          margin-bottom: 12px;
+          padding: 10px;
+          background: #f1f5f9;
+          border-radius: 8px;
+        }
+
+        .progress-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 6px;
+        }
+
+        .progress-message {
+          font-size: 12px;
+          font-weight: 600;
+          color: #475569;
+        }
+
+        .progress-percentage {
+          font-size: 12px;
+          font-weight: 800;
+          color: #3b82f6;
+        }
+
+        .progress-bar-container {
+          width: 100%;
+          height: 6px;
+          background: #e2e8f0;
+          border-radius: 3px;
+          overflow: hidden;
+        }
+
+        .progress-bar {
+          height: 100%;
+          background: linear-gradient(90deg, #3b82f6, #60a5fa);
+          border-radius: 3px;
+          transition: width 0.3s ease;
+        }
+
+        .progress-bar.paused {
+          background: linear-gradient(90deg, #f59e0b, #fbbf24);
+        }
+
+        .progress-detail {
+          font-size: 10px;
+          font-weight: 500;
+          color: #94a3b8;
+          text-align: center;
+          margin-top: 4px;
         }
 
         .sync-error {
@@ -302,6 +451,17 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete }) => {
         .sync-button.primary:hover:not(:disabled) {
           background: #2563eb;
           border-color: #1d4ed8;
+        }
+
+        .sync-button.warning {
+          background: #f59e0b;
+          border-color: #d97706;
+          color: white;
+        }
+
+        .sync-button.warning:hover:not(:disabled) {
+          background: #d97706;
+          border-color: #b45309;
         }
 
         .sync-button.danger {
