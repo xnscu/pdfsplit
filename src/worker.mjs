@@ -392,7 +392,7 @@ async function handleSaveExam(db, examData) {
     const placeholders = incomingPageNumbers.map(() => '?').join(',');
     statements.push(
       db.prepare(`
-        DELETE FROM raw_pages 
+        DELETE FROM raw_pages
         WHERE exam_id = ? AND page_number NOT IN (${placeholders})
       `).bind(id, ...incomingPageNumbers)
     );
@@ -435,7 +435,7 @@ async function handleSaveExam(db, examData) {
     const placeholders = incomingQuestionIds.map(() => '?').join(',');
     statements.push(
       db.prepare(`
-        DELETE FROM questions 
+        DELETE FROM questions
         WHERE exam_id = ? AND id NOT IN (${placeholders})
       `).bind(id, ...incomingQuestionIds)
     );
@@ -726,7 +726,7 @@ async function saveExamToDb(db, examData, source) {
     const placeholders = incomingPageNumbers.map(() => '?').join(',');
     statements.push(
       db.prepare(`
-        DELETE FROM raw_pages 
+        DELETE FROM raw_pages
         WHERE exam_id = ? AND page_number NOT IN (${placeholders})
       `).bind(id, ...incomingPageNumbers)
     );
@@ -766,7 +766,7 @@ async function saveExamToDb(db, examData, source) {
     const placeholders = incomingQuestionIds.map(() => '?').join(',');
     statements.push(
       db.prepare(`
-        DELETE FROM questions 
+        DELETE FROM questions
         WHERE exam_id = ? AND id NOT IN (${placeholders})
       `).bind(id, ...incomingQuestionIds)
     );
