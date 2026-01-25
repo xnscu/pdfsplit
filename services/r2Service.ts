@@ -350,12 +350,32 @@ export interface ImageUploadResult {
 }
 
 /**
+ * Progress callback for prepare upload tasks
+ */
+export interface PrepareUploadProgress {
+  phase: "hashing" | "checking" | "completed";
+  message: string;
+  current: number;
+  total: number;
+  percentage: number;
+  // For checking phase, include retry info
+  round?: number;
+  failedCount?: number;
+}
+
+export interface PrepareUploadOptions {
+  onProgress?: (progress: PrepareUploadProgress) => void;
+  batchCheckOptions?: BatchCheckOptions;
+}
+
+/**
  * Prepare upload tasks from exam data
  * Calculates hashes and identifies which images need uploading
  */
 export async function prepareUploadTasks(
   rawPages: Array<{ pageNumber: number; dataUrl: string }>,
   questions: Array<{ id: string; dataUrl: string; originalDataUrl?: string }>,
+  options: PrepareUploadOptions = {},
 ): Promise<{
   tasks: ImageUploadTask[];
   hashMap: Map<string, string>; // dataUrl -> hash
@@ -387,9 +407,21 @@ export async function prepareUploadTasks(
     }
   }
 
-  // Calculate all hashes
+  // Calculate all hashes with progress
   const hashMap = new Map<string, string>();
   const uniqueHashes = new Set<string>();
+  const totalToHash = allDataUrls.filter((item, index, arr) =>
+    arr.findIndex((i) => i.dataUrl === item.dataUrl) === index
+  ).length;
+  let hashedCount = 0;
+
+  options.onProgress?.({
+    phase: "hashing",
+    message: `正在分析图片 0/${totalToHash}`,
+    current: 0,
+    total: totalToHash,
+    percentage: 0,
+  });
 
   for (const item of allDataUrls) {
     // Skip if already calculated (dedup by dataUrl)
@@ -398,11 +430,45 @@ export async function prepareUploadTasks(
     const hash = await calculateImageHash(item.dataUrl);
     hashMap.set(item.dataUrl, hash);
     uniqueHashes.add(hash);
+    hashedCount++;
+
+    const percentage = Math.round((hashedCount / totalToHash) * 100);
+    options.onProgress?.({
+      phase: "hashing",
+      message: `正在分析图片 ${hashedCount}/${totalToHash} (${percentage}%)`,
+      current: hashedCount,
+      total: totalToHash,
+      percentage,
+    });
   }
 
-  // Batch check which hashes already exist
+  // Batch check which hashes already exist with progress
   const hashArray = Array.from(uniqueHashes);
-  const existsMap = await batchCheckImagesExist(hashArray);
+
+  options.onProgress?.({
+    phase: "checking",
+    message: `正在检查 ${hashArray.length} 张图片...`,
+    current: 0,
+    total: hashArray.length,
+    percentage: 0,
+    round: 1,
+    failedCount: 0,
+  });
+
+  const existsMap = await batchCheckImagesExist(hashArray, {
+    ...options.batchCheckOptions,
+    onProgress: (checkProgress) => {
+      options.onProgress?.({
+        phase: "checking",
+        message: checkProgress.message,
+        current: checkProgress.current,
+        total: checkProgress.total,
+        percentage: checkProgress.percentage,
+        round: checkProgress.round,
+        failedCount: checkProgress.failedCount,
+      });
+    },
+  });
   const existingHashes = new Set<string>(hashArray.filter((h) => existsMap[h]));
 
   // Build tasks for non-existing images
@@ -421,6 +487,14 @@ export async function prepareUploadTasks(
       type: item.type,
     });
   }
+
+  options.onProgress?.({
+    phase: "completed",
+    message: `分析完成: ${existingHashes.size} 张已存在, ${tasks.length} 张需要上传`,
+    current: hashArray.length,
+    total: hashArray.length,
+    percentage: 100,
+  });
 
   return { tasks, hashMap, existingHashes };
 }

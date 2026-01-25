@@ -130,11 +130,14 @@ interface SyncResult {
 export type SyncProgressCallback = (progress: SyncProgress) => void;
 
 export interface SyncProgress {
-  phase: "preparing" | "uploading" | "syncing" | "downloading" | "completed";
+  phase: "hashing" | "checking" | "uploading" | "syncing" | "downloading" | "completed";
   message: string;
   current: number;
   total: number;
-  percentage: number;
+  percentage: number; // 0-100% for current phase only
+  // For checking phase, include retry info
+  round?: number;
+  failedCount?: number;
 }
 
 // Global uploader instance for pause/resume control
@@ -466,6 +469,12 @@ export const fullSync = async (): Promise<SyncResult> => {
 /**
  * Force sync all local data to remote with R2 image upload
  * Supports progress callback, pause/resume
+ *
+ * Progress phases (each phase has independent 0-100%):
+ * 1. hashing - Calculate image hashes
+ * 2. checking - Check which images exist in R2
+ * 3. uploading - Upload missing images to R2
+ * 4. syncing - Sync exam data to D1
  */
 export const forceUploadAll = async (
   onProgress?: SyncProgressCallback,
@@ -483,9 +492,10 @@ export const forceUploadAll = async (
   currentSyncAbortController = new AbortController();
 
   try {
+    // Phase 0: Load local exam data
     onProgress?.({
-      phase: "preparing",
-      message: "正在准备同步任务...",
+      phase: "hashing",
+      message: "正在加载本地数据...",
       current: 0,
       total: 0,
       percentage: 0,
@@ -504,15 +514,6 @@ export const forceUploadAll = async (
       });
       return result;
     }
-
-    // Step 1: Collect all images and calculate hashes
-    onProgress?.({
-      phase: "preparing",
-      message: "正在计算图片哈希值...",
-      current: 0,
-      total: totalExams,
-      percentage: 0,
-    });
 
     // Collect all images from all exams
     const allRawPages: Array<{ examId: string; pageNumber: number; dataUrl: string }> = [];
@@ -547,43 +548,65 @@ export const forceUploadAll = async (
           });
         }
       }
-
-      onProgress?.({
-        phase: "preparing",
-        message: `正在分析: ${meta.name}`,
-        current: i + 1,
-        total: totalExams,
-        percentage: Math.round(((i + 1) / totalExams) * 30), // 0-30% for preparation
-      });
     }
 
-    // Prepare upload tasks
+    // Phase 1 & 2: Prepare upload tasks (includes hashing and checking phases)
+    // The prepareUploadTasks function now handles progress for both hashing and checking
     const { tasks, hashMap, existingHashes } = await prepareUploadTasks(
       allRawPages.map((p) => ({ pageNumber: p.pageNumber, dataUrl: p.dataUrl })),
       allQuestions.map((q) => ({ id: q.id, dataUrl: q.dataUrl, originalDataUrl: q.originalDataUrl })),
+      {
+        onProgress: (prepareProgress) => {
+          // Forward hashing and checking progress directly
+          if (prepareProgress.phase === "hashing") {
+            onProgress?.({
+              phase: "hashing",
+              message: prepareProgress.message,
+              current: prepareProgress.current,
+              total: prepareProgress.total,
+              percentage: prepareProgress.percentage,
+            });
+          } else if (prepareProgress.phase === "checking") {
+            onProgress?.({
+              phase: "checking",
+              message: prepareProgress.message,
+              current: prepareProgress.current,
+              total: prepareProgress.total,
+              percentage: prepareProgress.percentage,
+              round: prepareProgress.round,
+              failedCount: prepareProgress.failedCount,
+            });
+          }
+        },
+        batchCheckOptions: {
+          chunkSize: syncSettings.batchCheckChunkSize,
+          concurrency: syncSettings.batchCheckConcurrency,
+        },
+      },
     );
 
     result.imagesSkipped = existingHashes.size;
     const totalImages = tasks.length;
 
+    // Phase 3: Upload images to R2 with concurrency control
     onProgress?.({
       phase: "uploading",
       message: `准备上传 ${totalImages} 张图片 (${existingHashes.size} 张已存在)`,
       current: 0,
       total: totalImages,
-      percentage: 30,
+      percentage: 0,
     });
 
-    // Step 2: Upload images to R2 with concurrency control
     if (totalImages > 0) {
       globalUploader = new ConcurrentUploader(syncSettings.uploadConcurrency);
       globalUploader.setOnProgress((completed, total) => {
+        const percentage = Math.round((completed / total) * 100);
         onProgress?.({
           phase: "uploading",
-          message: `正在上传图片 ${completed}/${total}`,
+          message: `正在上传图片 ${completed}/${total} (${percentage}%)`,
           current: completed,
           total,
-          percentage: 30 + Math.round((completed / total) * 40), // 30-70% for uploads
+          percentage,
         });
       });
 
@@ -603,20 +626,28 @@ export const forceUploadAll = async (
           phase: "completed",
           message: `上传失败: ${failedUploads.length} 张图片未能上传到 R2，数据同步已中止`,
           current: 0,
-          total: totalExams,
+          total: totalImages,
           percentage: 0,
         });
         return result;
       }
+
+      onProgress?.({
+        phase: "uploading",
+        message: `上传完成: ${totalImages} 张图片`,
+        current: totalImages,
+        total: totalImages,
+        percentage: 100,
+      });
     }
 
-    // Step 3: Sync exams to D1 with hash references (only if all images uploaded successfully)
+    // Phase 4: Sync exams to D1 with hash references
     onProgress?.({
       phase: "syncing",
       message: "正在同步数据到云端...",
       current: 0,
       total: totalExams,
-      percentage: 70,
+      percentage: 0,
     });
 
     for (let i = 0; i < localList.length; i++) {
@@ -635,12 +666,13 @@ export const forceUploadAll = async (
         result.success = false;
       }
 
+      const percentage = Math.round(((i + 1) / totalExams) * 100);
       onProgress?.({
         phase: "syncing",
-        message: `正在同步: ${meta.name}`,
+        message: `正在同步: ${meta.name} (${i + 1}/${totalExams})`,
         current: i + 1,
         total: totalExams,
-        percentage: 70 + Math.round(((i + 1) / totalExams) * 30), // 70-100% for sync
+        percentage,
       });
     }
 
@@ -721,7 +753,7 @@ export const forceDownloadAll = async (
 
   try {
     onProgress?.({
-      phase: "preparing",
+      phase: "downloading",
       message: "正在获取远程数据列表...",
       current: 0,
       total: 0,
