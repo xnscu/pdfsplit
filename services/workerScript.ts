@@ -9,7 +9,16 @@ const getApiUrl = (): string => {
   return envUrl || "/api";
 };
 
+// Get CDN URL from environment for production image serving
+const getCdnUrl = (): string | undefined => {
+  // @ts-ignore - Vite injects import.meta.env
+  const cdnUrl =
+    typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_CDN_URL;
+  return cdnUrl || undefined;
+};
+
 const API_BASE_URL = getApiUrl();
+const CDN_URL = getCdnUrl();
 const ORIGIN =
   typeof window !== "undefined" && window.location?.origin
     ? window.location.origin
@@ -21,6 +30,7 @@ const WORKER_CODE = `
  */
 
 const API_BASE_URL = ${JSON.stringify(API_BASE_URL)};
+const CDN_URL = ${JSON.stringify(CDN_URL)};
 const ORIGIN = ${JSON.stringify(ORIGIN)};
 const toAbsoluteUrl = (url) => {
   if (!url) return url;
@@ -34,7 +44,16 @@ const joinBase = (base, path) => {
   const b = (base || '').replace(/\\/$/, '');
   return b + path;
 };
-const resolveImageUrl = (value) => (isImageHash(value) ? joinBase(ABS_API_BASE_URL, '/r2/' + value) : value);
+const resolveImageUrl = (value) => {
+  if (!isImageHash(value)) return value;
+  // Use CDN URL if configured (for production image serving)
+  if (CDN_URL) {
+    const cdnBase = CDN_URL.replace(/\\/$/, '');
+    return cdnBase + '/' + value;
+  }
+  // Fall back to API_BASE_URL (for development or when CDN not configured)
+  return joinBase(ABS_API_BASE_URL, '/r2/' + value);
+};
 
 const checkCanvasEdges = (ctx, width, height, threshold = 230, depth = 2) => {
   const w = Math.floor(width);

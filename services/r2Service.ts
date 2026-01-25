@@ -11,7 +11,15 @@ const getApiUrl = (): string => {
   return envUrl || "/api";
 };
 
+// Get CDN URL from environment for production image serving
+const getCdnUrl = (): string | undefined => {
+  // @ts-ignore - Vite injects import.meta.env
+  const cdnUrl = typeof import.meta !== "undefined" && import.meta.env?.VITE_CDN_URL;
+  return cdnUrl || undefined;
+};
+
 const API_BASE_URL = getApiUrl();
+const CDN_URL = getCdnUrl();
 
 /**
  * Calculate SHA-256 hash of a data URL
@@ -730,8 +738,15 @@ export class ConcurrentUploader {
 
 /**
  * Get R2 image URL from hash
+ * In production, uses CDN URL if configured, otherwise falls back to API_BASE_URL
  */
 export function getR2ImageUrl(hash: string): string {
+  // Use CDN URL if configured (for production image serving)
+  if (CDN_URL) {
+    const cdnBase = CDN_URL.replace(/\/$/, "");
+    return `${cdnBase}/${hash}`;
+  }
+  // Fall back to API_BASE_URL (for development or when CDN not configured)
   const base = API_BASE_URL.replace(/\/$/, "");
   return `${base}/r2/${hash}`;
 }
@@ -745,7 +760,8 @@ export function isImageHash(value: string): boolean {
 
 /**
  * Resolve an image reference for display:
- * - If it's a SHA-256 hash, return the fetchable R2 URL (/api/r2/:hash or VITE_API_URL-based)
+ * - If it's a SHA-256 hash, return the fetchable R2 URL
+ *   (uses CDN URL if VITE_CDN_URL is configured, otherwise uses /api/r2/:hash or VITE_API_URL-based)
  * - Otherwise (data URL / normal URL), return as-is
  */
 export function resolveImageUrl(value?: string): string | undefined {
