@@ -23,6 +23,7 @@ export const STORAGE_KEYS = {
   USE_HISTORY_CACHE: "exam_splitter_use_history_cache_v1",
   BATCH_SIZE: "exam_splitter_batch_size_v1",
   API_KEY: "exam_splitter_api_key_v1",
+  SKIP_SOLVED_QUESTIONS: "exam_splitter_skip_solved_questions_v1",
 };
 
 // Helper for auto-detect batch size based on RAM and CPU
@@ -120,6 +121,10 @@ export const useExamState = () => {
     return localStorage.getItem(STORAGE_KEYS.API_KEY) || "";
   });
 
+  const [skipSolvedQuestions, setSkipSolvedQuestions] = useState(() => {
+    return localStorage.getItem(STORAGE_KEYS.SKIP_SOLVED_QUESTIONS) === "true";
+  });
+
   // Progress
   const [progress, setProgress] = useState(0);
   const [total, setTotal] = useState(0);
@@ -181,6 +186,13 @@ export const useExamState = () => {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.API_KEY, apiKey);
   }, [apiKey]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      STORAGE_KEYS.SKIP_SOLVED_QUESTIONS,
+      String(skipSolvedQuestions),
+    );
+  }, [skipSolvedQuestions]);
 
   const addNotification = (
     fileName: string | null,
@@ -253,6 +265,7 @@ export const useExamState = () => {
       selectedModel,
       useHistoryCache,
       apiKey,
+      skipSolvedQuestions,
       progress,
       total,
       completedCount,
@@ -289,6 +302,7 @@ export const useExamState = () => {
       setSelectedModel,
       setUseHistoryCache,
       setApiKey,
+      setSkipSolvedQuestions,
       setProgress,
       setTotal,
       setCompletedCount,

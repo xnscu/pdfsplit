@@ -544,6 +544,8 @@ const App: React.FC = () => {
         setBatchSize={setters.setBatchSize}
         apiKey={state.apiKey}
         setApiKey={setters.setApiKey}
+        skipSolvedQuestions={state.skipSolvedQuestions}
+        setSkipSolvedQuestions={setters.setSkipSolvedQuestions}
         syncConcurrency={syncHook.status.uploadConcurrency}
         setSyncConcurrency={syncHook.setUploadConcurrency}
         batchCheckChunkSize={syncHook.status.batchCheckChunkSize}

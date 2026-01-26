@@ -17,16 +17,33 @@ export const useAnalysisProcessor = ({
   refs,
   actions,
 }: AnalysisProps) => {
-  const { analysisConcurrency, questions, selectedModel, apiKey } = state;
+  const { analysisConcurrency, questions, selectedModel, apiKey, skipSolvedQuestions } = state;
   const { setAnalyzingTotal, setAnalyzingDone, setQuestions } = setters;
   const { stopRequestedRef } = refs;
   const { addNotification } = actions;
 
   const handleStartAnalysisRobust = async (fileName: string) => {
     const startTimeLocal = Date.now();
-    const targetQuestions = questions.filter(
+    let targetQuestions = questions.filter(
       (q: QuestionImage) => q.fileName === fileName,
     );
+    
+    // 如果启用了跳过已解析题目选项，过滤掉已有解析的题目
+    if (skipSolvedQuestions) {
+      const unsolvedQuestions = targetQuestions.filter(
+        (q: QuestionImage) => !q.analysis,
+      );
+      const skippedCount = targetQuestions.length - unsolvedQuestions.length;
+      if (skippedCount > 0) {
+        addNotification(
+          fileName,
+          "success",
+          `已跳过 ${skippedCount} 个已有解析的题目`,
+        );
+      }
+      targetQuestions = unsolvedQuestions;
+    }
+    
     if (targetQuestions.length === 0) {
       addNotification(fileName, "error", "没有找到需要解析的题目。");
       return;

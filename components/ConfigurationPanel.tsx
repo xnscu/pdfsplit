@@ -24,6 +24,8 @@ interface Props {
   setBatchCheckChunkSize?: (c: number) => void;
   batchCheckConcurrency?: number;
   setBatchCheckConcurrency?: (c: number) => void;
+  skipSolvedQuestions?: boolean;
+  setSkipSolvedQuestions?: (b: boolean) => void;
 }
 
 export const ConfigurationPanel: React.FC<Props> = ({
@@ -49,6 +51,8 @@ export const ConfigurationPanel: React.FC<Props> = ({
   setBatchCheckChunkSize,
   batchCheckConcurrency = 100,
   setBatchCheckConcurrency,
+  skipSolvedQuestions = false,
+  setSkipSolvedQuestions,
 }) => {
   if (!isOpen) return null;
 
@@ -338,7 +342,7 @@ export const ConfigurationPanel: React.FC<Props> = ({
                 Use History Cache
               </label>
               <div
-                className={`w-14 h-8 flex items-center bg-slate-200 rounded-full p-1 cursor-pointer transition-colors ${useHistoryCache ? "bg-blue-600" : ""}`}
+                className={`w-14 h-8 flex items-center rounded-full p-1 cursor-pointer transition-colors ${useHistoryCache ? "bg-blue-600" : "bg-slate-200"}`}
                 onClick={() => setUseHistoryCache(!useHistoryCache)}
               >
                 <div
@@ -346,6 +350,27 @@ export const ConfigurationPanel: React.FC<Props> = ({
                 ></div>
               </div>
             </div>
+
+            {setSkipSolvedQuestions && (
+              <div className="flex items-center justify-between mt-4">
+                <div className="flex flex-col">
+                  <label className="font-bold text-slate-700">
+                    跳过已解析题目
+                  </label>
+                  <p className="text-xs text-slate-400 font-medium mt-1">
+                    AI SOLVE 自动跳过已经有解析的题目
+                  </p>
+                </div>
+                <div
+                  className={`w-14 h-8 flex items-center rounded-full p-1 cursor-pointer transition-colors ${skipSolvedQuestions ? "bg-blue-600" : "bg-slate-200"}`}
+                  onClick={() => setSkipSolvedQuestions(!skipSolvedQuestions)}
+                >
+                  <div
+                    className={`bg-white w-6 h-6 rounded-full shadow-md transform transition-transform ${skipSolvedQuestions ? "translate-x-6" : ""}`}
+                  ></div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="space-y-6 pt-6 border-t border-slate-100">
