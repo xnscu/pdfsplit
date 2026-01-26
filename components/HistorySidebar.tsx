@@ -348,7 +348,7 @@ export const HistorySidebar: React.FC<Props> = ({
                 <p className="text-sm font-bold">No history records found.</p>
               </div>
             ) : (
-              sortedHistoryList.map((item) => (
+              sortedHistoryList.map((item, index) => (
                 <div
                   key={item.id}
                   className={`bg-white p-4 rounded-2xl border transition-all group relative ${selectedHistoryIds.has(item.id) ? "border-blue-400 ring-1 ring-blue-400 bg-blue-50/10" : "border-slate-200 shadow-sm hover:shadow-md"}`}
@@ -369,9 +369,14 @@ export const HistorySidebar: React.FC<Props> = ({
                         className="flex-1 overflow-hidden cursor-pointer"
                         onClick={() => handleToggleHistorySelection(item.id)}
                       >
-                        <h3 className="font-bold text-slate-800 truncate" title={item.name}>
-                          {item.name}
-                        </h3>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-bold text-slate-400 min-w-[2rem]">
+                            {index + 1}.
+                          </span>
+                          <h3 className="font-bold text-slate-800 truncate" title={item.name}>
+                            {item.name}
+                          </h3>
+                        </div>
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
                             {item.pageCount} Pages
