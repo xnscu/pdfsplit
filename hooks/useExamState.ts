@@ -122,7 +122,8 @@ export const useExamState = () => {
   });
 
   const [skipSolvedQuestions, setSkipSolvedQuestions] = useState(() => {
-    return localStorage.getItem(STORAGE_KEYS.SKIP_SOLVED_QUESTIONS) === "true";
+    const saved = localStorage.getItem(STORAGE_KEYS.SKIP_SOLVED_QUESTIONS);
+    return saved !== null ? saved === "true" : true;
   });
 
   // Progress
