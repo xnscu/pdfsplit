@@ -58,7 +58,7 @@ export const DebugPreviewGrid: React.FC<Props> = ({
 
   return (
     <div className="w-full h-full overflow-y-auto bg-white custom-scrollbar">
-      {/* 
+      {/*
          Simulate final paper width (e.g. A4 constrained or responsive max-width).
          Centered content with white background.
       */}
@@ -164,21 +164,6 @@ export const DebugPreviewGrid: React.FC<Props> = ({
                             rehypePlugins={[rehypeKatex]}
                           >
                             {cleanMd(q.analysis.breakthrough_md)}
-                          </ReactMarkdown>
-                        </div>
-                      )}
-
-                      {/* Pitfalls */}
-                      {q.analysis.pitfalls_md && (
-                        <div className="prose prose-sm max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-800">
-                          <h4 className="text-sm font-bold text-slate-900 mb-1 border-b border-slate-300 pb-0.5 inline-block">
-                            易错点
-                          </h4>
-                          <ReactMarkdown
-                            remarkPlugins={[remarkMath]}
-                            rehypePlugins={[rehypeKatex]}
-                          >
-                            {cleanMd(q.analysis.pitfalls_md)}
                           </ReactMarkdown>
                         </div>
                       )}

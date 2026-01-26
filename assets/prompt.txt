@@ -359,8 +359,7 @@
   ],
   "question_md":"String (题目文本，使用Markdown格式，数学公式使用LaTeX格式。几何图形、异形表格等无法转换的部分忽略即可)",
   "solution_md": "String (标准解答过程，使用Markdown格式，数学公式使用LaTeX格式)",
-  "analysis_md": "String (考点溯源与思路分析，突破口，使用Markdown)",
-  "pitfalls_md": "String (避坑指南，指出易错点，使用Markdown)"
+  "analysis_md": "String (考点溯源与思路分析，突破口，使用Markdown)"
 }
 ```
 

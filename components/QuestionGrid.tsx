@@ -743,21 +743,6 @@ export const QuestionGrid: React.FC<Props> = ({
                         </ReactMarkdown>
                       </div>
                     )}
-
-                    {/* Pitfalls */}
-                    {selectedImage.analysis.pitfalls_md && (
-                      <div className="prose prose-base max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-800">
-                        <h3 className="text-base font-bold text-slate-900 mb-2 border-b-2 border-slate-900 pb-1 inline-block">
-                          易错点
-                        </h3>
-                        <ReactMarkdown
-                          remarkPlugins={[remarkMath]}
-                          rehypePlugins={[rehypeKatex]}
-                        >
-                          {cleanMd(selectedImage.analysis.pitfalls_md)}
-                        </ReactMarkdown>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}

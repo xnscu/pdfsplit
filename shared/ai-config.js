@@ -118,11 +118,6 @@ export const SCHEMAS = {
         description:
           "突破口（选填）。此字段主要针对难题，简单题目可以不写。所有数学公式必须使用LaTeX格式并用 $ 或 $$ 包裹。",
       },
-      pitfalls_md: {
-        type: Type.STRING,
-        description:
-          "易错点（选填）。此字段主要针对易错题，不易错的题目可以不写。所有数学公式必须使用LaTeX格式并用 $ 或 $$ 包裹。",
-      },
     },
     required: [
       "difficulty",
