@@ -31,6 +31,7 @@ export interface UseSyncResult {
   status: SyncStatus;
   sync: () => Promise<void>;
   forceUpload: () => Promise<void>;
+  forceUploadSelected: (selectedExamIds: string[]) => Promise<void>;
   forceDownload: () => Promise<void>;
   clearPending: () => void;
   pauseSync: () => void;
@@ -246,6 +247,40 @@ export function useSync(): UseSyncResult {
     }
   }, [handleProgress]);
 
+  const forceUploadSelected = useCallback(async (selectedExamIds: string[]) => {
+    setStatus((prev) => ({
+      ...prev,
+      isSyncing: true,
+      isPaused: false,
+      error: null,
+      progress: null,
+    }));
+    isPausedRef.current = false;
+
+    try {
+      const result = await syncService.forceUploadSelected(selectedExamIds, handleProgress);
+      const state = syncService.getSyncState();
+
+      setStatus((prev) => ({
+        ...prev,
+        isSyncing: false,
+        isPaused: false,
+        pendingCount: state.pendingActions.length,
+        lastSyncTime: state.lastSyncTime,
+        error: result.errors.length > 0 ? result.errors.join(", ") : null,
+        progress: null,
+      }));
+    } catch (e) {
+      setStatus((prev) => ({
+        ...prev,
+        isSyncing: false,
+        isPaused: false,
+        error: e instanceof Error ? e.message : "Upload failed",
+        progress: null,
+      }));
+    }
+  }, [handleProgress]);
+
   const forceDownload = useCallback(async () => {
     setStatus((prev) => ({
       ...prev,
@@ -337,6 +372,7 @@ export function useSync(): UseSyncResult {
     status,
     sync,
     forceUpload,
+    forceUploadSelected,
     forceDownload,
     clearPending,
     pauseSync,

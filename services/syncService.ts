@@ -902,6 +902,279 @@ export const forceUploadAll = async (
 };
 
 /**
+ * Force upload selected exams to remote with R2 image upload
+ * Supports progress callback, pause/resume
+ *
+ * Progress phases (each phase has independent 0-100%):
+ * 1. hashing - Calculate image hashes
+ * 2. checking - Check which images exist in R2
+ * 3. uploading - Upload missing images to R2
+ * 4. syncing - Sync exam data to D1
+ */
+export const forceUploadSelected = async (
+  selectedExamIds: string[],
+  onProgress?: SyncProgressCallback,
+): Promise<SyncResult> => {
+  const result: SyncResult = {
+    success: true,
+    pushed: 0,
+    pulled: 0,
+    conflicts: [],
+    errors: [],
+    imagesUploaded: 0,
+    imagesSkipped: 0,
+  };
+
+  const handleProgress = (progress: SyncProgress) => {
+    onProgress?.(progress);
+    notifyProgress(progress);
+  };
+
+  currentSyncAbortController = new AbortController();
+
+  try {
+    // Phase 0: Load local exam data
+    handleProgress({
+      phase: "hashing",
+      message: "正在加载选中数据...",
+      current: 0,
+      total: 0,
+      percentage: 0,
+    });
+
+    if (selectedExamIds.length === 0) {
+      handleProgress({
+        phase: "completed",
+        message: "没有选中数据需要同步",
+        current: 0,
+        total: 0,
+        percentage: 100,
+      });
+      return result;
+    }
+
+    const localList = await storageService.getHistoryList();
+    const selectedList = localList.filter((meta) => selectedExamIds.includes(meta.id));
+    const totalExams = selectedList.length;
+
+    if (totalExams === 0) {
+      handleProgress({
+        phase: "completed",
+        message: "没有数据需要同步",
+        current: 0,
+        total: 0,
+        percentage: 100,
+      });
+      return result;
+    }
+
+    // Collect all images from selected exams
+    const allRawPages: Array<{ examId: string; pageNumber: number; dataUrl: string }> = [];
+    const allQuestions: Array<{ examId: string; id: string; dataUrl: string }> = [];
+    const examDataMap = new Map<string, ExamRecord>();
+
+    for (let i = 0; i < selectedList.length; i++) {
+      const meta = selectedList[i];
+      const exam = await storageService.loadExamResult(meta.id);
+      if (!exam) continue;
+
+      examDataMap.set(exam.id, exam);
+
+      for (const page of exam.rawPages) {
+        // Skip if already a hash
+        if (!isImageHash(page.dataUrl)) {
+          allRawPages.push({
+            examId: exam.id,
+            pageNumber: page.pageNumber,
+            dataUrl: page.dataUrl,
+          });
+        }
+      }
+
+      for (const q of exam.questions) {
+        if (!isImageHash(q.dataUrl)) {
+          allQuestions.push({
+            examId: exam.id,
+            id: q.id,
+            dataUrl: q.dataUrl,
+          });
+        }
+      }
+    }
+
+    // Phase 1 & 2: Prepare upload tasks (includes hashing and checking phases)
+    // The prepareUploadTasks function now handles progress for both hashing and checking
+    const { tasks, hashMap, existingHashes } = await prepareUploadTasks(
+      allRawPages.map((p) => ({ pageNumber: p.pageNumber, dataUrl: p.dataUrl })),
+      allQuestions.map((q) => ({ id: q.id, dataUrl: q.dataUrl })),
+      {
+        onProgress: (prepareProgress) => {
+          // Forward hashing and checking progress directly
+          if (prepareProgress.phase === "hashing") {
+            handleProgress({
+              phase: "hashing",
+              message: prepareProgress.message,
+              current: prepareProgress.current,
+              total: prepareProgress.total,
+              percentage: prepareProgress.percentage,
+            });
+          } else if (prepareProgress.phase === "checking") {
+            handleProgress({
+              phase: "checking",
+              message: prepareProgress.message,
+              current: prepareProgress.current,
+              total: prepareProgress.total,
+              percentage: prepareProgress.percentage,
+              round: prepareProgress.round,
+              failedCount: prepareProgress.failedCount,
+            });
+          }
+        },
+        batchCheckOptions: {
+          chunkSize: syncSettings.batchCheckChunkSize,
+          concurrency: syncSettings.batchCheckConcurrency,
+        },
+      },
+    );
+
+    result.imagesSkipped = existingHashes.size;
+    const totalImages = tasks.length;
+
+    // Phase 3: Upload images to R2 with concurrency control
+    // Use batchCheckConcurrency for upload concurrency as well (user expectation)
+    const uploadConcurrency = syncSettings.batchCheckConcurrency;
+
+    handleProgress({
+      phase: "uploading",
+      message: `准备上传 ${totalImages} 张图片 (${existingHashes.size} 张已存在, 并发: ${uploadConcurrency})`,
+      current: 0,
+      total: totalImages,
+      percentage: 0,
+    });
+
+    if (totalImages > 0) {
+      globalUploader = new ConcurrentUploader(uploadConcurrency);
+      globalUploader.setOnProgress((uploadProgress) => {
+        handleProgress({
+          phase: "uploading",
+          message: uploadProgress.message,
+          current: uploadProgress.current,
+          total: uploadProgress.total,
+          percentage: uploadProgress.percentage,
+          round: uploadProgress.round,
+          failedCount: uploadProgress.failedCount,
+        });
+      });
+
+      const uploadResults = await globalUploader.upload(tasks, hashMap);
+      globalUploader = null;
+
+      // Count successful uploads (with retry, all should succeed unless cancelled)
+      result.imagesUploaded = uploadResults.filter((r) => r.success).length;
+      const failedUploads = uploadResults.filter((r) => !r.success && r.error !== "Cancelled");
+
+      if (failedUploads.length > 0) {
+        // This should rarely happen now with infinite retry
+        result.errors.push(`${failedUploads.length} 张图片上传失败`);
+        result.success = false;
+
+        handleProgress({
+          phase: "completed",
+          message: `上传失败: ${failedUploads.length} 张图片未能上传到 R2，数据同步已中止`,
+          current: 0,
+          total: totalImages,
+          percentage: 0,
+        });
+        return result;
+      }
+
+      // Check if cancelled
+      const cancelledUploads = uploadResults.filter((r) => r.error === "Cancelled");
+      if (cancelledUploads.length > 0) {
+        result.errors.push(`上传已取消，${cancelledUploads.length} 张图片未上传`);
+        result.success = false;
+
+        handleProgress({
+          phase: "completed",
+          message: `上传已取消`,
+          current: result.imagesUploaded,
+          total: totalImages,
+          percentage: 0,
+        });
+        return result;
+      }
+    }
+
+    // Phase 4: Sync exams to D1 with hash references
+    handleProgress({
+      phase: "syncing",
+      message: "正在同步数据到云端...",
+      current: 0,
+      total: totalExams,
+      percentage: 0,
+    });
+
+    for (let i = 0; i < selectedList.length; i++) {
+      const meta = selectedList[i];
+      const exam = examDataMap.get(meta.id);
+      if (!exam) continue;
+
+      // Replace dataUrls with hashes
+      const examWithHashes = prepareExamForRemote(exam, hashMap);
+
+      const serverTimestamp = await saveRemoteExam(examWithHashes);
+      if (serverTimestamp) {
+        // Update local storage with server timestamp to keep in sync
+        await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id, serverTimestamp);
+        result.pushed++;
+      } else {
+        result.errors.push(`Failed to upload: ${meta.name}`);
+        result.success = false;
+      }
+
+      const percentage = Math.round(((i + 1) / totalExams) * 100);
+      handleProgress({
+        phase: "syncing",
+        message: `正在同步: ${meta.name} (${i + 1}/${totalExams})`,
+        current: i + 1,
+        total: totalExams,
+        percentage,
+      });
+    }
+
+    syncState.lastSyncTime = Date.now();
+    saveSyncState();
+
+    const finalMessage = result.success
+      ? `同步完成: ${result.pushed} 个试卷, ${result.imagesUploaded} 张图片上传`
+      : `同步部分完成，但有错误: ${result.errors.join(", ")}`;
+
+    handleProgress({
+      phase: "completed",
+      message: finalMessage,
+      current: totalExams,
+      total: totalExams,
+      percentage: result.success ? 100 : 0,
+    });
+  } catch (e) {
+    result.success = false;
+    result.errors.push(`Force upload failed: ${e}`);
+    handleProgress({
+      phase: "completed",
+      message: `同步失败: ${e}`,
+      current: 0,
+      total: 0,
+      percentage: 0,
+    });
+  } finally {
+    globalUploader = null;
+    currentSyncAbortController = null;
+  }
+
+  return result;
+};
+
+/**
  * Prepare exam data for remote storage by replacing dataUrls with hashes
  */
 function prepareExamForRemote(exam: ExamRecord, hashMap: Map<string, string>): ExamRecord {

@@ -10,13 +10,15 @@ import { useSync } from "../hooks/useSync";
 interface Props {
   onSyncComplete?: () => void;
   onFilesUpdated?: (pulledNames: string[]) => void;
+  selectedHistoryIds?: Set<string>;
 }
 
-const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated }) => {
+const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated, selectedHistoryIds }) => {
   const {
     status,
     sync,
     forceUpload,
+    forceUploadSelected,
     forceDownload,
     clearPending,
     pauseSync,
@@ -44,7 +46,11 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated }) => {
   };
 
   const handleForceUpload = async () => {
-    await forceUpload();
+    if (selectedHistoryIds && selectedHistoryIds.size > 0) {
+      await forceUploadSelected(Array.from(selectedHistoryIds));
+    } else {
+      await forceUpload();
+    }
     onSyncComplete?.();
   };
 
@@ -288,7 +294,7 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated }) => {
               className="sync-button"
               onClick={handleForceUpload}
               disabled={!status.isOnline}
-              title="上传所有本地数据到云端"
+              title={selectedHistoryIds && selectedHistoryIds.size > 0 ? "上传选中的文件到云端" : "上传所有本地数据到云端"}
             >
               <svg
                 className="icon"
@@ -303,7 +309,7 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated }) => {
                 <polyline points="17 8 12 3 7 8" />
                 <line x1="12" y1="3" x2="12" y2="15" />
               </svg>
-              上传全部
+              {selectedHistoryIds && selectedHistoryIds.size > 0 ? "上传选中" : "上传全部"}
             </button>
 
             <button

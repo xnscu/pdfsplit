@@ -235,7 +235,7 @@ export const HistorySidebar: React.FC<Props> = ({
 
             <div className="flex flex-col gap-3 pt-2">
               {/* Sync Status Section */}
-              <SyncStatus onSyncComplete={onRefreshList} onFilesUpdated={onFilesUpdated} />
+              <SyncStatus onSyncComplete={onRefreshList} onFilesUpdated={onFilesUpdated} selectedHistoryIds={selectedHistoryIds} />
 
               {/* Sorting Controls */}
               <div className="flex items-center gap-2">
