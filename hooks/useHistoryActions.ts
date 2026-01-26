@@ -237,14 +237,6 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
   };
 
   const handleBatchLoadHistory = async (ids: string[]) => {
-    // Safety check for large batches
-    if (ids.length > 50) {
-      const confirm = window.confirm(
-        `Warning: Loading ${ids.length} files into the viewer may cause performance issues or crash the browser. Do you want to proceed?`,
-      );
-      if (!confirm) return;
-    }
-
     resetState();
     setters.setShowHistory(false);
     setters.setIsLoadingHistory(true);
