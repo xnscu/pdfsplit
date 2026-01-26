@@ -123,7 +123,7 @@ export const DebugInspectorPanel: React.FC<Props> = ({
         className={`bg-slate-950 rounded-2xl border border-${color}-900/30 p-4 shadow-xl relative group overflow-hidden min-h-[120px]`}
       >
         {url ? (
-          <div className="flex items-center justify-center bg-white rounded-lg overflow-hidden relative cursor-zoom-in">
+          <div className="flex items-center justify-center bg-white overflow-hidden relative cursor-zoom-in">
             <div
               className="absolute inset-0 opacity-10"
               style={{
