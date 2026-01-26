@@ -232,7 +232,8 @@ export const updatePageDetectionsAndQuestions = async (
 
 /**
  * Efficiently update ONLY the questions list for a specific file name.
- * Used for real-time analysis saving.
+ * Used for real-time analysis saving (e.g. AI Solve).
+ * IMPORTANT: Updates timestamp so fullSync detects "modified since last sync" and pushes.
  */
 export const updateQuestionsForFile = async (
   fileName: string,
@@ -256,6 +257,7 @@ export const updateQuestionsForFile = async (
       const record = getReq.result as ExamRecord;
       if (record) {
         record.questions = questions;
+        record.timestamp = Date.now(); // Bump so sync pushes this exam (local.timestamp > lastSyncTime)
         const putReq = store.put(record);
         putReq.onsuccess = () => resolve();
         putReq.onerror = () => reject(putReq.error);
