@@ -50,6 +50,8 @@ export interface SyncSettings {
   uploadConcurrency: number;
   batchCheckChunkSize: number;
   batchCheckConcurrency: number;
+  autoSyncEnabled: boolean;
+  autoSyncIntervalMinutes: number;
 }
 
 // Default sync settings
@@ -57,6 +59,8 @@ const defaultSyncSettings: SyncSettings = {
   uploadConcurrency: SYNC_CONFIG.defaultConcurrency,
   batchCheckChunkSize: 50,
   batchCheckConcurrency: 100,
+  autoSyncEnabled: false,
+  autoSyncIntervalMinutes: 5,
 };
 
 // Current sync settings

@@ -39,6 +39,10 @@ export interface UseSyncResult {
   setUploadConcurrency: (concurrency: number) => void;
   setBatchCheckChunkSize: (chunkSize: number) => void;
   setBatchCheckConcurrency: (concurrency: number) => void;
+  autoSyncEnabled: boolean;
+  autoSyncIntervalMinutes: number;
+  setAutoSyncEnabled: (enabled: boolean) => void;
+  setAutoSyncIntervalMinutes: (minutes: number) => void;
 }
 
 export function useSync(): UseSyncResult {
@@ -59,7 +63,19 @@ export function useSync(): UseSyncResult {
     };
   });
 
+  const [autoSyncEnabled, setAutoSyncEnabledState] = useState<boolean>(() => {
+    const settings = syncService.getSyncSettings();
+    return settings.autoSyncEnabled || false;
+  });
+
+  const [autoSyncIntervalMinutes, setAutoSyncIntervalMinutesState] = useState<number>(() => {
+    const settings = syncService.getSyncSettings();
+    return settings.autoSyncIntervalMinutes || 5;
+  });
+
   const isPausedRef = useRef(false);
+  const autoSyncTimerRef = useRef<number | null>(null);
+  const isSyncingRef = useRef(false);
 
   const handleProgress = useCallback((progress: SyncProgress) => {
     setStatus((prev) => ({
@@ -82,6 +98,9 @@ export function useSync(): UseSyncResult {
       batchCheckChunkSize: settings.batchCheckChunkSize,
       batchCheckConcurrency: settings.batchCheckConcurrency,
     }));
+    // Load auto-sync settings
+    setAutoSyncEnabledState(settings.autoSyncEnabled || false);
+    setAutoSyncIntervalMinutesState(settings.autoSyncIntervalMinutes || 5);
 
     // Initialize sync service
     syncService.initSyncService();
@@ -123,6 +142,13 @@ export function useSync(): UseSyncResult {
   }, []);
 
   const sync = useCallback(async () => {
+    // Prevent concurrent sync calls
+    if (isSyncingRef.current) {
+      console.log("Sync already in progress, skipping...");
+      return;
+    }
+
+    isSyncingRef.current = true;
     setStatus((prev) => ({ ...prev, isSyncing: true, error: null, lastSyncResult: null }));
 
     try {
@@ -149,8 +175,42 @@ export function useSync(): UseSyncResult {
         error: e instanceof Error ? e.message : "Sync failed",
         lastSyncResult: null,
       }));
+    } finally {
+      isSyncingRef.current = false;
     }
   }, []);
+
+  // Auto-sync timer effect (must be after sync definition)
+  useEffect(() => {
+    // Clear existing timer
+    if (autoSyncTimerRef.current !== null) {
+      clearInterval(autoSyncTimerRef.current);
+      autoSyncTimerRef.current = null;
+    }
+
+    // Only start timer if auto-sync is enabled and online
+    if (autoSyncEnabled && status.isOnline) {
+      const intervalMs = autoSyncIntervalMinutes * 60 * 1000;
+
+      // Set up periodic sync
+      autoSyncTimerRef.current = window.setInterval(() => {
+        // Only sync if online and not currently syncing
+        const currentState = syncService.getSyncState();
+        if (currentState.isOnline && !isSyncingRef.current) {
+          sync().catch((e) => {
+            console.error("Auto-sync failed:", e);
+          });
+        }
+      }, intervalMs);
+    }
+
+    return () => {
+      if (autoSyncTimerRef.current !== null) {
+        clearInterval(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+    };
+  }, [autoSyncEnabled, autoSyncIntervalMinutes, status.isOnline, sync]);
 
   const forceUpload = useCallback(async () => {
     setStatus((prev) => ({
@@ -258,6 +318,16 @@ export function useSync(): UseSyncResult {
     setStatus((prev) => ({ ...prev, batchCheckConcurrency: concurrency }));
   }, []);
 
+  const setAutoSyncEnabled = useCallback((enabled: boolean) => {
+    syncService.saveSyncSettings({ autoSyncEnabled: enabled });
+    setAutoSyncEnabledState(enabled);
+  }, []);
+
+  const setAutoSyncIntervalMinutes = useCallback((minutes: number) => {
+    syncService.saveSyncSettings({ autoSyncIntervalMinutes: minutes });
+    setAutoSyncIntervalMinutesState(minutes);
+  }, []);
+
   const clearPending = useCallback(() => {
     syncService.clearPendingActions();
     setStatus((prev) => ({ ...prev, pendingCount: 0 }));
@@ -275,6 +345,10 @@ export function useSync(): UseSyncResult {
     setUploadConcurrency,
     setBatchCheckChunkSize,
     setBatchCheckConcurrency,
+    autoSyncEnabled,
+    autoSyncIntervalMinutes,
+    setAutoSyncEnabled,
+    setAutoSyncIntervalMinutes,
   };
 }
 

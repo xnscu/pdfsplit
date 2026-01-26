@@ -554,6 +554,10 @@ const App: React.FC = () => {
         setBatchCheckChunkSize={syncHook.setBatchCheckChunkSize}
         batchCheckConcurrency={syncHook.status.batchCheckConcurrency}
         setBatchCheckConcurrency={syncHook.setBatchCheckConcurrency}
+        autoSyncEnabled={syncHook.autoSyncEnabled}
+        setAutoSyncEnabled={syncHook.setAutoSyncEnabled}
+        autoSyncIntervalMinutes={syncHook.autoSyncIntervalMinutes}
+        setAutoSyncIntervalMinutes={syncHook.setAutoSyncIntervalMinutes}
       />
       {state.refiningFile && (
         <RefinementModal

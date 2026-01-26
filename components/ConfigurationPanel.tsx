@@ -26,6 +26,10 @@ interface Props {
   setBatchCheckConcurrency?: (c: number) => void;
   skipSolvedQuestions?: boolean;
   setSkipSolvedQuestions?: (b: boolean) => void;
+  autoSyncEnabled?: boolean;
+  setAutoSyncEnabled?: (b: boolean) => void;
+  autoSyncIntervalMinutes?: number;
+  setAutoSyncIntervalMinutes?: (m: number) => void;
 }
 
 export const ConfigurationPanel: React.FC<Props> = ({
@@ -53,6 +57,10 @@ export const ConfigurationPanel: React.FC<Props> = ({
   setBatchCheckConcurrency,
   skipSolvedQuestions = false,
   setSkipSolvedQuestions,
+  autoSyncEnabled = false,
+  setAutoSyncEnabled,
+  autoSyncIntervalMinutes = 5,
+  setAutoSyncIntervalMinutes,
 }) => {
   if (!isOpen) return null;
 
@@ -369,6 +377,60 @@ export const ConfigurationPanel: React.FC<Props> = ({
                     className={`bg-white w-6 h-6 rounded-full shadow-md transform transition-transform ${skipSolvedQuestions ? "translate-x-6" : ""}`}
                   ></div>
                 </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-6 pt-6 border-t border-slate-100">
+            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">
+              定时同步
+            </h3>
+            
+            {setAutoSyncEnabled && (
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col">
+                  <label className="font-bold text-slate-700">
+                    启用定时同步
+                  </label>
+                  <p className="text-xs text-slate-400 font-medium mt-1">
+                    按设定的时间间隔自动执行同步
+                  </p>
+                </div>
+                <div
+                  className={`w-14 h-8 flex items-center rounded-full p-1 cursor-pointer transition-colors ${autoSyncEnabled ? "bg-blue-600" : "bg-slate-200"}`}
+                  onClick={() => setAutoSyncEnabled(!autoSyncEnabled)}
+                >
+                  <div
+                    className={`bg-white w-6 h-6 rounded-full shadow-md transform transition-transform ${autoSyncEnabled ? "translate-x-6" : ""}`}
+                  ></div>
+                </div>
+              </div>
+            )}
+
+            {setAutoSyncIntervalMinutes && autoSyncEnabled && (
+              <div className="space-y-3">
+                <div className="flex justify-between">
+                  <label className="font-bold text-slate-700">
+                    同步间隔（分钟）
+                  </label>
+                  <span className="font-black text-blue-600 bg-blue-50 px-3 py-1 rounded-lg text-xs">
+                    {autoSyncIntervalMinutes} 分钟
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="60"
+                  step="1"
+                  value={autoSyncIntervalMinutes}
+                  onChange={(e) =>
+                    setAutoSyncIntervalMinutes(parseInt(e.target.value))
+                  }
+                  className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
+                <p className="text-xs text-slate-400 font-medium">
+                  设置自动同步的时间间隔，范围：1-60 分钟
+                </p>
               </div>
             )}
           </div>
