@@ -237,6 +237,25 @@ export const HistorySidebar: React.FC<Props> = ({
               {/* Sync Status Section */}
               <SyncStatus onSyncComplete={onRefreshList} onFilesUpdated={onFilesUpdated} selectedHistoryIds={selectedHistoryIds} />
 
+              {/* Load Exams with Picture Issues Button */}
+              {onLoadExamsWithPictureOkFalse && (
+                <button
+                  onClick={onLoadExamsWithPictureOkFalse}
+                  className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100 hover:bg-amber-100 transition-colors flex items-center gap-1 w-fit"
+                  title="加载所有剪裁区域可能有问题的试卷"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                  问题试卷
+                </button>
+              )}
+
               {/* Sorting Controls */}
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase text-slate-400">Sort By:</span>
@@ -270,23 +289,6 @@ export const HistorySidebar: React.FC<Props> = ({
                     />
                     <span className="text-xs font-bold text-slate-500">Select All</span>
                   </label>
-                  {onLoadExamsWithPictureOkFalse && (
-                    <button
-                      onClick={onLoadExamsWithPictureOkFalse}
-                      className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100 hover:bg-amber-100 transition-colors flex items-center gap-1"
-                      title="加载所有包含 picture_ok=false 的题目的试卷"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                        />
-                      </svg>
-                      加载图片问题
-                    </button>
-                  )}
                 </div>
 
                 {selectedHistoryIds.size > 0 && (
