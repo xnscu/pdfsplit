@@ -8,6 +8,7 @@ import {
   reSaveExamResult,
   deleteExamResult,
   deleteExamResults,
+  findExamsWithPictureOkFalse,
 } from "../services/storageService";
 import {
   generateQuestionsFromRawPages,
@@ -517,6 +518,21 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     }
   };
 
+  const handleLoadExamsWithPictureOkFalse = async () => {
+    try {
+      const examIds = await findExamsWithPictureOkFalse();
+      if (examIds.length === 0) {
+        addNotification(null, "info", "未找到包含 picture_ok=false 的题目的试卷");
+        return;
+      }
+      await handleBatchLoadHistory(examIds);
+      addNotification(null, "success", `已加载 ${examIds.length} 个包含图片问题的试卷`);
+    } catch (e: any) {
+      console.error("Failed to load exams with picture_ok=false", e);
+      addNotification(null, "error", `加载失败: ${e.message}`);
+    }
+  };
+
   return {
     handleCleanupAllHistory,
     handleLoadHistory,
@@ -527,5 +543,6 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     handleDeleteHistoryItem,
     handleBatchDeleteHistoryItems,
     handleFilesUpdated,
+    handleLoadExamsWithPictureOkFalse,
   };
 };

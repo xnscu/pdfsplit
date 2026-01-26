@@ -12,6 +12,7 @@ export interface DetectedQuestion {
 }
 
 export interface QuestionAnalysis {
+  picture_ok: boolean;
   difficulty: number;
   question_type: string;
   tags: {

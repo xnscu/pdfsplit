@@ -20,6 +20,7 @@ interface Props {
   onDeleteHistory: (id: string, name?: string) => Promise<void>;
   onBatchDelete: (ids: string[]) => Promise<void>;
   onFilesUpdated?: (pulledNames: string[]) => void;
+  onLoadExamsWithPictureOkFalse?: () => void;
 }
 
 type SortOption = "name_asc" | "name_desc" | "date_newest" | "date_oldest";
@@ -43,6 +44,7 @@ export const HistorySidebar: React.FC<Props> = ({
   onDeleteHistory,
   onBatchDelete,
   onFilesUpdated,
+  onLoadExamsWithPictureOkFalse,
 }) => {
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
   const [isCleaning, setIsCleaning] = useState(false);
@@ -257,16 +259,35 @@ export const HistorySidebar: React.FC<Props> = ({
               </div>
 
               <div className="flex items-center justify-between border-t border-slate-200/50 pt-3 mt-1">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                    checked={sortedHistoryList.length > 0 && selectedHistoryIds.size === sortedHistoryList.length}
-                    onChange={handleSelectAllHistory}
-                    disabled={sortedHistoryList.length === 0}
-                  />
-                  <span className="text-xs font-bold text-slate-500">Select All</span>
-                </label>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      checked={sortedHistoryList.length > 0 && selectedHistoryIds.size === sortedHistoryList.length}
+                      onChange={handleSelectAllHistory}
+                      disabled={sortedHistoryList.length === 0}
+                    />
+                    <span className="text-xs font-bold text-slate-500">Select All</span>
+                  </label>
+                  {onLoadExamsWithPictureOkFalse && (
+                    <button
+                      onClick={onLoadExamsWithPictureOkFalse}
+                      className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100 hover:bg-amber-100 transition-colors flex items-center gap-1"
+                      title="加载所有包含 picture_ok=false 的题目的试卷"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                        />
+                      </svg>
+                      加载图片问题
+                    </button>
+                  )}
+                </div>
 
                 {selectedHistoryIds.size > 0 && (
                   <div className="flex items-center gap-2">

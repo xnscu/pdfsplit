@@ -41,6 +41,7 @@ const App: React.FC = () => {
     handleDeleteHistoryItem,
     handleBatchDeleteHistoryItems,
     handleFilesUpdated,
+    handleLoadExamsWithPictureOkFalse,
   } = useHistoryActions({ state, setters, refs, actions });
   const { processZipFiles, handleFileChange } = useFileProcessor({
     state,
@@ -526,6 +527,7 @@ const App: React.FC = () => {
         onDeleteHistory={handleDeleteHistoryItem}
         onBatchDelete={handleBatchDeleteHistoryItems}
         onFilesUpdated={handleFilesUpdated}
+        onLoadExamsWithPictureOkFalse={handleLoadExamsWithPictureOkFalse}
       />
       <ConfigurationPanel
         isOpen={showSettings}

@@ -339,6 +339,40 @@ export const getHistoryList = async (): Promise<HistoryMetadata[]> => {
 };
 
 /**
+ * Find all exam IDs that contain questions with picture_ok === false
+ */
+export const findExamsWithPictureOkFalse = async (): Promise<string[]> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], "readonly");
+    const store = transaction.objectStore(STORE_NAME);
+
+    const request = store.openCursor();
+    const examIds: string[] = [];
+
+    request.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest).result;
+      if (cursor) {
+        const record = cursor.value as ExamRecord;
+        // Check if any question has picture_ok === false
+        if (record.questions && record.questions.length > 0) {
+          const hasPictureOkFalse = record.questions.some(
+            (q: QuestionImage) => q.analysis?.picture_ok === false
+          );
+          if (hasPictureOkFalse) {
+            examIds.push(record.id);
+          }
+        }
+        cursor.continue();
+      } else {
+        resolve(examIds);
+      }
+    };
+    request.onerror = () => reject(request.error);
+  });
+};
+
+/**
  * Load full data for a specific history item
  */
 export const loadExamResult = async (
