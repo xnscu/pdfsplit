@@ -71,6 +71,7 @@ export const SCHEMAS = {
   ANALYSIS: {
     type: Type.OBJECT,
     properties: {
+      picture_ok: { type: Type.BOOLEAN, description: "图片是否完整" },
       difficulty: { type: Type.INTEGER, description: "1-5, 5为最难" },
       question_type: { type: Type.STRING, description: "选择/填空/解答" },
       tags: {
@@ -106,7 +107,7 @@ export const SCHEMAS = {
       solution_md: {
         type: Type.STRING,
         description:
-          "题目答案。1. 选择题给出ABCD字母本身即可，解析写在analysis_md。2.填空题给出答案即可，解析写在analysis_md。3.解答题必须给出完整的、分步的、包含评分标准的解答过程（写出'解：'）。所有数学公式必须使用LaTeX格式并用 $ 或 $$ 包裹。",
+          "题目答案。1. 选择题给出ABCD字母本身即可，解析写在analysis_md。2.填空题给出答案本身即可，解析写在analysis_md。3.解答题必须给出完整的、分步的、包含评分标准的解答过程（写出'解：'）。所有数学公式必须使用LaTeX格式并用 $ 或 $$ 包裹。",
       },
       analysis_md: {
         type: Type.STRING,
@@ -120,12 +121,7 @@ export const SCHEMAS = {
       },
     },
     required: [
-      "difficulty",
-      "question_type",
-      "tags",
-      "question_md",
-      "solution_md",
-      "analysis_md",
+      "picture_ok",
     ],
   },
 };
