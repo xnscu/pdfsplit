@@ -7,6 +7,7 @@
 import { DetectedQuestion, QuestionAnalysis } from "../types";
 import { PROMPTS, SCHEMAS, MODEL_IDS } from "../shared/ai-config.js";
 import { getNextKey, recordCall, recordSuccess, recordFailure, isKeyPoolEmpty } from "./keyPoolService";
+import { imageRefToInlineImageData, isDataUrl } from "./imageRef";
 
 // Worker API base URL
 const getApiBase = () => {
@@ -16,6 +17,21 @@ const getApiBase = () => {
 };
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Convert any image reference to a base64 data URL
+ * Handles: data URLs (pass through), r2:// references, http URLs
+ */
+const resolveImageToDataUrl = async (imageRef: string): Promise<string> => {
+  // Already a data URL, pass through
+  if (isDataUrl(imageRef)) {
+    return imageRef;
+  }
+
+  // Need to fetch and convert to base64
+  const { mimeType, data } = await imageRefToInlineImageData(imageRef);
+  return `data:${mimeType};base64,${data}`;
+};
 
 interface GeminiProxyRequest {
   apiKey: string;
@@ -60,6 +76,10 @@ export const detectQuestionsViaProxy = async (
 ): Promise<DetectedQuestion[]> => {
   let attempt = 0;
 
+  // Resolve image reference to base64 data URL before retry loop
+  // This handles r2:// references, http URLs, etc.
+  const resolvedImage = await resolveImageToDataUrl(image);
+
   while (attempt < maxRetries) {
     // Check if aborted
     if (signal?.aborted) {
@@ -80,7 +100,7 @@ export const detectQuestionsViaProxy = async (
         {
           apiKey,
           modelId,
-          image,
+          image: resolvedImage,
           prompt: PROMPTS.BASIC,
           responseSchema: {
             type: "ARRAY",
@@ -156,6 +176,10 @@ export const analyzeQuestionViaProxy = async (
 ): Promise<QuestionAnalysis> => {
   let attempt = 0;
 
+  // Resolve image reference to base64 data URL before retry loop
+  // This handles r2:// references, http URLs, etc.
+  const resolvedImage = await resolveImageToDataUrl(image);
+
   while (attempt < maxRetries) {
     // Check if aborted
     if (signal?.aborted) {
@@ -176,7 +200,7 @@ export const analyzeQuestionViaProxy = async (
         {
           apiKey,
           modelId,
-          image,
+          image: resolvedImage,
           prompt: PROMPTS.ANALYSIS,
           responseSchema: SCHEMAS.ANALYSIS,
           requestType: "analysis",
