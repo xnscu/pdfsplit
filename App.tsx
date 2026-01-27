@@ -113,9 +113,9 @@ const App: React.FC = () => {
     // 只要有开始时间且不是初始状态或错误状态，就运行计时器
     const shouldRunTimer =
       state.startTime &&
-      [ProcessingStatus.LOADING_PDF, ProcessingStatus.DETECTING_QUESTIONS, ProcessingStatus.CROPPING].includes(
+      ([ProcessingStatus.LOADING_PDF, ProcessingStatus.DETECTING_QUESTIONS, ProcessingStatus.CROPPING, ProcessingStatus.ANALYZING].includes(
         state.status,
-      );
+      ) || (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal));
 
     if (shouldRunTimer) {
       interval = window.setInterval(() => {
@@ -130,7 +130,7 @@ const App: React.FC = () => {
     }
 
     return () => clearInterval(interval);
-  }, [state.status, state.startTime]);
+  }, [state.status, state.startTime, state.analyzingTotal]);
 
   // Handle URL Params for ZIP
   useEffect(() => {
@@ -189,6 +189,10 @@ const App: React.FC = () => {
     }
 
     isAnalysisRunningRef.current = true;
+    setters.setStatus(ProcessingStatus.ANALYZING);
+    if (!state.startTime) {
+      setters.setStartTime(Date.now());
+    }
 
     try {
       // The hook handles the process. We just trigger it.
@@ -229,6 +233,11 @@ const App: React.FC = () => {
       // 如果是中断错误，不显示错误
       if (error.name !== "AbortError") {
         console.error("Analysis error:", error);
+      }
+    } finally {
+      // 只有在不再继续分析时才重置状态
+      if (!isAnalysisRunningRef.current) {
+        setters.setStatus(ProcessingStatus.IDLE);
       }
     }
   };

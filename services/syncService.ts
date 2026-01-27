@@ -633,25 +633,29 @@ export const fullSync = async (): Promise<SyncResult> => {
     syncState.lastSyncTime = pullResult.syncTime;
     saveSyncState();
 
-    // Record sync history
-    const allFileNames = [...(result.pushedNames || []), ...(result.pulledNames || [])];
-    await syncHistoryService.saveSyncHistory(
-      "full_sync",
-      allFileNames,
-      result.success,
-      result.errors.length > 0 ? result.errors.join("; ") : undefined,
-    );
+    // Record sync history - Split into push and pull records
+    if (result.pushedNames && result.pushedNames.length > 0) {
+      await syncHistoryService.saveSyncHistory(
+        "push",
+        result.pushedNames,
+        result.success,
+        result.errors.length > 0 ? result.errors.join("; ") : undefined
+      );
+    }
 
+    if (result.pulledNames && result.pulledNames.length > 0) {
+      await syncHistoryService.saveSyncHistory(
+        "pull",
+        result.pulledNames,
+        result.success,
+        result.errors.length > 0 ? result.errors.join("; ") : undefined
+      );
+    }
   } catch (e) {
     result.success = false;
     result.errors.push(`同步失败: ${e}`);
     // Record failed sync
-    await syncHistoryService.saveSyncHistory(
-      "full_sync",
-      [],
-      false,
-      `同步失败: ${e}`,
-    );
+    await syncHistoryService.saveSyncHistory("full_sync", [], false, `同步失败: ${e}`);
   }
 
   result.success = result.errors.length === 0;
@@ -668,9 +672,7 @@ export const fullSync = async (): Promise<SyncResult> => {
  * 3. uploading - Upload missing images to R2
  * 4. syncing - Sync exam data to D1
  */
-export const forceUploadAll = async (
-  onProgress?: SyncProgressCallback,
-): Promise<SyncResult> => {
+export const forceUploadAll = async (onProgress?: SyncProgressCallback): Promise<SyncResult> => {
   const result: SyncResult = {
     success: true,
     pushed: 0,
@@ -779,7 +781,7 @@ export const forceUploadAll = async (
           chunkSize: syncSettings.batchCheckChunkSize,
           concurrency: syncSettings.batchCheckConcurrency,
         },
-      },
+      }
     );
 
     result.imagesSkipped = existingHashes.size;
@@ -870,7 +872,13 @@ export const forceUploadAll = async (
       const serverTimestamp = await saveRemoteExam(examWithHashes);
       if (serverTimestamp) {
         // Update local storage with server timestamp to keep in sync
-        await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id, serverTimestamp);
+        await storageService.saveExamResult(
+          examWithHashes.name,
+          examWithHashes.rawPages,
+          examWithHashes.questions,
+          exam.id,
+          serverTimestamp
+        );
         result.pushed++;
         result.pushedNames!.push(examWithHashes.name);
       } else {
@@ -897,7 +905,7 @@ export const forceUploadAll = async (
       "push",
       pushedNames,
       result.success,
-      result.errors.length > 0 ? result.errors.join("; ") : undefined,
+      result.errors.length > 0 ? result.errors.join("; ") : undefined
     );
 
     const finalMessage = result.success
@@ -915,12 +923,7 @@ export const forceUploadAll = async (
     result.success = false;
     result.errors.push(`Force upload failed: ${e}`);
     // Record failed sync
-    await syncHistoryService.saveSyncHistory(
-      "push",
-      [],
-      false,
-      `Force upload failed: ${e}`,
-    );
+    await syncHistoryService.saveSyncHistory("push", [], false, `Force upload failed: ${e}`);
     handleProgress({
       phase: "completed",
       message: `同步失败: ${e}`,
@@ -948,7 +951,7 @@ export const forceUploadAll = async (
  */
 export const forceUploadSelected = async (
   selectedExamIds: string[],
-  onProgress?: SyncProgressCallback,
+  onProgress?: SyncProgressCallback
 ): Promise<SyncResult> => {
   const result: SyncResult = {
     success: true,
@@ -1070,7 +1073,7 @@ export const forceUploadSelected = async (
           chunkSize: syncSettings.batchCheckChunkSize,
           concurrency: syncSettings.batchCheckConcurrency,
         },
-      },
+      }
     );
 
     result.imagesSkipped = existingHashes.size;
@@ -1161,7 +1164,13 @@ export const forceUploadSelected = async (
       const serverTimestamp = await saveRemoteExam(examWithHashes);
       if (serverTimestamp) {
         // Update local storage with server timestamp to keep in sync
-        await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id, serverTimestamp);
+        await storageService.saveExamResult(
+          examWithHashes.name,
+          examWithHashes.rawPages,
+          examWithHashes.questions,
+          exam.id,
+          serverTimestamp
+        );
         result.pushed++;
       } else {
         result.errors.push(`Failed to upload: ${meta.name}`);
@@ -1187,7 +1196,7 @@ export const forceUploadSelected = async (
       "push",
       pushedNames,
       result.success,
-      result.errors.length > 0 ? result.errors.join("; ") : undefined,
+      result.errors.length > 0 ? result.errors.join("; ") : undefined
     );
 
     const finalMessage = result.success
@@ -1205,12 +1214,7 @@ export const forceUploadSelected = async (
     result.success = false;
     result.errors.push(`Force upload failed: ${e}`);
     // Record failed sync
-    await syncHistoryService.saveSyncHistory(
-      "push",
-      [],
-      false,
-      `Force upload failed: ${e}`,
-    );
+    await syncHistoryService.saveSyncHistory("push", [], false, `Force upload failed: ${e}`);
     handleProgress({
       phase: "completed",
       message: `同步失败: ${e}`,
@@ -1232,12 +1236,12 @@ export const forceUploadSelected = async (
 function prepareExamForRemote(exam: ExamRecord, hashMap: Map<string, string>): ExamRecord {
   const rawPages = exam.rawPages.map((page) => ({
     ...page,
-    dataUrl: isImageHash(page.dataUrl) ? page.dataUrl : (hashMap.get(page.dataUrl) || page.dataUrl),
+    dataUrl: isImageHash(page.dataUrl) ? page.dataUrl : hashMap.get(page.dataUrl) || page.dataUrl,
   }));
 
   const questions = exam.questions.map((q) => ({
     ...q,
-    dataUrl: isImageHash(q.dataUrl) ? q.dataUrl : (hashMap.get(q.dataUrl) || q.dataUrl),
+    dataUrl: isImageHash(q.dataUrl) ? q.dataUrl : hashMap.get(q.dataUrl) || q.dataUrl,
   }));
 
   return {
@@ -1251,9 +1255,7 @@ function prepareExamForRemote(exam: ExamRecord, hashMap: Map<string, string>): E
  * Force download all remote data to local
  * Note: Downloaded data keeps hash references; frontend handles URL resolution
  */
-export const forceDownloadAll = async (
-  onProgress?: SyncProgressCallback,
-): Promise<SyncResult> => {
+export const forceDownloadAll = async (onProgress?: SyncProgressCallback): Promise<SyncResult> => {
   const result: SyncResult = {
     success: true,
     pushed: 0,
@@ -1333,7 +1335,7 @@ export const forceDownloadAll = async (
       "pull",
       pulledNames,
       result.success,
-      result.errors.length > 0 ? result.errors.join("; ") : undefined,
+      result.errors.length > 0 ? result.errors.join("; ") : undefined
     );
 
     handleProgress({
@@ -1347,12 +1349,7 @@ export const forceDownloadAll = async (
     result.success = false;
     result.errors.push(`Force download failed: ${e}`);
     // Record failed sync
-    await syncHistoryService.saveSyncHistory(
-      "pull",
-      [],
-      false,
-      `Force download failed: ${e}`,
-    );
+    await syncHistoryService.saveSyncHistory("pull", [], false, `Force download failed: ${e}`);
     handleProgress({
       phase: "completed",
       message: `下载失败: ${e}`,
@@ -1404,19 +1401,19 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
 
   try {
     // Collect all base64 images that need to be uploaded
-    const imagesToProcess: Array<{ dataUrl: string; type: 'rawPage' | 'question'; index: number }> = [];
+    const imagesToProcess: Array<{ dataUrl: string; type: "rawPage" | "question"; index: number }> = [];
 
     // Collect from rawPages
     exam.rawPages.forEach((page, index) => {
       if (!isImageHash(page.dataUrl)) {
-        imagesToProcess.push({ dataUrl: page.dataUrl, type: 'rawPage', index });
+        imagesToProcess.push({ dataUrl: page.dataUrl, type: "rawPage", index });
       }
     });
 
     // Collect from questions
     exam.questions.forEach((q, index) => {
       if (!isImageHash(q.dataUrl)) {
-        imagesToProcess.push({ dataUrl: q.dataUrl, type: 'question', index });
+        imagesToProcess.push({ dataUrl: q.dataUrl, type: "question", index });
       }
     });
 
@@ -1432,13 +1429,19 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
         return result;
       }
       // Update local storage with server timestamp to keep in sync
-      await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id, serverTimestamp);
+      await storageService.saveExamResult(
+        examWithHashes.name,
+        examWithHashes.rawPages,
+        examWithHashes.questions,
+        exam.id,
+        serverTimestamp
+      );
       return result;
     }
 
     // Calculate hashes for all images
     const hashMap = new Map<string, string>(); // dataUrl -> hash
-    const uniqueDataUrls = [...new Set(imagesToProcess.map(img => img.dataUrl))];
+    const uniqueDataUrls = [...new Set(imagesToProcess.map((img) => img.dataUrl))];
 
     console.log(`[Sync] Calculating hashes for ${uniqueDataUrls.length} unique images...`);
 
@@ -1457,8 +1460,10 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
     });
 
     // Upload missing images
-    const hashesToUpload = uniqueHashes.filter(h => !existsMap[h]);
-    console.log(`[Sync] ${hashesToUpload.length} images need upload, ${uniqueHashes.length - hashesToUpload.length} already exist`);
+    const hashesToUpload = uniqueHashes.filter((h) => !existsMap[h]);
+    console.log(
+      `[Sync] ${hashesToUpload.length} images need upload, ${uniqueHashes.length - hashesToUpload.length} already exist`
+    );
 
     result.imagesSkipped = uniqueHashes.length - hashesToUpload.length;
 
@@ -1493,11 +1498,11 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
       ...exam,
       rawPages: exam.rawPages.map((page) => ({
         ...page,
-        dataUrl: isImageHash(page.dataUrl) ? page.dataUrl : (hashMap.get(page.dataUrl) || page.dataUrl),
+        dataUrl: isImageHash(page.dataUrl) ? page.dataUrl : hashMap.get(page.dataUrl) || page.dataUrl,
       })),
       questions: exam.questions.map((q) => ({
         ...q,
-        dataUrl: isImageHash(q.dataUrl) ? q.dataUrl : (hashMap.get(q.dataUrl) || q.dataUrl),
+        dataUrl: isImageHash(q.dataUrl) ? q.dataUrl : hashMap.get(q.dataUrl) || q.dataUrl,
       })),
     };
 
@@ -1514,9 +1519,16 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
     // IMPORTANT: Pass exam.id and serverTimestamp to maintain consistency
     // The server timestamp ensures that local and remote timestamps match,
     // preventing the next sync from incorrectly thinking the local version is newer.
-    await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id, serverTimestamp);
-    console.log(`[Sync] Successfully synced ${exam.name}: ${result.imagesUploaded} uploaded, ${result.imagesSkipped} skipped`);
-
+    await storageService.saveExamResult(
+      examWithHashes.name,
+      examWithHashes.rawPages,
+      examWithHashes.questions,
+      exam.id,
+      serverTimestamp
+    );
+    console.log(
+      `[Sync] Successfully synced ${exam.name}: ${result.imagesUploaded} uploaded, ${result.imagesSkipped} skipped`
+    );
   } catch (e) {
     result.success = false;
     result.error = e instanceof Error ? e.message : String(e);
@@ -1533,7 +1545,7 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
 export const saveExamWithSync = async (
   fileName: string,
   rawPages: ExamRecord["rawPages"],
-  questions: ExamRecord["questions"] = [],
+  questions: ExamRecord["questions"] = []
 ): Promise<string> => {
   // Save locally first
   const id = await storageService.saveExamResult(fileName, rawPages, questions);
@@ -1667,7 +1679,7 @@ export const updateQuestionsWithSync = async (fileName: string, questions: ExamR
 export const reSaveExamResultWithSync = async (
   fileName: string,
   rawPages: ExamRecord["rawPages"],
-  questions?: ExamRecord["questions"],
+  questions?: ExamRecord["questions"]
 ): Promise<void> => {
   console.log("[Sync] reSaveExamResultWithSync called for:", fileName);
 
@@ -1694,7 +1706,9 @@ export const reSaveExamResultWithSync = async (
           data: exam,
         });
       } else {
-        console.log(`[Sync] Synced ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`);
+        console.log(
+          `[Sync] Synced ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`
+        );
       }
     }
   } else {
@@ -1726,7 +1740,7 @@ export const updatePageDetectionsAndQuestionsWithSync = async (
   fileName: string,
   pageNumber: number,
   newDetections: any[],
-  newFileQuestions: ExamRecord["questions"],
+  newFileQuestions: ExamRecord["questions"]
 ): Promise<void> => {
   console.log("[Sync] updatePageDetectionsAndQuestionsWithSync called for:", fileName, "page:", pageNumber);
 
@@ -1754,7 +1768,9 @@ export const updatePageDetectionsAndQuestionsWithSync = async (
           data: exam,
         });
       } else {
-        console.log(`[Sync] Fine-grained sync completed for ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`);
+        console.log(
+          `[Sync] Fine-grained sync completed for ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`
+        );
       }
     }
   } else {

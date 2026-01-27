@@ -73,8 +73,12 @@ export const saveSyncHistory = async (
   success: boolean,
   errorMessage?: string
 ): Promise<void> => {
-  // Don't create history record if no files are involved
-  if (!fileNames || fileNames.length === 0) {
+  // Filter out any empty or invalid file names
+  const validFileNames = fileNames ? fileNames.filter((f) => f && f.trim().length > 0) : [];
+
+  // Don't create history record if no files are involved AND it was successful
+  // We still want to record failures even if no files were transferred
+  if (validFileNames.length === 0 && success) {
     return;
   }
 
@@ -84,8 +88,8 @@ export const saveSyncHistory = async (
     id: crypto.randomUUID(),
     syncTime: Date.now(),
     actionType,
-    fileNames,
-    fileCount: fileNames.length,
+    fileNames: validFileNames,
+    fileCount: validFileNames.length,
     success,
     errorMessage,
   };
