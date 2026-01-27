@@ -32,6 +32,7 @@ interface Props {
   onRefineFile?: (fileName: string) => void;
   onProcessFile?: (fileName: string) => void;
   onAnalyzeFile?: (fileName: string) => void; // New
+  onReSolveQuestion?: (q: QuestionImage) => Promise<void>; // Re-solve single question
   onStopAnalyze?: () => void; // Stop analysis
   analyzingTotal?: number;
   analyzingDone?: number;
@@ -62,6 +63,7 @@ export const DebugRawView: React.FC<Props> = ({
   onRefineFile,
   onProcessFile,
   onAnalyzeFile,
+  onReSolveQuestion,
   onStopAnalyze,
   analyzingTotal,
   analyzingDone,
@@ -461,6 +463,7 @@ export const DebugRawView: React.FC<Props> = ({
           <DebugPreviewGrid
             questions={currentFileQuestions}
             onQuestionClick={handleQuestionClick}
+            onReSolveQuestion={onReSolveQuestion}
           />
         ) : (
           <>

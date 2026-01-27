@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import JSZip from "jszip";
-import { ProcessingStatus } from "./types";
+import { ProcessingStatus, QuestionImage } from "./types";
 import { ProcessingState } from "./components/ProcessingState";
 import { DebugRawView } from "./components/DebugRawView";
 import { Header } from "./components/Header";
@@ -23,8 +23,10 @@ import { useHistoryActions } from "./hooks/useHistoryActions";
 import { useRefinementActions } from "./hooks/useRefinementActions";
 import { useAnalysisProcessor } from "./hooks/useAnalysisProcessor";
 import { useSync } from "./hooks/useSync";
-import { reSaveExamResult } from "./services/storageService"; // Needed for analysis save
+import { reSaveExamResult, updateQuestionsForFile } from "./services/storageService"; // Needed for analysis save
 import { imageRefToBlob } from "./services/imageRef";
+import { analyzeQuestionViaProxy } from "./services/geminiProxyService";
+import { MODEL_IDS } from "./shared/ai-config";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs";
 
@@ -241,6 +243,41 @@ const App: React.FC = () => {
       }
     }
   };
+
+  // Handle re-solving a single question
+  const handleReSolveQuestion = useCallback(async (q: QuestionImage) => {
+    try {
+      const analysis = await analyzeQuestionViaProxy(
+        q.dataUrl,
+        state.selectedModel || MODEL_IDS.FLASH,
+        3,
+        state.apiKey
+      );
+
+      // Update state
+      const updatedQuestion = { ...q, analysis };
+      setters.setQuestions((prev: QuestionImage[]) => {
+        return prev.map((item) => {
+          if (item.fileName === q.fileName && item.id === q.id) {
+            return updatedQuestion;
+          }
+          return item;
+        });
+      });
+
+      // Save to storage
+      const fileQuestions = state.questions
+        .filter((item) => item.fileName === q.fileName)
+        .map((item) => (item.id === q.id ? updatedQuestion : item));
+      await updateQuestionsForFile(q.fileName, fileQuestions);
+
+      actions.addNotification(q.fileName, "success", `Q${q.id} 重新解题完成`);
+    } catch (error: any) {
+      console.error("Re-solve question failed:", error);
+      actions.addNotification(q.fileName, "error", `Q${q.id} 解题失败: ${error.message}`);
+      throw error;
+    }
+  }, [state.selectedModel, state.apiKey, state.questions, setters, actions]);
 
   const handleNextFile = () => {
     const currentFileIndex = sortedFileNames.indexOf(state.debugFile || "");
@@ -518,6 +555,7 @@ const App: React.FC = () => {
             onRefineFile={(fileName) => setters.setRefiningFile(fileName)}
             onProcessFile={(fileName) => handleRecropFile(fileName, state.cropSettings)}
             onAnalyzeFile={handleAnalyzeWrapper}
+            onReSolveQuestion={handleReSolveQuestion}
             onStopAnalyze={actions.handleStop}
             analyzingTotal={state.analyzingTotal}
             analyzingDone={state.analyzingDone}
