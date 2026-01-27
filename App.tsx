@@ -94,6 +94,8 @@ const App: React.FC = () => {
   const [isAutoAnalyze, setIsAutoAnalyze] = useState(false);
   // Ref to access current value inside async functions
   const isAutoAnalyzeRef = useRef(false);
+  // Ref to track if analysis is running to prevent auto-advance after stop
+  const isAnalysisRunningRef = useRef(false);
 
   useEffect(() => {
     isAutoAnalyzeRef.current = isAutoAnalyze;
@@ -179,21 +181,53 @@ const App: React.FC = () => {
 
   // Wrap analysis start to include saving logic that relies on `reSaveExamResult` and auto-advance
   const handleAnalyzeWrapper = async (fileName: string) => {
-    // The hook handles the process. We just trigger it.
-    await handleStartAnalysis(fileName);
-    await refreshHistoryList();
+    // 检查是否已停止，如果已停止则不继续
+    if (refs.stopRequestedRef.current) {
+      isAnalysisRunningRef.current = false;
+      return;
+    }
 
-    // Auto-Advance Logic
-    if (isAutoAnalyzeRef.current) {
-      const currentIndex = sortedFileNames.indexOf(fileName);
-      if (currentIndex !== -1 && currentIndex < sortedFileNames.length - 1) {
-        const nextFile = sortedFileNames[currentIndex + 1];
-        // Update UI to show next file
-        updateDebugFile(nextFile);
-        // Trigger analysis for next file with a small delay to let UI render
-        setTimeout(() => {
-          handleAnalyzeWrapper(nextFile);
-        }, 100);
+    isAnalysisRunningRef.current = true;
+    
+    try {
+      // The hook handles the process. We just trigger it.
+      await handleStartAnalysis(fileName);
+      
+      // 再次检查是否已停止
+      if (refs.stopRequestedRef.current) {
+        isAnalysisRunningRef.current = false;
+        return;
+      }
+      
+      await refreshHistoryList();
+
+      // Auto-Advance Logic - 只有在未停止且 auto-advance 启用时才继续
+      if (isAutoAnalyzeRef.current && !refs.stopRequestedRef.current && isAnalysisRunningRef.current) {
+        const currentIndex = sortedFileNames.indexOf(fileName);
+        if (currentIndex !== -1 && currentIndex < sortedFileNames.length - 1) {
+          const nextFile = sortedFileNames[currentIndex + 1];
+          // Update UI to show next file
+          updateDebugFile(nextFile);
+          // Trigger analysis for next file with a small delay to let UI render
+          setTimeout(() => {
+            // 再次检查是否已停止
+            if (!refs.stopRequestedRef.current && isAnalysisRunningRef.current) {
+              handleAnalyzeWrapper(nextFile);
+            } else {
+              isAnalysisRunningRef.current = false;
+            }
+          }, 100);
+        } else {
+          isAnalysisRunningRef.current = false;
+        }
+      } else {
+        isAnalysisRunningRef.current = false;
+      }
+    } catch (error: any) {
+      isAnalysisRunningRef.current = false;
+      // 如果是中断错误，不显示错误
+      if (error.name !== "AbortError") {
+        console.error("Analysis error:", error);
       }
     }
   };
@@ -415,21 +449,39 @@ const App: React.FC = () => {
           </div>
         )}
 
-        <ProcessingState
-          status={state.status}
-          progress={state.progress}
-          total={state.total}
-          completedCount={state.completedCount}
-          error={state.error}
-          detailedStatus={state.detailedStatus}
-          croppingTotal={state.croppingTotal}
-          croppingDone={state.croppingDone}
-          elapsedTime={state.elapsedTime}
-          currentRound={state.currentRound}
-          failedCount={state.failedCount}
-          onAbort={isGlobalProcessing ? actions.handleStop : undefined}
-          onClose={() => setters.setStatus(ProcessingStatus.IDLE)}
-        />
+        {/* 只在全局处理或分析进行中时显示 ProcessingState，但已停止时也显示 */}
+        {(isGlobalProcessing || 
+          (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal) ||
+          state.status === ProcessingStatus.STOPPED) && (
+          <ProcessingState
+            status={state.status === ProcessingStatus.STOPPED 
+              ? ProcessingStatus.STOPPED 
+              : (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal 
+                  ? ProcessingStatus.ANALYZING 
+                  : state.status)}
+            progress={state.progress}
+            total={state.analyzingTotal > 0 ? state.analyzingTotal : state.total}
+            completedCount={state.analyzingDone > 0 ? state.analyzingDone : state.completedCount}
+            error={state.error}
+            detailedStatus={state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal 
+              ? `正在分析: ${state.debugFile || ""}` 
+              : state.detailedStatus}
+            croppingTotal={state.croppingTotal}
+            croppingDone={state.croppingDone}
+            elapsedTime={state.elapsedTime}
+            currentRound={state.currentRound}
+            failedCount={state.failedCount}
+            onAbort={(isGlobalProcessing || (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal)) && state.status !== ProcessingStatus.STOPPED
+              ? actions.handleStop 
+              : undefined}
+            onClose={() => {
+              setters.setStatus(ProcessingStatus.IDLE);
+              setters.setAnalyzingTotal(0);
+              setters.setAnalyzingDone(0);
+              refs.stopRequestedRef.current = false;
+            }}
+          />
+        )}
 
         {state.debugFile ? (
           <DebugRawView

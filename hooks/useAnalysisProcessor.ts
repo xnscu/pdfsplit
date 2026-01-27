@@ -11,47 +11,38 @@ interface AnalysisProps {
   actions: any;
 }
 
-export const useAnalysisProcessor = ({
-  state,
-  setters,
-  refs,
-  actions,
-}: AnalysisProps) => {
+export const useAnalysisProcessor = ({ state, setters, refs, actions }: AnalysisProps) => {
   const { analysisConcurrency, questions, selectedModel, apiKey, skipSolvedQuestions } = state;
   const { setAnalyzingTotal, setAnalyzingDone, setQuestions } = setters;
   const { stopRequestedRef, abortControllerRef } = refs;
   const { addNotification } = actions;
 
   const handleStartAnalysisRobust = async (fileName: string) => {
-    // 创建新的 AbortController 用于分析任务
-    const analysisController = new AbortController();
-    const analysisSignal = analysisController.signal;
-    
-    // 将 controller 保存到 ref，以便停止时可以中断
-    const originalController = abortControllerRef.current;
-    abortControllerRef.current = analysisController;
-    
+    // 检查是否已停止
+    if (stopRequestedRef.current) {
+      return;
+    }
+
+    // 使用全局的 abortControllerRef，而不是创建新的
+    // 这样所有分析任务都可以被统一中断
+    if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
+      abortControllerRef.current = new AbortController();
+    }
+    const analysisSignal = abortControllerRef.current.signal;
+
     const startTimeLocal = Date.now();
-    let targetQuestions = questions.filter(
-      (q: QuestionImage) => q.fileName === fileName,
-    );
-    
+    let targetQuestions = questions.filter((q: QuestionImage) => q.fileName === fileName);
+
     // 如果启用了跳过已解析题目选项，过滤掉已有解析的题目
     if (skipSolvedQuestions) {
-      const unsolvedQuestions = targetQuestions.filter(
-        (q: QuestionImage) => !q.analysis,
-      );
+      const unsolvedQuestions = targetQuestions.filter((q: QuestionImage) => !q.analysis);
       const skippedCount = targetQuestions.length - unsolvedQuestions.length;
       if (skippedCount > 0) {
-        addNotification(
-          fileName,
-          "success",
-          `已跳过 ${skippedCount} 个已有解析的题目`,
-        );
+        addNotification(fileName, "success", `已跳过 ${skippedCount} 个已有解析的题目`);
       }
       targetQuestions = unsolvedQuestions;
     }
-    
+
     if (targetQuestions.length === 0) {
       addNotification(fileName, "error", "没有找到需要解析的题目。");
       return;
@@ -76,7 +67,7 @@ export const useAnalysisProcessor = ({
           selectedModel || MODEL_IDS.FLASH,
           undefined,
           apiKey,
-          analysisSignal,
+          analysisSignal
         );
 
         // 请求完成后，再次检查停止标志，如果已停止则不更新状态
@@ -95,13 +86,9 @@ export const useAnalysisProcessor = ({
         });
 
         const currentFileQuestions = Array.from(localMap.values());
-        currentFileQuestions.sort(
-          (a, b) => (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0),
-        );
+        currentFileQuestions.sort((a, b) => (parseFloat(a.id) || 0) - (parseFloat(b.id) || 0));
 
-        updateQuestionsForFile(fileName, currentFileQuestions).catch((e) =>
-          console.warn("Auto-save failed", e),
-        );
+        updateQuestionsForFile(fileName, currentFileQuestions).catch((e) => console.warn("Auto-save failed", e));
 
         setAnalyzingDone((prev: number) => prev + 1);
       } catch (e: any) {
@@ -109,7 +96,7 @@ export const useAnalysisProcessor = ({
         if (e.name === "AbortError" || stopRequestedRef.current || analysisSignal.aborted) {
           return;
         }
-        
+
         console.warn(`Analysis failed for Q${q.id}, retrying...`, e.message);
         await new Promise((resolve) => setTimeout(resolve, 2000));
         // 只有在未中断时才重试
@@ -140,17 +127,13 @@ export const useAnalysisProcessor = ({
       if (e.name !== "AbortError") {
         console.error("Analysis worker error:", e);
       }
-    } finally {
-      // 恢复原始的 controller
-      abortControllerRef.current = originalController;
     }
 
     if (!stopRequestedRef.current && !analysisSignal.aborted) {
       const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
       addNotification(fileName, "success", `AI 解析全部完成 (${duration}s)`);
-    } else {
-      addNotification(fileName, "error", "解析已停止。");
     }
+    // 停止时不再为每个文件显示通知，避免多个 "解析已停止" 弹窗
 
     setAnalyzingTotal(0);
     setAnalyzingDone(0);

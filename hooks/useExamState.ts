@@ -236,6 +236,11 @@ export const useExamState = () => {
   };
 
   const handleStop = () => {
+    // 防止重复调用
+    if (stopRequestedRef.current) {
+      return;
+    }
+    
     stopRequestedRef.current = true;
     // 立即中断所有正在进行的请求
     if (abortControllerRef.current) {

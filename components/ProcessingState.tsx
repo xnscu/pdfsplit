@@ -144,6 +144,7 @@ export const ProcessingState: React.FC<Props> = ({
                 currentRound > 1 &&
                 "Retrying..."}
               {status === ProcessingStatus.CROPPING && "Cropping..."}
+              {status === ProcessingStatus.ANALYZING && "Analyzing Questions..."}
             </h3>
             <p className="text-[10px] font-bold text-slate-400 truncate mb-1">
               {detailedStatus}
@@ -164,6 +165,14 @@ export const ProcessingState: React.FC<Props> = ({
                   <span className="w-px h-3 bg-slate-300"></span>
                   <span>
                     {croppingDone}/{croppingTotal}
+                  </span>
+                </>
+              )}
+              {status === ProcessingStatus.ANALYZING && total > 0 && (
+                <>
+                  <span className="w-px h-3 bg-slate-300"></span>
+                  <span>
+                    {completedCount}/{total}
                   </span>
                 </>
               )}
