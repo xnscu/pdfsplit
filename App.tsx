@@ -11,6 +11,7 @@ import { HistorySidebar } from "./components/HistorySidebar";
 import { RefinementModal } from "./components/RefinementModal";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotificationToast } from "./components/NotificationToast";
+import { SyncHistoryPanel } from "./components/SyncHistoryPanel";
 import packageJson from "./package.json";
 import SyncStatus from "./components/SyncStatus";
 
@@ -87,6 +88,7 @@ const App: React.FC = () => {
   const [zippingFile, setZippingFile] = useState<string | null>(null);
   const [zippingProgress, setZippingProgress] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showSyncHistory, setShowSyncHistory] = useState(false);
 
   // Auto-Analyze Feature State
   const [isAutoAnalyze, setIsAutoAnalyze] = useState(false);
@@ -358,7 +360,26 @@ const App: React.FC = () => {
 
   return (
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 pb-32`}>
-      <div className="fixed top-6 right-6 z-[100]">
+      <div className="fixed top-6 right-6 z-[100] flex items-center gap-2">
+        <button
+          onClick={() => setShowSyncHistory(true)}
+          className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
+          title="同步记录"
+        >
+          <svg
+            className="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+        </button>
         <button
           onClick={() => setShowSettings(true)}
           className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
@@ -589,6 +610,8 @@ const App: React.FC = () => {
         onDismiss={(id) => setters.setNotifications((prev) => prev.filter((n) => n.id !== id))}
         onView={(fileName) => updateDebugFile(fileName)}
       />
+
+      <SyncHistoryPanel isOpen={showSyncHistory} onClose={() => setShowSyncHistory(false)} />
 
       <footer className="mt-24 text-center text-slate-400 text-xs py-12 border-t border-slate-100 font-bold tracking-widest uppercase">
         <p>© 2025 AI Exam Splitter | Precision Tooling | v{packageJson.version}</p>

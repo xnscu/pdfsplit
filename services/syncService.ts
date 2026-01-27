@@ -18,6 +18,7 @@ import {
   uploadImageToR2,
   checkImageExists,
 } from "./r2Service";
+import * as syncHistoryService from "./syncHistoryService";
 
 // Get API URL from environment or use default
 const getApiUrl = (): string => {
@@ -632,9 +633,25 @@ export const fullSync = async (): Promise<SyncResult> => {
     syncState.lastSyncTime = pullResult.syncTime;
     saveSyncState();
 
+    // Record sync history
+    const allFileNames = [...(result.pushedNames || []), ...(result.pulledNames || [])];
+    await syncHistoryService.saveSyncHistory(
+      "full_sync",
+      allFileNames,
+      result.success,
+      result.errors.length > 0 ? result.errors.join("; ") : undefined,
+    );
+
   } catch (e) {
     result.success = false;
     result.errors.push(`同步失败: ${e}`);
+    // Record failed sync
+    await syncHistoryService.saveSyncHistory(
+      "full_sync",
+      [],
+      false,
+      `同步失败: ${e}`,
+    );
   }
 
   result.success = result.errors.length === 0;
@@ -662,6 +679,7 @@ export const forceUploadAll = async (
     errors: [],
     imagesUploaded: 0,
     imagesSkipped: 0,
+    pushedNames: [],
   };
 
   const handleProgress = (progress: SyncProgress) => {
@@ -854,6 +872,7 @@ export const forceUploadAll = async (
         // Update local storage with server timestamp to keep in sync
         await storageService.saveExamResult(examWithHashes.name, examWithHashes.rawPages, examWithHashes.questions, exam.id, serverTimestamp);
         result.pushed++;
+        result.pushedNames!.push(examWithHashes.name);
       } else {
         result.errors.push(`Failed to upload: ${meta.name}`);
         result.success = false;
@@ -872,6 +891,15 @@ export const forceUploadAll = async (
     syncState.lastSyncTime = Date.now();
     saveSyncState();
 
+    // Record sync history
+    const pushedNames = result.pushedNames || [];
+    await syncHistoryService.saveSyncHistory(
+      "push",
+      pushedNames,
+      result.success,
+      result.errors.length > 0 ? result.errors.join("; ") : undefined,
+    );
+
     const finalMessage = result.success
       ? `同步完成: ${result.pushed} 个试卷, ${result.imagesUploaded} 张图片上传`
       : `同步部分完成，但有错误: ${result.errors.join(", ")}`;
@@ -886,6 +914,13 @@ export const forceUploadAll = async (
   } catch (e) {
     result.success = false;
     result.errors.push(`Force upload failed: ${e}`);
+    // Record failed sync
+    await syncHistoryService.saveSyncHistory(
+      "push",
+      [],
+      false,
+      `Force upload failed: ${e}`,
+    );
     handleProgress({
       phase: "completed",
       message: `同步失败: ${e}`,
@@ -923,6 +958,7 @@ export const forceUploadSelected = async (
     errors: [],
     imagesUploaded: 0,
     imagesSkipped: 0,
+    pushedNames: [],
   };
 
   const handleProgress = (progress: SyncProgress) => {
@@ -1145,6 +1181,15 @@ export const forceUploadSelected = async (
     syncState.lastSyncTime = Date.now();
     saveSyncState();
 
+    // Record sync history for selected upload
+    const pushedNames = result.pushedNames || [];
+    await syncHistoryService.saveSyncHistory(
+      "push",
+      pushedNames,
+      result.success,
+      result.errors.length > 0 ? result.errors.join("; ") : undefined,
+    );
+
     const finalMessage = result.success
       ? `同步完成: ${result.pushed} 个试卷, ${result.imagesUploaded} 张图片上传`
       : `同步部分完成，但有错误: ${result.errors.join(", ")}`;
@@ -1159,6 +1204,13 @@ export const forceUploadSelected = async (
   } catch (e) {
     result.success = false;
     result.errors.push(`Force upload failed: ${e}`);
+    // Record failed sync
+    await syncHistoryService.saveSyncHistory(
+      "push",
+      [],
+      false,
+      `Force upload failed: ${e}`,
+    );
     handleProgress({
       phase: "completed",
       message: `同步失败: ${e}`,
@@ -1208,6 +1260,7 @@ export const forceDownloadAll = async (
     pulled: 0,
     conflicts: [],
     errors: [],
+    pulledNames: [],
   };
 
   const handleProgress = (progress: SyncProgress) => {
@@ -1265,6 +1318,7 @@ export const forceDownloadAll = async (
         // The frontend will handle resolving these to actual URLs
         await saveExamToLocal(exam);
         result.pulled++;
+        result.pulledNames!.push(exam.name);
       } else {
         result.errors.push(`Failed to download: ${meta.name}`);
       }
@@ -1272,6 +1326,15 @@ export const forceDownloadAll = async (
 
     syncState.lastSyncTime = Date.now();
     saveSyncState();
+
+    // Record sync history
+    const pulledNames = result.pulledNames || [];
+    await syncHistoryService.saveSyncHistory(
+      "pull",
+      pulledNames,
+      result.success,
+      result.errors.length > 0 ? result.errors.join("; ") : undefined,
+    );
 
     handleProgress({
       phase: "completed",
@@ -1283,6 +1346,13 @@ export const forceDownloadAll = async (
   } catch (e) {
     result.success = false;
     result.errors.push(`Force download failed: ${e}`);
+    // Record failed sync
+    await syncHistoryService.saveSyncHistory(
+      "pull",
+      [],
+      false,
+      `Force download failed: ${e}`,
+    );
     handleProgress({
       phase: "completed",
       message: `下载失败: ${e}`,
