@@ -427,6 +427,7 @@ const App: React.FC = () => {
             onRefineFile={(fileName) => setters.setRefiningFile(fileName)}
             onProcessFile={(fileName) => handleRecropFile(fileName, state.cropSettings)}
             onAnalyzeFile={handleAnalyzeWrapper}
+            onStopAnalyze={actions.handleStop}
             analyzingTotal={state.analyzingTotal}
             analyzingDone={state.analyzingDone}
             isZipping={zippingFile !== null}

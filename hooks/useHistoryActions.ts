@@ -41,7 +41,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     setIsSyncingLegacy,
     setStartTime,
   } = setters;
-  const { abortControllerRef } = refs;
+  const { abortControllerRef, stopRequestedRef } = refs;
   const { resetState, addNotification } = actions;
 
   const refreshHistoryList = async () => {
@@ -88,6 +88,12 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
 
     try {
       for (let i = 0; i < totalFiles; i++) {
+        // 检查停止标志，如果已停止则不再处理新文件
+        if (stopRequestedRef.current) {
+          addNotification(null, "info", `批量处理已停止。已处理 ${totalFilesProcessed}/${totalFiles} 个文件。`);
+          break;
+        }
+
         const id = ids[i];
 
         // 1. Load Data for just THIS file
@@ -101,7 +107,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
         const fileName = record.name;
         setDetailedStatus(fileName);
 
-        // 2. Process
+        // 2. Process（已发起的请求会继续完成）
         const generatedQuestions = await generateQuestionsFromRawPages(
           record.rawPages,
           cropSettings,
@@ -109,6 +115,12 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           undefined,
           workerConcurrency,
         );
+
+        // 请求完成后，检查停止标志
+        if (stopRequestedRef.current) {
+          addNotification(null, "info", `批量处理已停止。已处理 ${totalFilesProcessed}/${totalFiles} 个文件。`);
+          break;
+        }
 
         // 3. Update Active State if this file is currently loaded
         const isFileLoaded = rawPages.some((p: any) => p.fileName === fileName);

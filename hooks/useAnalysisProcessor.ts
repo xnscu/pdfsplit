@@ -58,15 +58,20 @@ export const useAnalysisProcessor = ({
     const queue = [...targetQuestions];
 
     const processItem = async (q: QuestionImage) => {
+      // 在开始处理前检查停止标志，如果已停止则不处理新任务
       if (stopRequestedRef.current) return;
 
       try {
+        // 发起请求（即使之后停止标志被设置，这个请求也会继续完成）
         const analysis = await analyzeQuestion(
           q.dataUrl,
           selectedModel || MODEL_IDS.FLASH,
           undefined,
           apiKey,
         );
+
+        // 请求完成后，再次检查停止标志，如果已停止则不更新状态
+        if (stopRequestedRef.current) return;
 
         const updatedQ = { ...q, analysis };
         localMap.set(q.id, updatedQ);
@@ -91,11 +96,12 @@ export const useAnalysisProcessor = ({
 
         setAnalyzingDone((prev: number) => prev + 1);
       } catch (e: any) {
+        // 如果已停止，不再重试
+        if (stopRequestedRef.current) return;
+        
         console.warn(`Analysis failed for Q${q.id}, retrying...`, e.message);
-        if (!stopRequestedRef.current) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          queue.push(q);
-        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        queue.push(q);
       }
     };
 
@@ -103,9 +109,13 @@ export const useAnalysisProcessor = ({
       .fill(null)
       .map(async () => {
         while (queue.length > 0) {
+          // 检查停止标志，如果已停止则不再从队列中取新任务
           if (stopRequestedRef.current) break;
           const item = queue.shift();
-          if (item) await processItem(item);
+          if (item) {
+            // 处理任务（已发起的请求会继续完成）
+            await processItem(item);
+          }
         }
       });
 

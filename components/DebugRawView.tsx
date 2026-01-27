@@ -32,6 +32,7 @@ interface Props {
   onRefineFile?: (fileName: string) => void;
   onProcessFile?: (fileName: string) => void;
   onAnalyzeFile?: (fileName: string) => void; // New
+  onStopAnalyze?: () => void; // Stop analysis
   analyzingTotal?: number;
   analyzingDone?: number;
   isZipping?: boolean;
@@ -61,6 +62,7 @@ export const DebugRawView: React.FC<Props> = ({
   onRefineFile,
   onProcessFile,
   onAnalyzeFile,
+  onStopAnalyze,
   analyzingTotal,
   analyzingDone,
   isZipping,
@@ -443,6 +445,7 @@ export const DebugRawView: React.FC<Props> = ({
             ? () => onAnalyzeFile(title)
             : undefined
         }
+        onStopAnalyze={onStopAnalyze}
         analyzingTotal={analyzingTotal}
         analyzingDone={analyzingDone}
         isZipping={isZipping}

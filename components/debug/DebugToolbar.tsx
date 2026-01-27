@@ -16,6 +16,7 @@ interface Props {
   onRefine?: () => void;
   onProcess?: () => void;
   onAnalyze?: () => void; // New Prop
+  onStopAnalyze?: () => void; // Stop analysis
   analyzingTotal?: number; // New Prop
   analyzingDone?: number; // New Prop
   isZipping?: boolean;
@@ -42,6 +43,7 @@ export const DebugToolbar: React.FC<Props> = ({
   onRefine,
   onProcess,
   onAnalyze,
+  onStopAnalyze,
   analyzingTotal = 0,
   analyzingDone = 0,
   isZipping,
@@ -285,6 +287,34 @@ export const DebugToolbar: React.FC<Props> = ({
                 </>
               )}
             </button>
+            {isAnalyzing && onStopAnalyze && (
+              <button
+                onClick={onStopAnalyze}
+                className="bg-red-600 text-white px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500 transition-colors flex items-center gap-2 shadow-lg shadow-red-900/20"
+                title="停止分析"
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 10h6v4H9z"
+                  />
+                </svg>
+                停止
+              </button>
+            )}
             {setIsAutoAnalyze && (
               <label className="flex items-center gap-2 cursor-pointer select-none">
                 <input

@@ -575,7 +575,12 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             if (stopRequestedRef.current || signal.aborted) break;
             const task = (async () => {
               try {
+                // 发起检测请求（即使之后停止标志被设置，这个请求也会继续完成）
                 const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel, undefined, apiKey);
+                
+                // 请求完成后，检查停止标志，如果已停止则不更新状态
+                if (stopRequestedRef.current || signal.aborted) return;
+                
                 const resultPage: DebugPageData = {
                   pageNumber: pageData.pageNumber,
                   fileName: pageData.fileName,
@@ -602,9 +607,19 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                       };
                       fileResultsRef.current[pageData.fileName] = [];
                       logicalQs.forEach((lq) => {
+                        // 在入队前检查停止标志
+                        if (stopRequestedRef.current) return;
+                        
                         cropQueueRef.current.enqueue(async () => {
-                          if (signal.aborted) return;
+                          // 在开始处理前再次检查停止标志
+                          if (stopRequestedRef.current || signal.aborted) return;
+                          
+                          // 发起处理请求（即使之后停止标志被设置，这个请求也会继续完成）
                           const result = await processLogicalQuestion(lq, cropSettings);
+                          
+                          // 请求完成后，再次检查停止标志
+                          if (stopRequestedRef.current || signal.aborted) return;
+                          
                           if (result) {
                             setQuestions((prevQ: any) => {
                               const next = [...prevQ, result];
@@ -632,6 +647,8 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                   }
                 }
               } catch (err: any) {
+                // 如果已停止，不再重试
+                if (stopRequestedRef.current || signal.aborted) return;
                 nextRoundQueue.push(pageData);
                 setFailedCount((prev: number) => prev + 1);
               }
