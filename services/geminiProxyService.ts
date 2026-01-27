@@ -1,6 +1,6 @@
 /**
  * Gemini Proxy Service
- * Sends requests to the worker which proxies Gemini API calls
+ * Sends requests to the worker which transparently proxies to Gemini API
  * Handles key rotation from the pool and statistics tracking
  */
 
@@ -16,34 +16,38 @@ const getApiBase = () => {
   return "/api";
 };
 
+// Gemini API base URL
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Convert any image reference to a base64 data URL
- * Handles: data URLs (pass through), r2:// references, http URLs
+ * Convert any image reference to base64 data (without data URL prefix)
+ * Handles: data URLs (extract base64), r2:// references, http URLs
  */
-const resolveImageToDataUrl = async (imageRef: string): Promise<string> => {
-  // Already a data URL, pass through
+const resolveImageToBase64 = async (imageRef: string): Promise<{ mimeType: string; data: string }> => {
   if (isDataUrl(imageRef)) {
-    return imageRef;
+    // Extract mimeType and data from data URL
+    const match = imageRef.match(/^data:([^;]+);base64,(.+)$/);
+    if (match) {
+      return { mimeType: match[1], data: match[2] };
+    }
+    throw new Error("Invalid data URL format");
   }
 
   // Need to fetch and convert to base64
-  const { mimeType, data } = await imageRefToInlineImageData(imageRef);
-  return `data:${mimeType};base64,${data}`;
+  return imageRefToInlineImageData(imageRef);
 };
 
 interface GeminiProxyRequest {
-  apiKey: string;
-  modelId: string;
-  image: string;
-  prompt: string;
-  responseSchema: any;
-  requestType: "detection" | "analysis";
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: any;
 }
 
 /**
- * Make a request to the Gemini proxy endpoint on the worker
+ * Make a request through the Gemini proxy endpoint on the worker
  */
 const callGeminiProxy = async (request: GeminiProxyRequest, signal?: AbortSignal): Promise<any> => {
   const response = await fetch(`${getApiBase()}/gemini/proxy`, {
@@ -55,12 +59,49 @@ const callGeminiProxy = async (request: GeminiProxyRequest, signal?: AbortSignal
     signal,
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: "Unknown error" }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+  // Get response text first
+  const responseText = await response.text();
+
+  // Parse JSON
+  let data;
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    throw new Error(`Invalid JSON response: ${responseText.slice(0, 200)}`);
   }
 
-  return response.json();
+  // Check for errors
+  if (!response.ok || data.error) {
+    const errorMessage = data.error?.message || data.error || `HTTP ${response.status}`;
+    throw new Error(errorMessage);
+  }
+
+  return data;
+};
+
+/**
+ * Build Gemini API request body for generateContent
+ */
+const buildGenerateContentRequest = (mimeType: string, imageData: string, prompt: string, responseSchema: any) => {
+  return {
+    contents: [
+      {
+        parts: [
+          {
+            inline_data: {
+              mime_type: mimeType,
+              data: imageData,
+            },
+          },
+          { text: prompt },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema,
+    },
+  };
 };
 
 /**
@@ -76,9 +117,14 @@ export const detectQuestionsViaProxy = async (
 ): Promise<DetectedQuestion[]> => {
   let attempt = 0;
 
-  // Resolve image reference to base64 data URL before retry loop
-  // This handles r2:// references, http URLs, etc.
-  const resolvedImage = await resolveImageToDataUrl(image);
+  // Resolve image reference to base64 before retry loop
+  const { mimeType, data: imageData } = await resolveImageToBase64(image);
+
+  // Build response schema for detection
+  const responseSchema = {
+    type: "ARRAY",
+    items: SCHEMAS.BASIC,
+  };
 
   while (attempt < maxRetries) {
     // Check if aborted
@@ -96,17 +142,17 @@ export const detectQuestionsViaProxy = async (
     recordCall(apiKey);
 
     try {
+      // Build the Gemini API URL with API key
+      const url = `${GEMINI_API_BASE}/${modelId}:generateContent?key=${apiKey}`;
+
+      // Build request body
+      const requestBody = buildGenerateContentRequest(mimeType, imageData, PROMPTS.BASIC, responseSchema);
+
       const result = await callGeminiProxy(
         {
-          apiKey,
-          modelId,
-          image: resolvedImage,
-          prompt: PROMPTS.BASIC,
-          responseSchema: {
-            type: "ARRAY",
-            items: SCHEMAS.BASIC,
-          },
-          requestType: "detection",
+          url,
+          method: "POST",
+          body: requestBody,
         },
         signal
       );
@@ -116,13 +162,21 @@ export const detectQuestionsViaProxy = async (
         throw new DOMException("The operation was aborted.", "AbortError");
       }
 
-      if (!Array.isArray(result.data)) {
+      // Extract text from Gemini response
+      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) {
+        throw new Error("Empty response from AI");
+      }
+
+      // Parse the JSON response
+      const data = JSON.parse(text);
+      if (!Array.isArray(data)) {
         throw new Error("Invalid response format: Expected Array");
       }
 
       // Record success
       recordSuccess(apiKey);
-      return result.data as DetectedQuestion[];
+      return data as DetectedQuestion[];
     } catch (error: any) {
       // If aborted, propagate immediately
       if (error.name === "AbortError" || signal?.aborted) {
@@ -176,9 +230,8 @@ export const analyzeQuestionViaProxy = async (
 ): Promise<QuestionAnalysis> => {
   let attempt = 0;
 
-  // Resolve image reference to base64 data URL before retry loop
-  // This handles r2:// references, http URLs, etc.
-  const resolvedImage = await resolveImageToDataUrl(image);
+  // Resolve image reference to base64 before retry loop
+  const { mimeType, data: imageData } = await resolveImageToBase64(image);
 
   while (attempt < maxRetries) {
     // Check if aborted
@@ -196,14 +249,17 @@ export const analyzeQuestionViaProxy = async (
     recordCall(apiKey);
 
     try {
+      // Build the Gemini API URL with API key
+      const url = `${GEMINI_API_BASE}/${modelId}:generateContent?key=${apiKey}`;
+
+      // Build request body
+      const requestBody = buildGenerateContentRequest(mimeType, imageData, PROMPTS.ANALYSIS, SCHEMAS.ANALYSIS);
+
       const result = await callGeminiProxy(
         {
-          apiKey,
-          modelId,
-          image: resolvedImage,
-          prompt: PROMPTS.ANALYSIS,
-          responseSchema: SCHEMAS.ANALYSIS,
-          requestType: "analysis",
+          url,
+          method: "POST",
+          body: requestBody,
         },
         signal
       );
@@ -213,9 +269,18 @@ export const analyzeQuestionViaProxy = async (
         throw new DOMException("The operation was aborted.", "AbortError");
       }
 
+      // Extract text from Gemini response
+      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) {
+        throw new Error("Empty response from AI");
+      }
+
+      // Parse the JSON response
+      const data = JSON.parse(text);
+
       // Record success
       recordSuccess(apiKey);
-      return result.data as QuestionAnalysis;
+      return data as QuestionAnalysis;
     } catch (error: any) {
       // If aborted, propagate immediately
       if (error.name === "AbortError" || signal?.aborted) {
