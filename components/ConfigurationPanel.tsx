@@ -30,6 +30,8 @@ interface Props {
   setAutoSyncEnabled?: (b: boolean) => void;
   autoSyncIntervalMinutes?: number;
   setAutoSyncIntervalMinutes?: (m: number) => void;
+  useGeminiProxy?: boolean;
+  setUseGeminiProxy?: (b: boolean) => void;
 }
 
 export const ConfigurationPanel: React.FC<Props> = ({
@@ -61,6 +63,8 @@ export const ConfigurationPanel: React.FC<Props> = ({
   setAutoSyncEnabled,
   autoSyncIntervalMinutes = 5,
   setAutoSyncIntervalMinutes,
+  useGeminiProxy = true,
+  setUseGeminiProxy,
 }) => {
   if (!isOpen) return null;
 
@@ -144,6 +148,28 @@ export const ConfigurationPanel: React.FC<Props> = ({
                 <p className="text-[10px] text-slate-400 font-medium">
                   支持多个API Key，系统会自动轮询使用。留空则使用默认Key。
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* Gemini Proxy Toggle */}
+          {setUseGeminiProxy && (
+            <div className="flex items-center justify-between pt-4">
+              <div className="flex flex-col">
+                <label className="font-bold text-slate-700">
+                  使用 Worker 代理
+                </label>
+                <p className="text-xs text-slate-400 font-medium mt-1">
+                  {useGeminiProxy ? "通过 Worker 中转 Gemini API 请求" : "浏览器直连 Gemini API（调试用）"}
+                </p>
+              </div>
+              <div
+                className={`w-14 h-8 flex items-center rounded-full p-1 cursor-pointer transition-colors ${useGeminiProxy ? "bg-blue-600" : "bg-orange-500"}`}
+                onClick={() => setUseGeminiProxy(!useGeminiProxy)}
+              >
+                <div
+                  className={`bg-white w-6 h-6 rounded-full shadow-md transform transition-transform ${useGeminiProxy ? "translate-x-6" : ""}`}
+                ></div>
               </div>
             </div>
           )}

@@ -664,6 +664,8 @@ const App: React.FC = () => {
         setAutoSyncEnabled={syncHook.setAutoSyncEnabled}
         autoSyncIntervalMinutes={syncHook.autoSyncIntervalMinutes}
         setAutoSyncIntervalMinutes={syncHook.setAutoSyncIntervalMinutes}
+        useGeminiProxy={state.useGeminiProxy}
+        setUseGeminiProxy={setters.setUseGeminiProxy}
       />
       {state.refiningFile && (
         <RefinementModal

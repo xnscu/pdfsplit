@@ -19,6 +19,7 @@ export const STORAGE_KEYS = {
   BATCH_SIZE: "exam_splitter_batch_size_v1",
   API_KEY: "exam_splitter_api_key_v1",
   SKIP_SOLVED_QUESTIONS: "exam_splitter_skip_solved_questions_v1",
+  USE_GEMINI_PROXY: "exam_splitter_use_gemini_proxy_v1",
 };
 
 // Helper for auto-detect batch size based on RAM and CPU
@@ -114,6 +115,12 @@ export const useExamState = () => {
     return saved !== null ? saved === "true" : true;
   });
 
+  const [useGeminiProxy, setUseGeminiProxy] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.USE_GEMINI_PROXY);
+    // Default to true (use proxy) for backward compatibility
+    return saved !== null ? saved === "true" : true;
+  });
+
   // Progress
   const [progress, setProgress] = useState(0);
   const [total, setTotal] = useState(0);
@@ -172,6 +179,10 @@ export const useExamState = () => {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.SKIP_SOLVED_QUESTIONS, String(skipSolvedQuestions));
   }, [skipSolvedQuestions]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.USE_GEMINI_PROXY, String(useGeminiProxy));
+  }, [useGeminiProxy]);
 
   const addNotification = (fileName: string | null, type: "success" | "error", message: string) => {
     const id = Date.now().toString() + Math.random().toString();
@@ -247,6 +258,7 @@ export const useExamState = () => {
       useHistoryCache,
       apiKey,
       skipSolvedQuestions,
+      useGeminiProxy,
       progress,
       total,
       completedCount,
@@ -284,6 +296,7 @@ export const useExamState = () => {
       setUseHistoryCache,
       setApiKey,
       setSkipSolvedQuestions,
+      setUseGeminiProxy,
       setProgress,
       setTotal,
       setCompletedCount,
