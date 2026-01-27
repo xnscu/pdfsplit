@@ -71,8 +71,13 @@ export const saveSyncHistory = async (
   actionType: "push" | "pull" | "full_sync",
   fileNames: string[],
   success: boolean,
-  errorMessage?: string,
+  errorMessage?: string
 ): Promise<void> => {
+  // Don't create history record if no files are involved
+  if (!fileNames || fileNames.length === 0) {
+    return;
+  }
+
   const db = await openDB();
 
   const record: SyncHistoryRecord = {
