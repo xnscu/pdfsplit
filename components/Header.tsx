@@ -5,6 +5,7 @@ interface Props {
   onShowHistory: () => void;
   onReset: () => void;
   showReset: boolean;
+  onReturnToInspector?: () => void;
 }
 
 export const Header: React.FC<Props> = ({ onShowHistory, onReset, showReset }) => {
@@ -66,3 +67,5 @@ export const Header: React.FC<Props> = ({ onShowHistory, onReset, showReset }) =
     </header>
   );
 };
+
+export default Header;

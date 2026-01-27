@@ -289,6 +289,24 @@ export const HistorySidebar: React.FC<Props> = ({
                     />
                     <span className="text-xs font-bold text-slate-500">Select All</span>
                   </label>
+
+                  {sortedHistoryList.length > 0 && (
+                    <button
+                      onClick={() => onBatchLoadHistory(historyList.map((h) => h.id))}
+                      className="text-[10px] font-black text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded-lg border border-blue-100 transition-all flex items-center gap-1 shadow-sm uppercase tracking-tight"
+                      title="Load all records in history"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                        />
+                      </svg>
+                      Load All
+                    </button>
+                  )}
                 </div>
 
                 {selectedHistoryIds.size > 0 && (
