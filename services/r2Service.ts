@@ -739,14 +739,24 @@ export class ConcurrentUploader {
 /**
  * Get R2 image URL from hash
  * In production, uses CDN URL if configured, otherwise falls back to API_BASE_URL
+ * In development, always uses API_BASE_URL to avoid using production CDN
  */
 export function getR2ImageUrl(hash: string): string {
+  // @ts-ignore - Vite injects import.meta.env
+  const isDev = typeof import.meta !== "undefined" && import.meta.env?.DEV;
+  
+  // In development, always use API_BASE_URL (don't use production CDN)
+  if (isDev) {
+    const base = API_BASE_URL.replace(/\/$/, "");
+    return `${base}/r2/${hash}`;
+  }
+  
   // Use CDN URL if configured (for production image serving)
   if (CDN_URL) {
     const cdnBase = CDN_URL.replace(/\/$/, "");
     return `${cdnBase}/${hash}`;
   }
-  // Fall back to API_BASE_URL (for development or when CDN not configured)
+  // Fall back to API_BASE_URL (when CDN not configured)
   const base = API_BASE_URL.replace(/\/$/, "");
   return `${base}/r2/${hash}`;
 }

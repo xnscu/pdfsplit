@@ -19,6 +19,10 @@ const getCdnUrl = (): string | undefined => {
 
 const API_BASE_URL = getApiUrl();
 const CDN_URL = getCdnUrl();
+// @ts-ignore - Vite injects import.meta.env
+const isDev = typeof import.meta !== "undefined" && (import.meta as any).env?.DEV;
+// In development, don't use CDN URL even if configured
+const USE_CDN_URL = !isDev && CDN_URL;
 const ORIGIN =
   typeof window !== "undefined" && window.location?.origin
     ? window.location.origin
@@ -30,7 +34,7 @@ const WORKER_CODE = `
  */
 
 const API_BASE_URL = ${JSON.stringify(API_BASE_URL)};
-const CDN_URL = ${JSON.stringify(CDN_URL)};
+const CDN_URL = ${JSON.stringify(USE_CDN_URL ? CDN_URL : undefined)};
 const ORIGIN = ${JSON.stringify(ORIGIN)};
 const toAbsoluteUrl = (url) => {
   if (!url) return url;
@@ -46,7 +50,7 @@ const joinBase = (base, path) => {
 };
 const resolveImageUrl = (value) => {
   if (!isImageHash(value)) return value;
-  // Use CDN URL if configured (for production image serving)
+  // Use CDN URL if configured (for production image serving only)
   if (CDN_URL) {
     const cdnBase = CDN_URL.replace(/\\/$/, '');
     return cdnBase + '/' + value;
