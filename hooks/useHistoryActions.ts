@@ -77,6 +77,14 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     const startTimeLocal = Date.now();
     setStartTime(startTimeLocal);
 
+    // 创建独立的 AbortController 用于批量处理
+    const batchController = new AbortController();
+    const batchSignal = batchController.signal;
+    
+    // 将 controller 保存到 ref，以便停止时可以中断
+    const originalController = abortControllerRef.current;
+    abortControllerRef.current = batchController;
+
     const workerConcurrency = batchSize || 5;
 
     let totalFilesProcessed = 0;
@@ -89,7 +97,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     try {
       for (let i = 0; i < totalFiles; i++) {
         // 检查停止标志，如果已停止则不再处理新文件
-        if (stopRequestedRef.current) {
+        if (stopRequestedRef.current || batchSignal.aborted) {
           addNotification(null, "info", `批量处理已停止。已处理 ${totalFilesProcessed}/${totalFiles} 个文件。`);
           break;
         }
@@ -107,17 +115,17 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
         const fileName = record.name;
         setDetailedStatus(fileName);
 
-        // 2. Process（已发起的请求会继续完成）
+        // 2. Process（传递 signal 以便可以中断）
         const generatedQuestions = await generateQuestionsFromRawPages(
           record.rawPages,
           cropSettings,
-          new AbortController().signal, // Isolated signal for batch task
+          batchSignal, // 使用批量处理的 signal
           undefined,
           workerConcurrency,
         );
 
         // 请求完成后，检查停止标志
-        if (stopRequestedRef.current) {
+        if (stopRequestedRef.current || batchSignal.aborted) {
           addNotification(null, "info", `批量处理已停止。已处理 ${totalFilesProcessed}/${totalFiles} 个文件。`);
           break;
         }
@@ -163,9 +171,14 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       );
       await refreshHistoryList();
     } catch (e: any) {
-      console.error(e);
-      addNotification(null, "error", `Batch process failed: ${e.message}`);
+      // 忽略中断错误
+      if (e.name !== "AbortError") {
+        console.error(e);
+        addNotification(null, "error", `Batch process failed: ${e.message}`);
+      }
     } finally {
+      // 恢复原始的 controller
+      abortControllerRef.current = originalController;
       setters.setIsLoadingHistory(false);
       setDetailedStatus("");
       setTotal(0);

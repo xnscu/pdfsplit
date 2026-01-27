@@ -152,6 +152,7 @@ export const useRefinementActions = ({
               selectedModel,
               undefined,
               apiKey,
+              signal,
             );
             const newPage = { ...page, detections };
             newResults.push(newPage);

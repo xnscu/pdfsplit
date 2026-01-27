@@ -575,8 +575,8 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             if (stopRequestedRef.current || signal.aborted) break;
             const task = (async () => {
               try {
-                // 发起检测请求（即使之后停止标志被设置，这个请求也会继续完成）
-                const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel, undefined, apiKey);
+                // 发起检测请求（传递 signal 以便可以中断）
+                const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel, undefined, apiKey, signal);
                 
                 // 请求完成后，检查停止标志，如果已停止则不更新状态
                 if (stopRequestedRef.current || signal.aborted) return;

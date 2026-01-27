@@ -19,10 +19,18 @@ export const useAnalysisProcessor = ({
 }: AnalysisProps) => {
   const { analysisConcurrency, questions, selectedModel, apiKey, skipSolvedQuestions } = state;
   const { setAnalyzingTotal, setAnalyzingDone, setQuestions } = setters;
-  const { stopRequestedRef } = refs;
+  const { stopRequestedRef, abortControllerRef } = refs;
   const { addNotification } = actions;
 
   const handleStartAnalysisRobust = async (fileName: string) => {
+    // 创建新的 AbortController 用于分析任务
+    const analysisController = new AbortController();
+    const analysisSignal = analysisController.signal;
+    
+    // 将 controller 保存到 ref，以便停止时可以中断
+    const originalController = abortControllerRef.current;
+    abortControllerRef.current = analysisController;
+    
     const startTimeLocal = Date.now();
     let targetQuestions = questions.filter(
       (q: QuestionImage) => q.fileName === fileName,
@@ -59,19 +67,20 @@ export const useAnalysisProcessor = ({
 
     const processItem = async (q: QuestionImage) => {
       // 在开始处理前检查停止标志，如果已停止则不处理新任务
-      if (stopRequestedRef.current) return;
+      if (stopRequestedRef.current || analysisSignal.aborted) return;
 
       try {
-        // 发起请求（即使之后停止标志被设置，这个请求也会继续完成）
+        // 发起请求（传递 signal 以便可以中断）
         const analysis = await analyzeQuestion(
           q.dataUrl,
           selectedModel || MODEL_IDS.FLASH,
           undefined,
           apiKey,
+          analysisSignal,
         );
 
         // 请求完成后，再次检查停止标志，如果已停止则不更新状态
-        if (stopRequestedRef.current) return;
+        if (stopRequestedRef.current || analysisSignal.aborted) return;
 
         const updatedQ = { ...q, analysis };
         localMap.set(q.id, updatedQ);
@@ -96,12 +105,17 @@ export const useAnalysisProcessor = ({
 
         setAnalyzingDone((prev: number) => prev + 1);
       } catch (e: any) {
-        // 如果已停止，不再重试
-        if (stopRequestedRef.current) return;
+        // 如果是中断错误，不再重试
+        if (e.name === "AbortError" || stopRequestedRef.current || analysisSignal.aborted) {
+          return;
+        }
         
         console.warn(`Analysis failed for Q${q.id}, retrying...`, e.message);
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        queue.push(q);
+        // 只有在未中断时才重试
+        if (!stopRequestedRef.current && !analysisSignal.aborted) {
+          queue.push(q);
+        }
       }
     };
 
@@ -110,18 +124,28 @@ export const useAnalysisProcessor = ({
       .map(async () => {
         while (queue.length > 0) {
           // 检查停止标志，如果已停止则不再从队列中取新任务
-          if (stopRequestedRef.current) break;
+          if (stopRequestedRef.current || analysisSignal.aborted) break;
           const item = queue.shift();
           if (item) {
-            // 处理任务（已发起的请求会继续完成）
+            // 处理任务（如果被中断会抛出 AbortError）
             await processItem(item);
           }
         }
       });
 
-    await Promise.all(workers);
+    try {
+      await Promise.all(workers);
+    } catch (e: any) {
+      // 忽略中断错误
+      if (e.name !== "AbortError") {
+        console.error("Analysis worker error:", e);
+      }
+    } finally {
+      // 恢复原始的 controller
+      abortControllerRef.current = originalController;
+    }
 
-    if (!stopRequestedRef.current) {
+    if (!stopRequestedRef.current && !analysisSignal.aborted) {
       const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
       addNotification(fileName, "success", `AI 解析全部完成 (${duration}s)`);
     } else {

@@ -19,11 +19,17 @@ export const detectQuestionsOnPage = async (
   modelId: string = MODEL_IDS.PRO,
   maxRetries: number = 5,
   apiKey?: string,
+  signal?: AbortSignal,
 ): Promise<DetectedQuestion[]> => {
   let attempt = 0;
   const ai = getAiClient(apiKey);
 
   while (attempt < maxRetries) {
+    // 检查是否已中断
+    if (signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+
     try {
       const promptText = PROMPTS.BASIC;
       const itemsSchema = SCHEMAS.BASIC;
@@ -51,6 +57,11 @@ export const detectQuestionsOnPage = async (
         },
       });
 
+      // 再次检查是否已中断
+      if (signal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+
       const text = response.text;
       if (!text) throw new Error("Empty response from AI");
 
@@ -60,6 +71,11 @@ export const detectQuestionsOnPage = async (
 
       return parsed as DetectedQuestion[];
     } catch (error: any) {
+      // 如果是中断错误，直接抛出
+      if (error.name === "AbortError" || signal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+
       attempt++;
       const isRateLimit =
         error?.message?.includes("429") || error?.status === 429;
@@ -75,7 +91,19 @@ export const detectQuestionsOnPage = async (
         );
       }
 
-      await delay(waitTime);
+      // 在等待期间也检查中断
+      await Promise.race([
+        delay(waitTime),
+        new Promise((_, reject) => {
+          if (signal) {
+            signal.addEventListener("abort", () => {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+            });
+          }
+        }),
+      ]).catch(() => {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      });
     }
   }
   return [];
@@ -89,11 +117,17 @@ export const analyzeQuestion = async (
   modelId: string = MODEL_IDS.FLASH,
   maxRetries: number = 3,
   apiKey?: string,
+  signal?: AbortSignal,
 ): Promise<QuestionAnalysis> => {
   let attempt = 0;
   const ai = getAiClient(apiKey);
 
   while (attempt < maxRetries) {
+    // 检查是否已中断
+    if (signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+
     try {
       const promptText = PROMPTS.ANALYSIS;
       const response = await ai.models.generateContent({
@@ -116,11 +150,21 @@ export const analyzeQuestion = async (
         },
       });
 
+      // 再次检查是否已中断
+      if (signal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+
       const text = response.text;
       if (!text) throw new Error("Empty response from AI Analysis");
 
       return JSON.parse(text) as QuestionAnalysis;
     } catch (error: any) {
+      // 如果是中断错误，直接抛出
+      if (error.name === "AbortError" || signal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+
       attempt++;
       const isRateLimit =
         error?.message?.includes("429") || error?.status === 429;
@@ -133,7 +177,20 @@ export const analyzeQuestion = async (
       if (attempt >= maxRetries) {
         throw error;
       }
-      await delay(waitTime);
+
+      // 在等待期间也检查中断
+      await Promise.race([
+        delay(waitTime),
+        new Promise((_, reject) => {
+          if (signal) {
+            signal.addEventListener("abort", () => {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+            });
+          }
+        }),
+      ]).catch(() => {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      });
     }
   }
   throw new Error("Analysis failed");

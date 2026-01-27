@@ -237,9 +237,12 @@ export const useExamState = () => {
 
   const handleStop = () => {
     stopRequestedRef.current = true;
-    // 不调用 abort()，让已发起的请求继续完成
-    // 只停止从队列中取新任务
-    setDetailedStatus("正在停止... 已发起的请求将继续完成。");
+    // 立即中断所有正在进行的请求
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    setDetailedStatus("正在停止... 所有任务将被立即中断。");
+    setStatus(ProcessingStatus.STOPPED);
   };
 
   return {
