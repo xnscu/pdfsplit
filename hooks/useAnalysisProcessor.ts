@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { ProcessingStatus, QuestionImage } from "../types";
-import { analyzeQuestion } from "../services/geminiService";
+import { analyzeQuestionViaProxy } from "../services/geminiProxyService";
 import { updateQuestionsForFile } from "../services/storageService";
 import { MODEL_IDS } from "../shared/ai-config";
 
@@ -62,7 +62,7 @@ export const useAnalysisProcessor = ({ state, setters, refs, actions }: Analysis
 
       try {
         // 发起请求（传递 signal 以便可以中断）
-        const analysis = await analyzeQuestion(
+        const analysis = await analyzeQuestionViaProxy(
           q.dataUrl,
           selectedModel || MODEL_IDS.FLASH,
           undefined,

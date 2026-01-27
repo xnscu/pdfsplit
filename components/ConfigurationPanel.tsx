@@ -127,22 +127,22 @@ export const ConfigurationPanel: React.FC<Props> = ({
           {setApiKey && (
             <div className="space-y-4 pt-2">
               <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">
-                Custom API Key
+                API Keys Pool
               </h3>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-500">
-                  Gemini API Key (Optional)
+                  Gemini API Keys (一行一个)
                 </label>
-                <input
-                  type="password"
+                <textarea
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Leave empty to use default system key"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-300 placeholder:font-normal"
+                  placeholder={"输入一个或多个API Key，每行一个\n例如：\nAIza...\nAIza...\nAIza..."}
+                  rows={4}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-300 placeholder:font-normal resize-y"
+                  style={{ minHeight: '100px' }}
                 />
                 <p className="text-[10px] text-slate-400 font-medium">
-                  Entering a key here will override the built-in default key for
-                  all AI operations.
+                  支持多个API Key，系统会自动轮询使用。留空则使用默认Key。
                 </p>
               </div>
             </div>
@@ -385,7 +385,7 @@ export const ConfigurationPanel: React.FC<Props> = ({
             <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">
               定时同步
             </h3>
-            
+
             {setAutoSyncEnabled && (
               <div className="flex items-center justify-between">
                 <div className="flex flex-col">

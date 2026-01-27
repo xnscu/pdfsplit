@@ -4,6 +4,9 @@
  * Static assets are served by the Cloudflare Vite plugin / ASSETS binding
  */
 
+import { GoogleGenAI, Type } from "@google/genai";
+import { PROMPTS, SCHEMAS } from "../shared/ai-config.js";
+
 // CORS headers for cross-origin requests
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -173,6 +176,15 @@ async function handleApiRoutes(request, env, path, method) {
     const body = await parseBody(request);
     if (!body) return errorResponse('Invalid JSON body');
     return handleUpdateQuestions(db, id, body.questions);
+  }
+
+  // === Gemini Proxy Routes ===
+
+  // POST /api/gemini/proxy - Proxy Gemini API requests
+  if (path === '/api/gemini/proxy' && method === 'POST') {
+    const body = await parseBody(request);
+    if (!body) return errorResponse('Invalid JSON body');
+    return handleGeminiProxy(body);
   }
 
   return errorResponse('Not Found', 404);
@@ -801,4 +813,156 @@ async function saveExamToDb(db, examData, source) {
   );
 
   await db.batch(statements);
+}
+
+// ============ Gemini Proxy Handler ============
+
+/**
+ * Convert schema format for Gemini API
+ * The frontend uses a simplified schema format, we need to convert it
+ */
+function convertSchemaType(type) {
+  // Map string types to Type enum
+  const typeMap = {
+    'STRING': Type.STRING,
+    'NUMBER': Type.NUMBER,
+    'INTEGER': Type.INTEGER,
+    'BOOLEAN': Type.BOOLEAN,
+    'ARRAY': Type.ARRAY,
+    'OBJECT': Type.OBJECT,
+  };
+  return typeMap[type] || type;
+}
+
+function convertSchema(schema) {
+  if (!schema) return schema;
+
+  const result = { ...schema };
+
+  // Convert type if it's a string
+  if (typeof result.type === 'string') {
+    result.type = convertSchemaType(result.type);
+  }
+
+  // Recursively convert nested schemas
+  if (result.items) {
+    result.items = convertSchema(result.items);
+  }
+
+  if (result.properties) {
+    const newProps = {};
+    for (const [key, value] of Object.entries(result.properties)) {
+      newProps[key] = convertSchema(value);
+    }
+    result.properties = newProps;
+  }
+
+  return result;
+}
+
+/**
+ * Handle Gemini API proxy requests
+ * Receives requests from frontend and forwards to Gemini API
+ */
+async function handleGeminiProxy(body) {
+  const { apiKey, modelId, image, prompt, responseSchema, requestType } = body;
+
+  if (!apiKey) {
+    return errorResponse('API key is required');
+  }
+
+  if (!image) {
+    return errorResponse('Image data is required');
+  }
+
+  if (!modelId) {
+    return errorResponse('Model ID is required');
+  }
+
+  try {
+    // Create AI client with provided key
+    const ai = new GoogleGenAI({ apiKey });
+
+    // Parse image data URL
+    let mimeType = 'image/png';
+    let imageData = image;
+
+    if (image.startsWith('data:')) {
+      const match = image.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        mimeType = match[1];
+        imageData = match[2];
+      }
+    } else if (image.startsWith('r2://')) {
+      // R2 reference - we'll need to handle this differently
+      // For now, return an error - the frontend should resolve R2 refs first
+      return errorResponse('R2 image references must be resolved before proxy');
+    }
+
+    // Build the request
+    const contents = [
+      {
+        parts: [
+          {
+            inlineData: {
+              mimeType,
+              data: imageData,
+            },
+          },
+          { text: prompt || PROMPTS.BASIC },
+        ],
+      },
+    ];
+
+    // Configure response format
+    const config = {
+      responseMimeType: 'application/json',
+    };
+
+    // Use the appropriate schema based on request type
+    if (requestType === 'detection') {
+      config.responseSchema = {
+        type: Type.ARRAY,
+        items: SCHEMAS.BASIC,
+      };
+    } else if (requestType === 'analysis') {
+      config.responseSchema = SCHEMAS.ANALYSIS;
+    } else if (responseSchema) {
+      // Convert the provided schema
+      config.responseSchema = convertSchema(responseSchema);
+    }
+
+    // Make the API call
+    const response = await ai.models.generateContent({
+      model: modelId,
+      contents,
+      config,
+    });
+
+    const text = response.text;
+    if (!text) {
+      return errorResponse('Empty response from AI');
+    }
+
+    // Parse and return the response
+    const data = JSON.parse(text);
+    return jsonResponse({ success: true, data });
+  } catch (error) {
+    console.error('Gemini proxy error:', error);
+
+    // Extract meaningful error message
+    let message = error.message || 'Unknown error';
+
+    // Check for rate limiting
+    if (message.includes('429') || message.includes('quota') || message.includes('rate')) {
+      return errorResponse(`Rate limit exceeded: ${message}`, 429);
+    }
+
+    // Check for auth errors
+    if (message.includes('401') || message.includes('API key')) {
+      return errorResponse(`Authentication failed: ${message}`, 401);
+    }
+
+    return errorResponse(`Gemini API error: ${message}`, 500);
+  }
 }

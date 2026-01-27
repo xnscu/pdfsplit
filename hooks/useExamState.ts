@@ -1,13 +1,8 @@
 import { useState, useRef, useEffect } from "react";
-import {
-  ProcessingStatus,
-  QuestionImage,
-  DebugPageData,
-  HistoryMetadata,
-  SourcePage,
-} from "../types";
+import { ProcessingStatus, QuestionImage, DebugPageData, HistoryMetadata, SourcePage } from "../types";
 import { CropSettings } from "../services/pdfService";
 import { AppNotification } from "../components/NotificationToast";
+import { initKeyPool } from "../services/keyPoolService";
 
 export const DEFAULT_SETTINGS: CropSettings = {
   cropPadding: 25,
@@ -46,15 +41,11 @@ export const useExamState = () => {
   const [refiningFile, setRefiningFile] = useState<string | null>(null);
 
   // Legacy sync
-  const [legacySyncFiles, setLegacySyncFiles] = useState<Set<string>>(
-    new Set(),
-  );
+  const [legacySyncFiles, setLegacySyncFiles] = useState<Set<string>>(new Set());
   const [isSyncingLegacy, setIsSyncingLegacy] = useState(false);
 
   // Background Processing
-  const [processingFiles, setProcessingFiles] = useState<Set<string>>(
-    new Set(),
-  );
+  const [processingFiles, setProcessingFiles] = useState<Set<string>>(new Set());
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   // History
@@ -68,10 +59,7 @@ export const useExamState = () => {
       const saved = localStorage.getItem(STORAGE_KEYS.CROP_SETTINGS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (
-          parsed.canvasPadding === undefined &&
-          parsed.canvasPaddingLeft !== undefined
-        ) {
+        if (parsed.canvasPadding === undefined && parsed.canvasPaddingLeft !== undefined) {
           parsed.canvasPadding = parsed.canvasPaddingLeft;
         }
         return { ...DEFAULT_SETTINGS, ...parsed };
@@ -152,10 +140,7 @@ export const useExamState = () => {
 
   // Persistence Effects
   useEffect(() => {
-    localStorage.setItem(
-      STORAGE_KEYS.CROP_SETTINGS,
-      JSON.stringify(cropSettings),
-    );
+    localStorage.setItem(STORAGE_KEYS.CROP_SETTINGS, JSON.stringify(cropSettings));
   }, [cropSettings]);
 
   useEffect(() => {
@@ -163,10 +148,7 @@ export const useExamState = () => {
   }, [concurrency]);
 
   useEffect(() => {
-    localStorage.setItem(
-      STORAGE_KEYS.ANALYSIS_CONCURRENCY,
-      analysisConcurrency.toString(),
-    );
+    localStorage.setItem(STORAGE_KEYS.ANALYSIS_CONCURRENCY, analysisConcurrency.toString());
   }, [analysisConcurrency]);
 
   useEffect(() => {
@@ -178,28 +160,20 @@ export const useExamState = () => {
   }, [selectedModel]);
 
   useEffect(() => {
-    localStorage.setItem(
-      STORAGE_KEYS.USE_HISTORY_CACHE,
-      String(useHistoryCache),
-    );
+    localStorage.setItem(STORAGE_KEYS.USE_HISTORY_CACHE, String(useHistoryCache));
   }, [useHistoryCache]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.API_KEY, apiKey);
+    // Initialize the key pool with the new keys
+    initKeyPool(apiKey);
   }, [apiKey]);
 
   useEffect(() => {
-    localStorage.setItem(
-      STORAGE_KEYS.SKIP_SOLVED_QUESTIONS,
-      String(skipSolvedQuestions),
-    );
+    localStorage.setItem(STORAGE_KEYS.SKIP_SOLVED_QUESTIONS, String(skipSolvedQuestions));
   }, [skipSolvedQuestions]);
 
-  const addNotification = (
-    fileName: string | null,
-    type: "success" | "error",
-    message: string,
-  ) => {
+  const addNotification = (fileName: string | null, type: "success" | "error", message: string) => {
     const id = Date.now().toString() + Math.random().toString();
     setNotifications((prev) => [...prev, { id, fileName, type, message }]);
   };
@@ -231,8 +205,7 @@ export const useExamState = () => {
     setNotifications([]);
     setLegacySyncFiles(new Set());
     setIsSyncingLegacy(false);
-    if (window.location.search)
-      window.history.pushState({}, "", window.location.pathname);
+    if (window.location.search) window.history.pushState({}, "", window.location.pathname);
   };
 
   const handleStop = () => {
@@ -240,7 +213,7 @@ export const useExamState = () => {
     if (stopRequestedRef.current) {
       return;
     }
-    
+
     stopRequestedRef.current = true;
     // 立即中断所有正在进行的请求
     if (abortControllerRef.current) {

@@ -12,6 +12,7 @@ import { RefinementModal } from "./components/RefinementModal";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotificationToast } from "./components/NotificationToast";
 import { SyncHistoryPanel } from "./components/SyncHistoryPanel";
+import { KeyStatsPanel } from "./components/KeyStatsPanel";
 import packageJson from "./package.json";
 import SyncStatus from "./components/SyncStatus";
 
@@ -188,17 +189,17 @@ const App: React.FC = () => {
     }
 
     isAnalysisRunningRef.current = true;
-    
+
     try {
       // The hook handles the process. We just trigger it.
       await handleStartAnalysis(fileName);
-      
+
       // 再次检查是否已停止
       if (refs.stopRequestedRef.current) {
         isAnalysisRunningRef.current = false;
         return;
       }
-      
+
       await refreshHistoryList();
 
       // Auto-Advance Logic - 只有在未停止且 auto-advance 启用时才继续
@@ -450,21 +451,21 @@ const App: React.FC = () => {
         )}
 
         {/* 只在全局处理或分析进行中时显示 ProcessingState，但已停止时也显示 */}
-        {(isGlobalProcessing || 
+        {(isGlobalProcessing ||
           (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal) ||
           state.status === ProcessingStatus.STOPPED) && (
           <ProcessingState
-            status={state.status === ProcessingStatus.STOPPED 
-              ? ProcessingStatus.STOPPED 
-              : (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal 
-                  ? ProcessingStatus.ANALYZING 
+            status={state.status === ProcessingStatus.STOPPED
+              ? ProcessingStatus.STOPPED
+              : (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal
+                  ? ProcessingStatus.ANALYZING
                   : state.status)}
             progress={state.progress}
             total={state.analyzingTotal > 0 ? state.analyzingTotal : state.total}
             completedCount={state.analyzingDone > 0 ? state.analyzingDone : state.completedCount}
             error={state.error}
-            detailedStatus={state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal 
-              ? `正在分析: ${state.debugFile || ""}` 
+            detailedStatus={state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal
+              ? `正在分析: ${state.debugFile || ""}`
               : state.detailedStatus}
             croppingTotal={state.croppingTotal}
             croppingDone={state.croppingDone}
@@ -472,7 +473,7 @@ const App: React.FC = () => {
             currentRound={state.currentRound}
             failedCount={state.failedCount}
             onAbort={(isGlobalProcessing || (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal)) && state.status !== ProcessingStatus.STOPPED
-              ? actions.handleStop 
+              ? actions.handleStop
               : undefined}
             onClose={() => {
               setters.setStatus(ProcessingStatus.IDLE);
@@ -664,6 +665,13 @@ const App: React.FC = () => {
       />
 
       <SyncHistoryPanel isOpen={showSyncHistory} onClose={() => setShowSyncHistory(false)} />
+
+      {/* API Key Stats Panel - shown during analysis */}
+      <div className="fixed bottom-6 left-6 z-[80] w-96 max-w-[90vw]">
+        <KeyStatsPanel
+          isVisible={state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal}
+        />
+      </div>
 
       <footer className="mt-24 text-center text-slate-400 text-xs py-12 border-t border-slate-100 font-bold tracking-widest uppercase">
         <p>© 2025 AI Exam Splitter | Precision Tooling | v{packageJson.version}</p>

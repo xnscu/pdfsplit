@@ -3,7 +3,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import JSZip from "jszip";
 import { ProcessingStatus, DebugPageData, QuestionImage, SourcePage } from "../types";
 import { renderPageToImage } from "../services/pdfService";
-import { detectQuestionsOnPage } from "../services/geminiService";
+import { detectQuestionsViaProxy } from "../services/geminiProxyService";
 import { loadExamResult, saveExamResult, getHistoryList } from "../services/storageService";
 import {
   generateQuestionsFromRawPages,
@@ -107,7 +107,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
 
           // Find all analysis_data.json files to identify folders
           const analysisFileKeys = Object.keys(loadedZip.files).filter((key) =>
-            key.match(/(^|\/)analysis_data\.json$/i),
+            key.match(/(^|\/)analysis_data\.json$/i)
           );
 
           // Track folders we've already processed
@@ -145,7 +145,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                 k.startsWith(dirPrefix) &&
                 !loadedZip.files[k].dir &&
                 /\.(jpg|jpeg|png)$/i.test(k) &&
-                !k.includes("full_pages/"),
+                !k.includes("full_pages/")
             );
 
             folderWorks.push({
@@ -166,7 +166,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                 !loadedZip.files[k].dir &&
                 /\.(jpg|jpeg|png)$/i.test(k) &&
                 !k.includes("full_pages/") &&
-                !k.includes("/"), // Only root level
+                !k.includes("/") // Only root level
             );
             if (rootImageKeys.length > 0) {
               folderWorks.push({
@@ -239,7 +239,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
               (k) =>
                 k.startsWith(work.dirPrefix) &&
                 !work.zip.files[k].dir &&
-                k.match(new RegExp(`full_pages/.*Page_${page.pageNumber}\\.(jpg|jpeg|png)$`, "i")),
+                k.match(new RegExp(`full_pages/.*Page_${page.pageNumber}\\.(jpg|jpeg|png)$`, "i"))
             );
           }
 
@@ -304,7 +304,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                 }
 
                 folderQuestions.push(question);
-              }),
+              })
             );
             await new Promise((r) => setTimeout(r, 0));
           }
@@ -356,7 +356,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             {
               onProgress: () => setCroppingDone((prev: number) => prev + 1),
             },
-            batchSize || 10,
+            batchSize || 10
           );
 
           setQuestions(qs);
@@ -460,7 +460,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
       if (cachedRawPages.length > 0) {
         setDetailedStatus("Restoring cache...");
         const uniqueCached = Array.from(
-          new Map(cachedRawPages.map((p) => [`${p.fileName}-${p.pageNumber}`, p])).values(),
+          new Map(cachedRawPages.map((p) => [`${p.fileName}-${p.pageNumber}`, p])).values()
         );
         setRawPages((prev: any) => [...prev, ...uniqueCached]);
 
@@ -485,7 +485,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             cropSettings,
             signal,
             undefined,
-            batchSize || 10,
+            batchSize || 10
           );
           questionsFromCache = [...questionsFromCache, ...generated];
         }
@@ -512,7 +512,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             a.localeCompare(b, undefined, {
               numeric: true,
               sensitivity: "base",
-            }),
+            })
           );
           setters.setDebugFile(cachedFiles[0]);
           setters.setLastViewedFile(cachedFiles[0]);
@@ -576,11 +576,17 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             const task = (async () => {
               try {
                 // 发起检测请求（传递 signal 以便可以中断）
-                const detections = await detectQuestionsOnPage(pageData.dataUrl, selectedModel, undefined, apiKey, signal);
-                
+                const detections = await detectQuestionsViaProxy(
+                  pageData.dataUrl,
+                  selectedModel,
+                  undefined,
+                  apiKey,
+                  signal
+                );
+
                 // 请求完成后，检查停止标志，如果已停止则不更新状态
                 if (stopRequestedRef.current || signal.aborted) return;
-                
+
                 const resultPage: DebugPageData = {
                   pageNumber: pageData.pageNumber,
                   fileName: pageData.fileName,
@@ -609,17 +615,17 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                       logicalQs.forEach((lq) => {
                         // 在入队前检查停止标志
                         if (stopRequestedRef.current) return;
-                        
+
                         cropQueueRef.current.enqueue(async () => {
                           // 在开始处理前再次检查停止标志
                           if (stopRequestedRef.current || signal.aborted) return;
-                          
+
                           // 发起处理请求（即使之后停止标志被设置，这个请求也会继续完成）
                           const result = await processLogicalQuestion(lq, cropSettings);
-                          
+
                           // 请求完成后，再次检查停止标志
                           if (stopRequestedRef.current || signal.aborted) return;
-                          
+
                           if (result) {
                             setQuestions((prevQ: any) => {
                               const next = [...prevQ, result];
@@ -683,7 +689,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
         allNewPages.forEach((p) => allProcessedFiles.add(p.fileName));
 
         const sortedFiles = Array.from(allProcessedFiles).sort((a, b) =>
-          a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+          a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
         );
 
         if (sortedFiles.length > 0) {
