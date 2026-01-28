@@ -678,7 +678,7 @@ export const QuestionGrid: React.FC<Props> = ({
                         </span>
                       </div>
                       <div className="mt-3 space-y-1">
-                        {selectedImage.analysis.tags.map((tag, idx) => (
+                        {(selectedImage.analysis.tags || []).map((tag, idx) => (
                           <div
                             key={idx}
                             className="text-sm text-slate-700 font-medium"

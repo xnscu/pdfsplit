@@ -164,7 +164,7 @@ export const DebugPreviewGrid: React.FC<Props> = ({
                     <div className="space-y-6">
                       {/* Tags Breadcrumbs */}
                       <div>
-                        {q.analysis.tags.map((tag, idx) => (
+                        {(q.analysis.tags || []).map((tag, idx) => (
                           <div
                             key={idx}
                             className="text-sm text-slate-800 font-medium"
