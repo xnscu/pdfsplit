@@ -38,6 +38,7 @@ const App: React.FC = () => {
   const {
     handleCleanupAllHistory,
     handleLoadHistory,
+    handleLoadHistoryByName,
     handleBatchLoadHistory,
     handleSyncLegacyData,
     handleBatchReprocessHistory,
@@ -735,7 +736,11 @@ const App: React.FC = () => {
         onView={(fileName) => updateDebugFile(fileName)}
       />
 
-      <SyncHistoryPanel isOpen={showSyncHistory} onClose={() => setShowSyncHistory(false)} />
+      <SyncHistoryPanel
+        isOpen={showSyncHistory}
+        onClose={() => setShowSyncHistory(false)}
+        onLoadHistoryByName={handleLoadHistoryByName}
+      />
 
       {/* API Key Stats Panel - shown during analysis */}
       <div className="fixed bottom-6 left-6 z-[110] w-96 max-w-[90vw]">

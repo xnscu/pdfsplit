@@ -80,7 +80,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     // 创建独立的 AbortController 用于批量处理
     const batchController = new AbortController();
     const batchSignal = batchController.signal;
-    
+
     // 将 controller 保存到 ref，以便停止时可以中断
     const originalController = abortControllerRef.current;
     abortControllerRef.current = batchController;
@@ -121,7 +121,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           cropSettings,
           batchSignal, // 使用批量处理的 signal
           undefined,
-          workerConcurrency,
+          workerConcurrency
         );
 
         // 请求完成后，检查停止标志
@@ -167,7 +167,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       addNotification(
         null,
         "success",
-        `Batch complete: ${totalFilesProcessed} files processed in ${duration}s. ${totalChangedImages} images updated.`,
+        `Batch complete: ${totalFilesProcessed} files processed in ${duration}s. ${totalChangedImages} images updated.`
       );
       await refreshHistoryList();
     } catch (e: any) {
@@ -200,7 +200,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       if (!result) throw new Error("History record not found.");
 
       const uniquePages = Array.from(
-        new Map(result.rawPages.map((p: any) => [p.pageNumber, p])).values(),
+        new Map(result.rawPages.map((p: any) => [p.pageNumber, p])).values()
       ) as DebugPageData[];
       uniquePages.sort((a, b) => a.pageNumber - b.pageNumber);
 
@@ -240,7 +240,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           {
             onProgress: () => setCroppingDone((p: number) => p + 1),
           },
-          batchSize || 10,
+          batchSize || 10
         );
 
         setQuestions(generatedQuestions);
@@ -258,6 +258,25 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       setStatus(ProcessingStatus.ERROR);
     } finally {
       setters.setIsLoadingHistory(false);
+    }
+  };
+
+  const handleLoadHistoryByName = async (fileName: string) => {
+    try {
+      // Get the history list to find the ID for this file name
+      const list = await getHistoryList();
+      const historyItem = list.find((h) => h.name === fileName);
+
+      if (!historyItem) {
+        addNotification(null, "error", `未找到试卷: ${fileName}`);
+        return;
+      }
+
+      // Use existing handleLoadHistory with the found ID
+      await handleLoadHistory(historyItem.id);
+    } catch (e: any) {
+      console.error("Failed to load history by name:", e);
+      addNotification(null, "error", `加载失败: ${e.message}`);
     }
   };
 
@@ -312,7 +331,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           height: rp.height,
           pageNumber: rp.pageNumber,
           fileName: rp.fileName,
-        })),
+        }))
       );
 
       if (legacyFilesFound.size > 0) {
@@ -327,7 +346,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           cropSettings,
           abortControllerRef.current.signal,
           { onProgress: () => setCroppingDone((p: number) => p + 1) },
-          batchSize || 10,
+          batchSize || 10
         );
         setQuestions([...combinedQuestions, ...generatedLegacyQuestions]);
         setLegacySyncFiles(legacyFilesFound);
@@ -369,7 +388,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           const fileQuestions = questions.filter((q: any) => q.fileName === fileName);
           const historyItem = history.find((h) => h.name === fileName);
           if (historyItem) await updateExamQuestionsOnly(historyItem.id, fileQuestions);
-        }),
+        })
       );
       setLegacySyncFiles(new Set());
       const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
@@ -491,7 +510,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
         setRawPages((prev: DebugPageData[]) => {
           const others = prev.filter((p) => p.fileName !== fileName);
           const uniqueNewPages = Array.from(
-            new Map(result.rawPages.map((p: any) => [p.pageNumber, p])).values(),
+            new Map(result.rawPages.map((p: any) => [p.pageNumber, p])).values()
           ) as DebugPageData[];
           uniqueNewPages.sort((a, b) => a.pageNumber - b.pageNumber);
           return [...others, ...uniqueNewPages].sort((a, b) => {
@@ -553,6 +572,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
   return {
     handleCleanupAllHistory,
     handleLoadHistory,
+    handleLoadHistoryByName,
     handleBatchLoadHistory,
     handleSyncLegacyData,
     handleBatchReprocessHistory,

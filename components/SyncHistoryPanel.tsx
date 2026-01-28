@@ -10,6 +10,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  onLoadHistoryByName?: (fileName: string) => void;
 }
 
 const formatTime = (timestamp: number): string => {
@@ -75,7 +76,7 @@ const getActionColor = (actionType: "push" | "pull" | "full_sync"): string => {
   }
 };
 
-export const SyncHistoryPanel: React.FC<Props> = ({ isOpen, onClose }) => {
+export const SyncHistoryPanel: React.FC<Props> = ({ isOpen, onClose, onLoadHistoryByName }) => {
   const [historyRecords, setHistoryRecords] = useState<SyncHistoryRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -263,13 +264,34 @@ export const SyncHistoryPanel: React.FC<Props> = ({ isOpen, onClose }) => {
                       <div className="mt-3 pt-3 border-t border-slate-200">
                         <div className="space-y-1.5">
                           {record.fileNames.map((fileName, idx) => (
-                            <div
+                            <button
                               key={idx}
-                              className="text-xs text-slate-600 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 font-mono truncate"
-                              title={fileName}
+                              className="w-full text-left text-xs text-slate-600 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 font-mono truncate hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300 transition-colors cursor-pointer flex items-center justify-between group"
+                              title={`点击查看: ${fileName}`}
+                              onClick={() => {
+                                if (onLoadHistoryByName) {
+                                  onLoadHistoryByName(fileName);
+                                  onClose();
+                                }
+                              }}
                             >
-                              {fileName}
-                            </div>
+                              <span className="truncate">{fileName}</span>
+                              {onLoadHistoryByName && (
+                                <svg
+                                  className="w-4 h-4 text-slate-400 group-hover:text-blue-500 flex-shrink-0 ml-2"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M9 5l7 7-7 7"
+                                  />
+                                </svg>
+                              )}
+                            </button>
                           ))}
                         </div>
                       </div>
