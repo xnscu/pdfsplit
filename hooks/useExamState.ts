@@ -230,6 +230,9 @@ export const useExamState = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
+    // 立即清零分析进度，让 AI Solve 按钮恢复可点击（不依赖 workers 全部结束）
+    setAnalyzingTotal(0);
+    setAnalyzingDone(0);
     setDetailedStatus("正在停止... 所有任务将被立即中断。");
     setStatus(ProcessingStatus.STOPPED);
   };

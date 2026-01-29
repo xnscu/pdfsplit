@@ -185,12 +185,8 @@ const App: React.FC = () => {
 
   // Wrap analysis start to include saving logic that relies on `reSaveExamResult` and auto-advance
   const handleAnalyzeWrapper = async (fileName: string) => {
-    // 检查是否已停止，如果已停止则不继续
-    if (refs.stopRequestedRef.current) {
-      isAnalysisRunningRef.current = false;
-      return;
-    }
-
+    // 新一轮分析：重置停止标志，否则上次点击「停止」后无法再次启动
+    refs.stopRequestedRef.current = false;
     isAnalysisRunningRef.current = true;
     setters.setStatus(ProcessingStatus.ANALYZING);
     if (!state.startTime) {
