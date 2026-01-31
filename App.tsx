@@ -105,14 +105,58 @@ const App: React.FC = () => {
   // Selection State for Processed Files
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
+  // Session Restoration State
+  const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
+  const [hasRestoredSession, setHasRestoredSession] = useState(false);
+  const STORAGE_KEY_ACTIVE_FILES = "exam_splitter_active_files_v1";
+
   useEffect(() => {
     isAutoAnalyzeRef.current = isAutoAnalyze;
   }, [isAutoAnalyze]);
 
   // Load History List on Mount
+  // Load History List on Mount
   useEffect(() => {
-    refreshHistoryList();
+    refreshHistoryList().finally(() => setIsHistoryLoaded(true));
   }, []);
+
+  // Restore Active Files Session
+  useEffect(() => {
+    if (isHistoryLoaded && !hasRestoredSession) {
+      const savedFiles = localStorage.getItem(STORAGE_KEY_ACTIVE_FILES);
+      if (savedFiles) {
+        try {
+          const fileNames = JSON.parse(savedFiles) as string[];
+          if (Array.isArray(fileNames) && fileNames.length > 0) {
+            // Find IDs corresponding to the saved file names
+            // We need to match names to the history list to get IDs
+            const idsToLoad = fileNames
+              .map((name) => state.historyList.find((h) => h.name === name)?.id)
+              .filter((id): id is string => !!id);
+
+            if (idsToLoad.length > 0) {
+              console.log("Restoring active session with files:", fileNames);
+              handleBatchLoadHistory(idsToLoad);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to restore active files session:", e);
+        }
+      }
+      setHasRestoredSession(true);
+    }
+  }, [isHistoryLoaded, hasRestoredSession, state.historyList, handleBatchLoadHistory]);
+
+  // Save Active Files Session
+  useEffect(() => {
+    // Only save if we have successfully restored (or decided there was nothing to restore)
+    // AND we are in a stable state (IDLE).
+    // This prevents overwriting the saved session with an empty list during initial load.
+    if (hasRestoredSession && state.status === ProcessingStatus.IDLE) {
+      const activeFileNames = Array.from(new Set(state.rawPages.map((p) => p.fileName)));
+      localStorage.setItem(STORAGE_KEY_ACTIVE_FILES, JSON.stringify(activeFileNames));
+    }
+  }, [state.rawPages, state.status, hasRestoredSession]);
 
   // Timer Effect
   useEffect(() => {
