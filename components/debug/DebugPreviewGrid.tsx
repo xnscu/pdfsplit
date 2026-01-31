@@ -160,28 +160,28 @@ export const DebugPreviewGrid: React.FC<Props> = ({
                   />
                 </div>
 
-                {/* Re-solve Button */}
                 {onReSolveQuestion && (
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();
-                      if (resolvingId === q.id) return;
-                      setResolvingId(q.id);
+                      const uniqueId = `${q.fileName}-${q.id}`;
+                      if (resolvingId === uniqueId) return;
+                      setResolvingId(uniqueId);
                       try {
                         await onReSolveQuestion(q);
                       } finally {
                         setResolvingId(null);
                       }
                     }}
-                    disabled={resolvingId === q.id}
+                    disabled={resolvingId === `${q.fileName}-${q.id}`}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
-                      resolvingId === q.id
+                      resolvingId === `${q.fileName}-${q.id}`
                         ? "bg-blue-100 text-blue-400 cursor-wait"
                         : "bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200"
                     }`}
                     title="重新解题"
                   >
-                    {resolvingId === q.id ? (
+                    {resolvingId === `${q.fileName}-${q.id}` ? (
                       <>
                         <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
