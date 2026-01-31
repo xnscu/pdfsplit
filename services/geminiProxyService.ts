@@ -137,56 +137,89 @@ const callViaProxyStream = async (request: GeminiProxyRequest, signal?: AbortSig
 
     buffer += decoder.decode(value, { stream: true });
 
-    // Parse SSE-style chunks (Gemini stream format: array of JSON objects separated by newlines)
-    // Each chunk is a complete JSON object in the array
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || ""; // Keep incomplete line in buffer
+    // Process buffer to extract complete JSON objects
+    // We look for top-level objects enclosed in {}
+    let braceCount = 0;
+    let startIndex = -1;
+    let handledIndex = 0;
+    let inString = false;
+    let escaped = false;
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+    // Simple parser to find matching braces while ignoring braces inside strings
+    for (let i = 0; i < buffer.length; i++) {
+      const char = buffer[i];
 
-      // Skip opening/closing brackets and commas (Gemini streams as JSON array)
-      if (trimmed === "[" || trimmed === "]" || trimmed === ",") continue;
-
-      // Try to parse each line as JSON
-      try {
-        // Remove trailing comma if present
-        const jsonStr = trimmed.endsWith(",") ? trimmed.slice(0, -1) : trimmed;
-        if (jsonStr.startsWith("{")) {
-          const chunk = JSON.parse(jsonStr);
-          if (chunk.candidates?.[0]?.content?.parts) {
-            chunks.push(chunk);
-          }
-        }
-      } catch (e) {
-        // Partial JSON, might need more data - ignore for now
-        console.debug("[Stream] Skipping unparseable chunk:", trimmed.slice(0, 100));
+      if (escaped) {
+        escaped = false;
+        continue;
       }
+
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (char === "{") {
+        if (braceCount === 0) {
+          startIndex = i;
+        }
+        braceCount++;
+      } else if (char === "}") {
+        braceCount--;
+        if (braceCount === 0 && startIndex !== -1) {
+          // Found a complete object
+          const jsonStr = buffer.substring(startIndex, i + 1);
+          try {
+            const chunk = JSON.parse(jsonStr);
+            // Verify it's a valid chunk before adding
+            if (chunk.candidates || chunk.usageMetadata || chunk.error) {
+              chunks.push(chunk);
+            }
+          } catch (e) {
+            console.debug("[Stream] JSON parse error for chunk:", e);
+          }
+          startIndex = -1;
+          handledIndex = i + 1;
+        }
+      }
+    }
+
+    // Remove processed part from buffer, keep the rest for next read
+    if (handledIndex > 0) {
+      buffer = buffer.slice(handledIndex);
     }
   }
 
-  // Process remaining buffer
+  // Handle any valid object left in buffer (rare case if stream ends perfectly)
   if (buffer.trim()) {
-    try {
-      const jsonStr = buffer.trim().endsWith(",") ? buffer.trim().slice(0, -1) : buffer.trim();
-      if (jsonStr.startsWith("{") && jsonStr.endsWith("}")) {
-        const chunk = JSON.parse(jsonStr);
-        if (chunk.candidates?.[0]?.content?.parts) {
-          chunks.push(chunk);
+      try {
+        const trimmed = buffer.trim();
+        // Remove potential trailing brackets/commas if it looks like a valid object inside
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+            const chunk = JSON.parse(trimmed);
+            if (chunk.candidates || chunk.usageMetadata) {
+                chunks.push(chunk);
+            }
         }
+      } catch (e) {
+          // Ignore
       }
-    } catch {
-      // Ignore remaining partial data
-    }
   }
 
   if (chunks.length === 0) {
+    console.error("Stream buffer dump:", buffer); // Debug info
     throw new Error("No valid chunks received from stream");
   }
 
   // Merge all chunks into a single response
-  // For generateContent, we combine all text parts
+  // We need to handle cases where text might be empty (e.g. thinking models)
   const lastChunk = chunks[chunks.length - 1];
 
   // Combine all text from all chunks
