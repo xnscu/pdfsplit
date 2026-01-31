@@ -44,61 +44,39 @@ const resolveImageToBase64 = async (imageRef: string): Promise<{ mimeType: strin
   return imageRefToInlineImageData(imageRef);
 };
 
-interface GeminiProxyRequest {
-  url: string;
-  method?: string;
-  headers?: Record<string, string>;
-  body?: any;
-}
+
 
 /**
  * Make a request through the Gemini proxy endpoint on the worker (non-streaming)
  */
-const callViaProxy = async (request: GeminiProxyRequest, signal?: AbortSignal): Promise<any> => {
-  const response = await fetch(`${getApiBase()}/gemini/proxy`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-    signal,
-  });
 
-  const responseText = await response.text();
-  let data;
-  try {
-    data = JSON.parse(responseText);
-  } catch {
-    throw new Error(`Invalid JSON response: ${responseText.slice(0, 200)}`);
-  }
-
-  if (!response.ok || data.error) {
-    const errorMessage = data.error?.message || data.error || `HTTP ${response.status}`;
-    throw new Error(errorMessage);
-  }
-
-  return data;
-};
 
 /**
  * Make a streaming request through the Gemini proxy endpoint
  * Uses streamGenerateContent API to avoid Cloudflare 524 timeout
  * Returns accumulated response from all chunks
  */
-const callViaProxyStream = async (request: GeminiProxyRequest, signal?: AbortSignal): Promise<any> => {
-  // Convert URL from generateContent to streamGenerateContent
-  const streamUrl = request.url.replace(":generateContent", ":streamGenerateContent");
+const callViaProxyStream = async (url: string, body: any, signal?: AbortSignal): Promise<any> => {
+  // 1. Force use of streamGenerateContent to avoid timeouts
+  // Replace the method in the URL, e.g. ...:generateContent -> ...:streamGenerateContent
+  let streamUrl = url;
+  if (url.includes(":generateContent")) {
+    streamUrl = url.replace(":generateContent", ":streamGenerateContent");
+  } else if (!url.includes(":streamGenerateContent")) {
+    // Fallback if URL structure is unexpected, though usually it will match above
+    streamUrl = url + "?alt=sse"; // or similar, but Gemini uses :streamGenerateContent
+  }
 
-  const response = await fetch(`${getApiBase()}/gemini/proxy`, {
+  // 2. Rewrite URL to point to our transparent proxy
+  // https://generativelanguage.googleapis.com/... -> /api/gemini/...
+  const proxyUrl = streamUrl.replace("https://generativelanguage.googleapis.com", `${getApiBase()}/gemini`);
+
+  const response = await fetch(proxyUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      ...request,
-      url: streamUrl,
-      stream: true,
-    }),
+    body: JSON.stringify(body),
     signal,
   });
 
@@ -284,7 +262,7 @@ const callDirect = async (url: string, body: any, signal?: AbortSignal): Promise
 const callGemini = async (url: string, body: any, signal?: AbortSignal): Promise<any> => {
   if (isProxyEnabled()) {
     console.log("[Gemini] Using Worker proxy mode with streaming");
-    return callViaProxyStream({ url, method: "POST", body }, signal);
+    return callViaProxyStream(url, body, signal);
   } else {
     console.log("[Gemini] Using direct browser mode");
     return callDirect(url, body, signal);

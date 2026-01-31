@@ -4,6 +4,8 @@
  * Static assets are served by the Cloudflare Vite plugin / ASSETS binding
  */
 
+import ProxyWorker from './proxy.mjs';
+
 // CORS headers for cross-origin requests
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -54,7 +56,7 @@ export default {
     try {
       // API Routes - handle first
       if (path.startsWith('/api/')) {
-        return handleApiRoutes(request, env, path, method);
+        return handleApiRoutes(request, env, ctx, path, method);
       }
 
       // Static assets - served by ASSETS binding (Cloudflare Vite plugin)
@@ -76,7 +78,7 @@ export default {
 /**
  * Handle all API routes
  */
-async function handleApiRoutes(request, env, path, method) {
+async function handleApiRoutes(request, env, ctx, path, method) {
   const db = env.DB;
   const r2 = env.R2;
 
@@ -175,13 +177,19 @@ async function handleApiRoutes(request, env, path, method) {
     return handleUpdateQuestions(db, id, body.questions);
   }
 
-  // === Gemini Proxy Routes ===
+  // === Gemini Proxy Routes (Transparent, using src/proxy.mjs directly) ===
 
-  // POST /api/gemini/proxy - Proxy Gemini API requests
-  if (path === '/api/gemini/proxy' && method === 'POST') {
-    const body = await parseBody(request);
-    if (!body) return errorResponse('Invalid JSON body');
-    return handleGeminiProxy(body);
+  // Proxy all requests starting with /api/gemini/
+  if (path.startsWith('/api/gemini/')) {
+    // Strip /api/gemini/ prefix to get the target path expected by proxy.mjs
+    // proxy.mjs expects the URL to be the target path on generativelanguage.googleapis.com
+    const urlObj = new URL(request.url);
+    urlObj.pathname = urlObj.pathname.replace('/api/gemini', '');
+    
+    // Create a new request with the modified URL but keeping the original body stream and signals
+    const newRequest = new Request(urlObj.toString(), request);
+    
+    return ProxyWorker.fetch(newRequest, env, ctx);
   }
 
   return errorResponse('Not Found', 404);
@@ -819,73 +827,4 @@ async function saveExamToDb(db, examData, source) {
   await db.batch(statements);
 }
 
-// ============ Gemini Proxy Handler ============
 
-/**
- * Transparent proxy for Gemini API with streaming support
- * Supports both regular generateContent and streaming streamGenerateContent
- * Streaming mode keeps the connection alive to avoid Cloudflare 524 timeout (>100s)
- */
-async function handleGeminiProxy(body) {
-  const { url, method = 'POST', headers = {}, body: requestBody, stream = false } = body;
-
-  if (!url) {
-    return errorResponse('URL is required');
-  }
-
-  // Validate URL is for Gemini API
-  if (!url.startsWith('https://generativelanguage.googleapis.com/')) {
-    return errorResponse('Only generativelanguage.googleapis.com URLs are allowed');
-  }
-
-  // Check if this is a streaming request (URL contains streamGenerateContent or stream flag is true)
-  const isStreamRequest = stream || url.includes('streamGenerateContent');
-
-  try {
-    // Forward the request as-is
-    const response = await fetch(url, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...headers,
-      },
-      body: requestBody ? JSON.stringify(requestBody) : undefined,
-    });
-
-    // For streaming requests, pipe the response body directly to avoid timeout
-    if (isStreamRequest && response.body) {
-      // Create a TransformStream to pass through the response
-      const { readable, writable } = new TransformStream();
-
-      // Pipe the response body to the writable side
-      response.body.pipeTo(writable).catch((err) => {
-        console.error('Stream pipe error:', err);
-      });
-
-      return new Response(readable, {
-        status: response.status,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': response.headers.get('Content-Type') || 'application/json',
-          'Transfer-Encoding': 'chunked',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-      });
-    }
-
-    // For non-streaming requests, read and return the full response
-    const responseText = await response.text();
-
-    return new Response(responseText, {
-      status: response.status,
-      headers: {
-        ...corsHeaders,
-        'Content-Type': response.headers.get('Content-Type') || 'application/json',
-      },
-    });
-  } catch (error) {
-    console.error('Gemini proxy error:', error);
-    return errorResponse(`Gemini API error: ${error.message}`, 500);
-  }
-}
