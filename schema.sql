@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS exams (
     name TEXT NOT NULL,
     timestamp INTEGER NOT NULL,
     page_count INTEGER NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now', 'utc')),
+    updated_at TEXT DEFAULT (datetime('now', 'utc'))
 );
 
 -- Index for faster queries
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS sync_history (
     file_count INTEGER NOT NULL,
     success BOOLEAN NOT NULL DEFAULT 1,
     error_message TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now', 'utc'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_sync_history_sync_time ON sync_history(sync_time DESC);

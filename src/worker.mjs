@@ -361,14 +361,14 @@ async function handleSaveExam(db, examData) {
   // Upsert exam record
   statements.push(
     db.prepare(`
-      INSERT INTO exams (id, name, timestamp, page_count, updated_at)
-      VALUES (?, ?, ?, ?, datetime('now'))
+      INSERT INTO exams (id, name, timestamp, page_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         timestamp = excluded.timestamp,
         page_count = excluded.page_count,
-        updated_at = datetime('now')
-    `).bind(id, name, serverTimestamp, pageCount || 0)
+        updated_at = excluded.updated_at
+    `).bind(id, name, serverTimestamp, pageCount || 0, new Date().toISOString().replace('T', ' ').slice(0, 19), new Date().toISOString().replace('T', ' ').slice(0, 19))
   );
 
   // === INCREMENTAL UPDATE for raw_pages ===
@@ -552,7 +552,7 @@ async function handleUpdateQuestions(db, examId, questions) {
   // IMPORTANT: Update both timestamp and updated_at to ensure sync/pull can detect changes
   const serverTimestamp = Date.now();
   statements.push(
-    db.prepare('UPDATE exams SET timestamp = ?, updated_at = datetime(\'now\') WHERE id = ?').bind(serverTimestamp, examId)
+    db.prepare('UPDATE exams SET timestamp = ?, updated_at = ? WHERE id = ?').bind(serverTimestamp, new Date().toISOString().replace('T', ' ').slice(0, 19), examId)
   );
 
   // Add sync log entry for tracking
@@ -710,14 +710,14 @@ async function saveExamToDb(db, examData, source) {
 
   statements.push(
     db.prepare(`
-      INSERT INTO exams (id, name, timestamp, page_count, updated_at)
-      VALUES (?, ?, ?, ?, datetime('now'))
+      INSERT INTO exams (id, name, timestamp, page_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         timestamp = excluded.timestamp,
         page_count = excluded.page_count,
-        updated_at = datetime('now')
-    `).bind(id, name, serverTimestamp, pageCount || 0)
+        updated_at = excluded.updated_at
+    `).bind(id, name, serverTimestamp, pageCount || 0, new Date().toISOString().replace('T', ' ').slice(0, 19), new Date().toISOString().replace('T', ' ').slice(0, 19))
   );
 
   // === INCREMENTAL UPDATE for raw_pages ===
