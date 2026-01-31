@@ -782,12 +782,50 @@ const App: React.FC = () => {
                         </p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => updateDebugFile(fileName)}
-                      className="px-4 py-2 bg-blue-50 text-blue-600 font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-blue-100 transition-colors"
-                    >
-                      Inspect
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const item = state.historyList.find((h) => h.name === fileName);
+                          if (item) {
+                            actions.addNotification(null, "success", `Pushing ${fileName}...`);
+                            syncHook.forceUploadSelected([item.id]);
+                          } else {
+                             actions.addNotification(null, "error", `Could not find ID for ${fileName}`);
+                          }
+                        }}
+                        className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg border border-indigo-100 transition-colors"
+                        title="Push (Upload)"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const item = state.historyList.find((h) => h.name === fileName);
+                          if (item) {
+                            actions.addNotification(null, "success", `Pulling ${fileName}...`);
+                            syncHook.forceDownloadSelected([item.id]);
+                          } else {
+                             actions.addNotification(null, "error", `Could not find ID for ${fileName}`);
+                          }
+                        }}
+                        className="p-2 bg-cyan-50 text-cyan-600 hover:bg-cyan-600 hover:text-white rounded-lg border border-cyan-100 transition-colors"
+                        title="Pull (Download)"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => updateDebugFile(fileName)}
+                        className="px-4 py-2 bg-blue-50 text-blue-600 font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-blue-100 transition-colors"
+                      >
+                        Inspect
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
