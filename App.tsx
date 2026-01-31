@@ -98,8 +98,12 @@ const App: React.FC = () => {
   const [isAutoAnalyze, setIsAutoAnalyze] = useState(false);
   // Ref to access current value inside async functions
   const isAutoAnalyzeRef = useRef(false);
+
   // Ref to track if analysis is running to prevent auto-advance after stop
   const isAnalysisRunningRef = useRef(false);
+  
+  // Selection State for Processed Files
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     isAutoAnalyzeRef.current = isAutoAnalyze;
@@ -425,6 +429,60 @@ const App: React.FC = () => {
     }
   };
 
+  const handleToggleFile = (fileName: string) => {
+    setSelectedFiles((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(fileName)) {
+        newSet.delete(fileName);
+      } else {
+        newSet.add(fileName);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedFiles.size === sortedFileNames.length) {
+      setSelectedFiles(new Set());
+    } else {
+      setSelectedFiles(new Set(sortedFileNames));
+    }
+  };
+
+  const handleUploadSelected = async () => {
+    if (selectedFiles.size === 0) return;
+
+    // Find IDs for the selected filenames
+    const selectedIds: string[] = [];
+    const missingFiles: string[] = [];
+
+    selectedFiles.forEach((fileName) => {
+      // Look up ID in history list matching the name
+      const item = state.historyList.find((h) => h.name === fileName);
+      if (item) {
+        selectedIds.push(item.id);
+      } else {
+        missingFiles.push(fileName);
+      }
+    });
+
+    if (missingFiles.length > 0) {
+      actions.addNotification(null, "error", `Cannot upload unsaved files: ${missingFiles.join(", ")}`);
+      // If we found some valid IDs, we can still proceed with those, or abort. 
+      // Let's abort to be safe and encourage saving.
+      if (selectedIds.length === 0) return;
+    }
+
+    try {
+      actions.addNotification(null, "success", `Starting upload of ${selectedIds.length} files...`);
+      await syncHook.forceUploadSelected(selectedIds);
+      actions.addNotification(null, "success", "Selected files uploaded successfully");
+      setSelectedFiles(new Set()); // Clear selection after successful upload
+    } catch (err: any) {
+      actions.addNotification(null, "error", `Upload failed: ${err.message}`);
+    }
+  };
+
   const handleGlobalDownload = () => {
     setConfirmState({
       isOpen: true,
@@ -597,6 +655,18 @@ const App: React.FC = () => {
                       Return to Inspector
                     </button>
                   )}
+                  {selectedFiles.size > 0 && (
+                    <button
+                      onClick={handleUploadSelected}
+                      disabled={syncHook.status.isSyncing}
+                      className="px-5 py-2.5 bg-green-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                      Upload Selected ({selectedFiles.size})
+                    </button>
+                  )}
                   <button
                     onClick={handleGlobalDownload}
                     disabled={zippingFile !== null}
@@ -628,12 +698,34 @@ const App: React.FC = () => {
                 </div>
               </div>
               <div className="grid gap-4">
+                <div className="flex items-center gap-2 mb-2">
+                   <div className="flex items-center">
+                     <input
+                       type="checkbox"
+                       checked={sortedFileNames.length > 0 && selectedFiles.size === sortedFileNames.length}
+                       onChange={handleSelectAll}
+                       className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer ml-1"
+                     />
+                     <span className="ml-2 text-sm text-slate-500 font-medium cursor-pointer" onClick={handleSelectAll}>Select All</span>
+                   </div>
+                </div>
                 {sortedFileNames.map((fileName, idx) => (
                   <div
                     key={fileName}
-                    className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex items-center justify-between group"
+                    className={`bg-white p-5 rounded-2xl border transition-all flex items-center justify-between group ${
+                      selectedFiles.has(fileName) ? "border-blue-400 shadow-md ring-1 ring-blue-100" : "border-slate-200 shadow-sm hover:shadow-md"
+                    }`}
                   >
                     <div className="flex items-center gap-4">
+                      <div className="flex items-center h-full">
+                        <input
+                          type="checkbox"
+                          checked={selectedFiles.has(fileName)}
+                          onChange={() => handleToggleFile(fileName)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        />
+                      </div>
                       <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-black text-sm">
                         {idx + 1}
                       </div>
