@@ -812,6 +812,23 @@ const App: React.FC = () => {
         onBatchDelete={handleBatchDeleteHistoryItems}
         onFilesUpdated={handleFilesUpdated}
         onLoadExamsWithPictureOkFalse={handleLoadExamsWithPictureOkFalse}
+        onPush={async (id) => {
+          try {
+            actions.addNotification(null, "success", "正在推送到云端...");
+            await syncHook.forceUploadSelected([id]);
+          } catch (e) {
+            console.error(e);
+          }
+        }}
+        onPull={async (id) => {
+          try {
+            actions.addNotification(null, "success", "正在从云端拉取...");
+            await syncHook.forceDownloadSelected([id]);
+            await refreshHistoryList();
+          } catch (e) {
+            console.error(e);
+          }
+        }}
       />
       <ConfigurationPanel
         isOpen={showSettings}

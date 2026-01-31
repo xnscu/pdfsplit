@@ -1364,6 +1364,112 @@ export const forceDownloadAll = async (onProgress?: SyncProgressCallback): Promi
   return result;
 };
 
+/**
+ * Force download selected exams from remote to local
+ * Note: Downloaded data keeps hash references; frontend handles URL resolution
+ */
+export const forceDownloadSelected = async (
+  selectedExamIds: string[],
+  onProgress?: SyncProgressCallback
+): Promise<SyncResult> => {
+  const result: SyncResult = {
+    success: true,
+    pushed: 0,
+    pulled: 0,
+    conflicts: [],
+    errors: [],
+    pulledNames: [],
+  };
+
+  const handleProgress = (progress: SyncProgress) => {
+    onProgress?.(progress);
+    notifyProgress(progress);
+  };
+
+  currentSyncAbortController = new AbortController();
+
+  try {
+    const total = selectedExamIds.length;
+
+    handleProgress({
+      phase: "downloading",
+      message: `准备下载 ${total} 个试卷`,
+      current: 0,
+      total,
+      percentage: 0,
+    });
+
+    for (let i = 0; i < total; i++) {
+      const id = selectedExamIds[i];
+
+      handleProgress({
+        phase: "downloading",
+        message: `正在下载 ID: ${id}...`,
+        current: i,
+        total,
+        percentage: Math.round((i / total) * 100),
+      });
+
+      try {
+        const exam = await getRemoteExam(id);
+        if (exam) {
+          await saveExamToLocal(exam);
+          result.pulled++;
+          result.pulledNames!.push(exam.name);
+          
+          handleProgress({
+             phase: "downloading",
+             message: `正在下载: ${exam.name}`,
+             current: i + 1,
+             total,
+             percentage: Math.round(((i + 1) / total) * 100),
+           });
+        } else {
+          result.errors.push(`Failed to download exam ID: ${id} (Not found on remote)`);
+        }
+      } catch (err) {
+         result.errors.push(`Failed to download exam ID: ${id} - ${err}`);
+      }
+    }
+
+    syncState.lastSyncTime = Date.now();
+    saveSyncState();
+
+    // Record sync history
+    const pulledNames = result.pulledNames || [];
+    await syncHistoryService.saveSyncHistory(
+      "pull",
+      pulledNames,
+      result.success,
+      result.errors.length > 0 ? result.errors.join("; ") : undefined
+    );
+
+    handleProgress({
+      phase: "completed",
+      message: `下载完成: ${result.pulled} 个试卷`,
+      current: total,
+      total,
+      percentage: 100,
+    });
+  } catch (e) {
+    result.success = false;
+    result.errors.push(`Force download failed: ${e}`);
+    // Record failed sync
+    await syncHistoryService.saveSyncHistory("pull", [], false, `Force download failed: ${e}`);
+    handleProgress({
+      phase: "completed",
+      message: `下载失败: ${e}`,
+      current: 0,
+      total: 0,
+      percentage: 0,
+    });
+  } finally {
+    currentSyncAbortController = null;
+  }
+
+  return result;
+};
+
 // ============ Wrapper Functions for Dual Storage ============
 
 /**

@@ -21,6 +21,8 @@ interface Props {
   onBatchDelete: (ids: string[]) => Promise<void>;
   onFilesUpdated?: (pulledNames: string[]) => void;
   onLoadExamsWithPictureOkFalse?: () => void;
+  onPush?: (id: string) => Promise<void>;
+  onPull?: (id: string) => Promise<void>;
 }
 
 type SortOption = "name_asc" | "name_desc" | "date_newest" | "date_oldest";
@@ -45,6 +47,8 @@ export const HistorySidebar: React.FC<Props> = ({
   onBatchDelete,
   onFilesUpdated,
   onLoadExamsWithPictureOkFalse,
+  onPush,
+  onPull,
 }) => {
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
   const [isCleaning, setIsCleaning] = useState(false);
@@ -419,9 +423,10 @@ export const HistorySidebar: React.FC<Props> = ({
                         </button>
                       </div>
                     </div>
+                    <div className="flex items-center gap-2">
                     <button
                       onClick={() => onLoadHistory(item.id)}
-                      className="w-full py-2.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
+                      className="flex-1 py-2.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path
@@ -433,6 +438,29 @@ export const HistorySidebar: React.FC<Props> = ({
                       </svg>
                       Load
                     </button>
+                    {onPush && (
+                      <button
+                        onClick={() => onPush(item.id)}
+                        className="w-10 py-2.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center border border-indigo-100"
+                        title="Push (Upload to Remote)"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                        </svg>
+                      </button>
+                    )}
+                    {onPull && (
+                      <button
+                        onClick={() => onPull(item.id)}
+                        className="w-10 py-2.5 bg-cyan-50 text-cyan-600 hover:bg-cyan-600 hover:text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center border border-cyan-100"
+                        title="Pull (Download from Remote)"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                        </svg>
+                      </button>
+                    )}
+                    </div>
                   </div>
                 </div>
               ))
