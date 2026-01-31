@@ -324,7 +324,7 @@ async function handleGetExam(db, id) {
   // Get questions
   const questionsResult = await db.prepare(`
     SELECT id, page_number as pageNumber, file_name as fileName,
-           data_url as dataUrl, analysis
+           data_url as dataUrl, analysis, pro_analysis
     FROM questions WHERE exam_id = ?
     ORDER BY page_number
   `).bind(id).all();
@@ -332,6 +332,7 @@ async function handleGetExam(db, id) {
   const questions = questionsResult.results.map(q => ({
     ...q,
     analysis: q.analysis ? JSON.parse(q.analysis) : undefined,
+    pro_analysis: q.pro_analysis ? JSON.parse(q.pro_analysis) : undefined,
   }));
 
   return jsonResponse({
@@ -425,20 +426,22 @@ async function handleSaveExam(db, examData) {
       incomingQuestionIds.push(qId);
       statements.push(
         db.prepare(`
-          INSERT INTO questions (id, exam_id, page_number, file_name, data_url, analysis)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO questions (id, exam_id, page_number, file_name, data_url, analysis, pro_analysis)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(exam_id, id) DO UPDATE SET
             page_number = excluded.page_number,
             file_name = excluded.file_name,
             data_url = excluded.data_url,
-            analysis = excluded.analysis
+            analysis = excluded.analysis,
+            pro_analysis = excluded.pro_analysis
         `).bind(
           qId,
           id,
           q.pageNumber,
           q.fileName,
           q.dataUrl,
-          q.analysis ? JSON.stringify(q.analysis) : null
+          q.analysis ? JSON.stringify(q.analysis) : null,
+          q.pro_analysis ? JSON.stringify(q.pro_analysis) : null
         )
       );
     }
@@ -535,15 +538,16 @@ async function handleUpdateQuestions(db, examId, questions) {
     for (const q of questions) {
       statements.push(
         db.prepare(`
-          INSERT OR REPLACE INTO questions (id, exam_id, page_number, file_name, data_url, analysis)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT OR REPLACE INTO questions (id, exam_id, page_number, file_name, data_url, analysis, pro_analysis)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         `).bind(
           q.id || crypto.randomUUID(),
           examId,
           q.pageNumber,
           q.fileName,
           q.dataUrl,
-          q.analysis ? JSON.stringify(q.analysis) : null
+          q.analysis ? JSON.stringify(q.analysis) : null,
+          q.pro_analysis ? JSON.stringify(q.pro_analysis) : null
         )
       );
     }
@@ -686,7 +690,7 @@ async function getFullExam(db, id) {
 
   const questionsResult = await db.prepare(`
     SELECT id, page_number as pageNumber, file_name as fileName,
-           data_url as dataUrl, analysis
+           data_url as dataUrl, analysis, pro_analysis
     FROM questions WHERE exam_id = ?
     ORDER BY page_number
   `).bind(id).all();
@@ -694,6 +698,7 @@ async function getFullExam(db, id) {
   const questions = questionsResult.results.map(q => ({
     ...q,
     analysis: q.analysis ? JSON.parse(q.analysis) : undefined,
+    pro_analysis: q.pro_analysis ? JSON.parse(q.pro_analysis) : undefined,
   }));
 
   return { ...exam, rawPages, questions };
@@ -770,20 +775,22 @@ async function saveExamToDb(db, examData, source) {
       incomingQuestionIds.push(qId);
       statements.push(
         db.prepare(`
-          INSERT INTO questions (id, exam_id, page_number, file_name, data_url, analysis)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO questions (id, exam_id, page_number, file_name, data_url, analysis, pro_analysis)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(exam_id, id) DO UPDATE SET
             page_number = excluded.page_number,
             file_name = excluded.file_name,
             data_url = excluded.data_url,
-            analysis = excluded.analysis
+            analysis = excluded.analysis,
+            pro_analysis = excluded.pro_analysis
         `).bind(
           qId,
           id,
           q.pageNumber,
           q.fileName,
           q.dataUrl,
-          q.analysis ? JSON.stringify(q.analysis) : null
+          q.analysis ? JSON.stringify(q.analysis) : null,
+          q.pro_analysis ? JSON.stringify(q.pro_analysis) : null
         )
       );
     }

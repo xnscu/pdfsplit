@@ -252,7 +252,14 @@ const App: React.FC = () => {
       );
 
       // Update state
-      const updatedQuestion = { ...q, analysis };
+      const isPro = (state.selectedModel || MODEL_IDS.FLASH) === MODEL_IDS.PRO;
+      const updatedQuestion = { ...q };
+      if (isPro) {
+        updatedQuestion.pro_analysis = analysis;
+      } else {
+        updatedQuestion.analysis = analysis;
+      }
+      
       setters.setQuestions((prev: QuestionImage[]) => {
         return prev.map((item) => {
           if (item.fileName === q.fileName && item.id === q.id) {

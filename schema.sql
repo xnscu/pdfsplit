@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS questions (
     data_url TEXT NOT NULL,  -- Base64 encoded cropped image
     original_data_url TEXT,  -- Optional, for before/after comparison
     analysis TEXT,           -- JSON object of QuestionAnalysis
+    pro_analysis TEXT,       -- JSON object of QuestionAnalysis from Gemini Pro
     PRIMARY KEY (exam_id, id),
     FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE
 );

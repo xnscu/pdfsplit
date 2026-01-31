@@ -33,6 +33,7 @@ export interface QuestionImage {
   fileName: string; // Added to track which PDF this question belongs to
   dataUrl: string;
   analysis?: QuestionAnalysis; // New optional field
+  pro_analysis?: QuestionAnalysis; // Storage for Gemini Pro results
 }
 
 export interface DebugPageData {

@@ -73,7 +73,14 @@ export const useAnalysisProcessor = ({ state, setters, refs, actions }: Analysis
         // 请求完成后，再次检查停止标志，如果已停止则不更新状态
         if (stopRequestedRef.current || analysisSignal.aborted) return;
 
-        const updatedQ = { ...q, analysis };
+        const isPro = selectedModel === MODEL_IDS.PRO;
+        const updatedQ = { ...q };
+        if (isPro) {
+          updatedQ.pro_analysis = analysis;
+        } else {
+          updatedQ.analysis = analysis;
+        }
+
         localMap.set(q.id, updatedQ);
 
         setQuestions((prev: QuestionImage[]) => {
