@@ -815,11 +815,12 @@ async function saveExamToDb(db, examData, source) {
 // ============ Gemini Proxy Handler ============
 
 /**
- * Transparent proxy for Gemini API
- * Simply forwards requests to https://generativelanguage.googleapis.com
+ * Transparent proxy for Gemini API with streaming support
+ * Supports both regular generateContent and streaming streamGenerateContent
+ * Streaming mode keeps the connection alive to avoid Cloudflare 524 timeout (>100s)
  */
 async function handleGeminiProxy(body) {
-  const { url, method = 'POST', headers = {}, body: requestBody } = body;
+  const { url, method = 'POST', headers = {}, body: requestBody, stream = false } = body;
 
   if (!url) {
     return errorResponse('URL is required');
@@ -829,6 +830,9 @@ async function handleGeminiProxy(body) {
   if (!url.startsWith('https://generativelanguage.googleapis.com/')) {
     return errorResponse('Only generativelanguage.googleapis.com URLs are allowed');
   }
+
+  // Check if this is a streaming request (URL contains streamGenerateContent or stream flag is true)
+  const isStreamRequest = stream || url.includes('streamGenerateContent');
 
   try {
     // Forward the request as-is
@@ -841,10 +845,31 @@ async function handleGeminiProxy(body) {
       body: requestBody ? JSON.stringify(requestBody) : undefined,
     });
 
-    // Get response body
+    // For streaming requests, pipe the response body directly to avoid timeout
+    if (isStreamRequest && response.body) {
+      // Create a TransformStream to pass through the response
+      const { readable, writable } = new TransformStream();
+
+      // Pipe the response body to the writable side
+      response.body.pipeTo(writable).catch((err) => {
+        console.error('Stream pipe error:', err);
+      });
+
+      return new Response(readable, {
+        status: response.status,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': response.headers.get('Content-Type') || 'application/json',
+          'Transfer-Encoding': 'chunked',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+
+    // For non-streaming requests, read and return the full response
     const responseText = await response.text();
 
-    // Return response with same status
     return new Response(responseText, {
       status: response.status,
       headers: {

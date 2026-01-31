@@ -52,7 +52,7 @@ interface GeminiProxyRequest {
 }
 
 /**
- * Make a request through the Gemini proxy endpoint on the worker
+ * Make a request through the Gemini proxy endpoint on the worker (non-streaming)
  */
 const callViaProxy = async (request: GeminiProxyRequest, signal?: AbortSignal): Promise<any> => {
   const response = await fetch(`${getApiBase()}/gemini/proxy`, {
@@ -78,6 +78,141 @@ const callViaProxy = async (request: GeminiProxyRequest, signal?: AbortSignal): 
   }
 
   return data;
+};
+
+/**
+ * Make a streaming request through the Gemini proxy endpoint
+ * Uses streamGenerateContent API to avoid Cloudflare 524 timeout
+ * Returns accumulated response from all chunks
+ */
+const callViaProxyStream = async (request: GeminiProxyRequest, signal?: AbortSignal): Promise<any> => {
+  // Convert URL from generateContent to streamGenerateContent
+  const streamUrl = request.url.replace(":generateContent", ":streamGenerateContent");
+
+  const response = await fetch(`${getApiBase()}/gemini/proxy`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      ...request,
+      url: streamUrl,
+      stream: true,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage;
+    try {
+      const errorData = JSON.parse(errorText);
+      errorMessage = errorData.error?.message || errorData.error || `HTTP ${response.status}`;
+    } catch {
+      errorMessage = errorText || `HTTP ${response.status}`;
+    }
+    throw new Error(errorMessage);
+  }
+
+  if (!response.body) {
+    throw new Error("No response body");
+  }
+
+  // Read the streaming response
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  // Collect all chunks
+  const chunks: any[] = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (signal?.aborted) {
+      reader.cancel();
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // Parse SSE-style chunks (Gemini stream format: array of JSON objects separated by newlines)
+    // Each chunk is a complete JSON object in the array
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      // Skip opening/closing brackets and commas (Gemini streams as JSON array)
+      if (trimmed === "[" || trimmed === "]" || trimmed === ",") continue;
+
+      // Try to parse each line as JSON
+      try {
+        // Remove trailing comma if present
+        const jsonStr = trimmed.endsWith(",") ? trimmed.slice(0, -1) : trimmed;
+        if (jsonStr.startsWith("{")) {
+          const chunk = JSON.parse(jsonStr);
+          if (chunk.candidates?.[0]?.content?.parts) {
+            chunks.push(chunk);
+          }
+        }
+      } catch (e) {
+        // Partial JSON, might need more data - ignore for now
+        console.debug("[Stream] Skipping unparseable chunk:", trimmed.slice(0, 100));
+      }
+    }
+  }
+
+  // Process remaining buffer
+  if (buffer.trim()) {
+    try {
+      const jsonStr = buffer.trim().endsWith(",") ? buffer.trim().slice(0, -1) : buffer.trim();
+      if (jsonStr.startsWith("{") && jsonStr.endsWith("}")) {
+        const chunk = JSON.parse(jsonStr);
+        if (chunk.candidates?.[0]?.content?.parts) {
+          chunks.push(chunk);
+        }
+      }
+    } catch {
+      // Ignore remaining partial data
+    }
+  }
+
+  if (chunks.length === 0) {
+    throw new Error("No valid chunks received from stream");
+  }
+
+  // Merge all chunks into a single response
+  // For generateContent, we combine all text parts
+  const lastChunk = chunks[chunks.length - 1];
+
+  // Combine all text from all chunks
+  let combinedText = "";
+  for (const chunk of chunks) {
+    const parts = chunk.candidates?.[0]?.content?.parts || [];
+    for (const part of parts) {
+      if (part.text) {
+        combinedText += part.text;
+      }
+    }
+  }
+
+  // Return in the same format as non-streaming response
+  return {
+    candidates: [
+      {
+        content: {
+          parts: [{ text: combinedText }],
+          role: lastChunk.candidates?.[0]?.content?.role || "model",
+        },
+        finishReason: lastChunk.candidates?.[0]?.finishReason || "STOP",
+      },
+    ],
+    usageMetadata: lastChunk.usageMetadata,
+  };
 };
 
 /**
@@ -110,12 +245,13 @@ const callDirect = async (url: string, body: any, signal?: AbortSignal): Promise
 };
 
 /**
- * Unified call function - chooses between proxy and direct based on settings
+ * Unified call function - chooses between proxy (streaming) and direct based on settings
+ * When using proxy mode, always uses streaming to avoid Cloudflare 524 timeout
  */
 const callGemini = async (url: string, body: any, signal?: AbortSignal): Promise<any> => {
   if (isProxyEnabled()) {
-    console.log("[Gemini] Using Worker proxy mode");
-    return callViaProxy({ url, method: "POST", body }, signal);
+    console.log("[Gemini] Using Worker proxy mode with streaming");
+    return callViaProxyStream({ url, method: "POST", body }, signal);
   } else {
     console.log("[Gemini] Using direct browser mode");
     return callDirect(url, body, signal);
