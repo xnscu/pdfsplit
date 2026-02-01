@@ -122,6 +122,12 @@ export const SCHEMAS = {
     },
     required: [
       "picture_ok",
+      "difficulty",
+      "question_type",
+      "tags",
+      "question_md",
+      "solution_md",
+      "analysis_md",
     ],
   },
 };

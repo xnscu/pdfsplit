@@ -182,8 +182,8 @@ class GeminiAnalyzer {
       // Get image data (supports both hash and data URL)
       const { mimeType, data } = await this.getImageData(question.data_url);
       
-      // Call Gemini API with streaming
-      const response = await ai.models.generateContentStream({
+      // Call Gemini API with non-streaming
+      const response = await ai.models.generateContent({
         model: CONFIG.MODEL_ID,
         contents: [{
           parts: [
@@ -199,11 +199,7 @@ class GeminiAnalyzer {
         },
       });
       
-      // Collect streaming response
-      let fullText = "";
-      for await (const chunk of response) {
-        fullText += chunk.text;
-      }
+      const fullText = response.text();
       
       if (!fullText) {
         throw new Error("Empty response from Gemini");
