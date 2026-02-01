@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 
 // API base URL
 const API_BASE = '/api';
@@ -95,7 +96,14 @@ export function ApiKeyStatsPage() {
   return (
     <div className="api-key-stats-page">
       <div className="stats-header">
-        <h1>🔑 API Key 调用统计</h1>
+        <div className="flex items-center gap-4">
+          <Link to="/" className="back-btn" title="返回主应用">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+          </Link>
+          <h1>🔑 API Key 调用统计</h1>
+        </div>
         <div className="controls">
           <div className="time-range-buttons">
             {([0, 7, 30] as TimeRange[]).map((range) => (
@@ -222,6 +230,26 @@ export function ApiKeyStatsPage() {
           margin: 0;
           font-size: 1.5rem;
           color: #1a1a2e;
+        }
+
+        .back-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 40px;
+          height: 40px;
+          background: white;
+          border: 1px solid #d1d5db;
+          border-radius: 10px;
+          color: #4b5563;
+          transition: all 0.2s;
+          text-decoration: none;
+        }
+
+        .back-btn:hover {
+          background: #f3f4f6;
+          color: #1a1a2e;
+          transform: translateX(-2px);
         }
         
         .controls {

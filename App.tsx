@@ -13,6 +13,8 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotificationToast } from "./components/NotificationToast";
 import { SyncHistoryPanel } from "./components/SyncHistoryPanel";
 import { KeyStatsPanel } from "./components/KeyStatsPanel";
+import { Routes, Route, Link } from "react-router-dom";
+import { ApiKeyStatsPage } from "./components/ApiKeyStatsPage";
 import packageJson from "./package.json";
 import SyncStatus from "./components/SyncStatus";
 
@@ -597,6 +599,10 @@ const App: React.FC = () => {
 
   return (
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 pb-32`}>
+      <Routes>
+        <Route path="/key-stats" element={<ApiKeyStatsPage />} />
+        <Route path="*" element={
+          <>
       <div className="fixed top-6 right-6 z-[100] flex items-center gap-2">
         <button
           onClick={handleLoadExamsWithPictureOkFalse}
@@ -652,6 +658,15 @@ const App: React.FC = () => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         </button>
+        <Link
+          to="/key-stats"
+          className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-purple-600 hover:scale-105 transition-all flex items-center justify-center group"
+          title="API Key Statistics"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2" />
+          </svg>
+        </Link>
       </div>
 
       <Header
@@ -1015,6 +1030,9 @@ const App: React.FC = () => {
       <footer className="mt-24 text-center text-slate-400 text-xs py-12 border-t border-slate-100 font-bold tracking-widest uppercase">
         <p>© 2025 AI Exam Splitter | Precision Tooling | v{packageJson.version}</p>
       </footer>
+          </>
+        } />
+      </Routes>
     </div>
   );
 };
