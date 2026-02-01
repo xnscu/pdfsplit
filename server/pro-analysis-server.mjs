@@ -24,6 +24,7 @@ dotenv.config();
 
 const CONFIG = {
   API_BASE_URL: process.env.API_BASE_URL || 'https://gksx.xnscu.com',
+  CDN_URL: process.env.CDN_URL || 'https://r2-gksx.xnscu.com',
   BATCH_SIZE: parseInt(process.env.BATCH_SIZE) || 50,
   CONCURRENCY: parseInt(process.env.CONCURRENCY) || 5,
   INITIAL_DELAY_MS: parseInt(process.env.INITIAL_DELAY_MS) || 1000,
@@ -178,8 +179,8 @@ class GeminiAnalyzer {
       // Create Gemini client
       const ai = new GoogleGenAI({ apiKey: key });
       
-      // Extract base64 from data URL
-      const { mimeType, data } = this.extractBase64(question.data_url);
+      // Get image data (supports both hash and data URL)
+      const { mimeType, data } = await this.getImageData(question.data_url);
       
       // Call Gemini API with streaming
       const response = await ai.models.generateContentStream({
@@ -270,9 +271,61 @@ class GeminiAnalyzer {
     }
   }
   
+  /**
+   * Check if a value looks like a hash (64 hex characters for SHA-256)
+   */
+  isImageHash(value) {
+    return /^[a-f0-9]{64}$/i.test(value);
+  }
+  
+  /**
+   * Build CDN URL from hash
+   */
+  buildImageUrl(hash) {
+    const cdnBase = CONFIG.CDN_URL.replace(/\/$/, '');
+    return `${cdnBase}/${hash}`;
+  }
+  
+  /**
+   * Fetch image from URL and convert to base64 data URL
+   */
+  async fetchImageAsBase64(url) {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+    }
+    
+    const contentType = response.headers.get('content-type') || 'image/png';
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    
+    return {
+      mimeType: contentType,
+      data: base64,
+    };
+  }
+  
+  /**
+   * Get image data from data_url field
+   * Supports both:
+   * - SHA-256 hash: fetch from CDN and convert to base64
+   * - Data URL: extract base64 directly
+   */
+  async getImageData(dataUrl) {
+    // Check if it's a hash
+    if (this.isImageHash(dataUrl)) {
+      const imageUrl = this.buildImageUrl(dataUrl);
+      console.log(`[Analyzer] Fetching image from CDN: ${imageUrl}`);
+      return await this.fetchImageAsBase64(imageUrl);
+    }
+    
+    // Otherwise treat as data URL
+    return this.extractBase64(dataUrl);
+  }
+  
   extractBase64(dataUrl) {
     if (!dataUrl.startsWith('data:')) {
-      throw new Error('Invalid data URL');
+      throw new Error(`Invalid data URL: ${dataUrl.slice(0, 50)}...`);
     }
     
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
