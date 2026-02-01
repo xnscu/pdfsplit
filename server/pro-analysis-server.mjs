@@ -206,6 +206,30 @@ class GeminiAnalyzer {
       }
       
       const analysis = JSON.parse(fullText);
+      
+      // Validate required fields
+      const requiredFields = [
+        "picture_ok",
+        "difficulty",
+        "question_type",
+        "tags",
+        "question_md",
+        "solution_md",
+        "analysis_md"
+      ];
+
+      for (const field of requiredFields) {
+        const value = analysis[field];
+        if (
+          value === null || 
+          value === undefined || 
+          (Array.isArray(value) && value.length === 0) || 
+          (typeof value === 'string' && value.trim() === '')
+        ) {
+          throw new Error(`Validation failed: Field '${field}' is empty`);
+        }
+      }
+
       const durationMs = Date.now() - startTime;
       
       // Success - reset backoff and record stats
