@@ -155,7 +155,6 @@ Content-Type: application/json
 
 {
   "api_key_prefix": "AIzaSyBx",
-  "api_key_hash": "abc123...",
   "success": true,
   "duration_ms": 3000,
   "question_id": "xxx",

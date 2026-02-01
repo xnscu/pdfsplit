@@ -11,7 +11,7 @@
 
 import { GoogleGenAI } from '@google/genai';
 import { readFileSync, existsSync } from 'fs';
-import { createHash } from 'crypto';
+
 import dotenv from 'dotenv';
 
 // Import shared config from frontend (reuse same prompt/schema)
@@ -90,10 +90,7 @@ class KeyPool {
     return key.slice(-4);
   }
   
-  // Get key hash for storage
-  getKeyHash(key) {
-    return createHash('sha256').update(key).digest('hex').slice(0, 16);
-  }
+
 }
 
 // ============ API Client ============
@@ -165,7 +162,7 @@ class GeminiAnalyzer {
   async analyzeQuestion(question) {
     const key = this.keyPool.getNext();
     const keyPrefix = this.keyPool.getKeyPrefix(key);
-    const keyHash = this.keyPool.getKeyHash(key);
+
     const startTime = Date.now();
     
     try {
@@ -238,7 +235,6 @@ class GeminiAnalyzer {
       
       await this.cloudClient.recordKeyStats({
         api_key_prefix: keyPrefix,
-        api_key_hash: keyHash,
         success: true,
         question_id: question.question_id,
         exam_id: question.exam_id,
@@ -272,7 +268,6 @@ class GeminiAnalyzer {
       
       await this.cloudClient.recordKeyStats({
         api_key_prefix: keyPrefix,
-        api_key_hash: keyHash,
         success: false,
         error_message: error.message?.slice(0, 200),
         question_id: question.question_id,

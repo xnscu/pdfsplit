@@ -17,7 +17,6 @@ keyStatsRoutes.post('/record', async (c) => {
 
   const {
     api_key_prefix,
-    api_key_hash,
     success,
     error_message,
     question_id,
@@ -26,15 +25,14 @@ keyStatsRoutes.post('/record', async (c) => {
     model_id,
   } = body;
 
-  await db.prepare(`
+    await db.prepare(`
     INSERT INTO api_key_stats (
-      id, api_key_hash, api_key_prefix, call_time, success, 
+      id, api_key_prefix, call_time, success, 
       error_message, question_id, exam_id, duration_ms, model_id
     )
-    VALUES (?, ?, ?, datetime('now', 'utc'), ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, datetime('now', 'utc'), ?, ?, ?, ?, ?, ?)
   `).bind(
     crypto.randomUUID(),
-    api_key_hash || api_key_prefix,
     api_key_prefix,
     success ? 1 : 0,
     error_message || null,
