@@ -24,7 +24,12 @@ const defaultCropSettings: CropSettings = {
   mergeOverlap: 50,
 };
 
-export const InspectPage: React.FC = () => {
+interface Props {
+  selectedModel?: string;
+  apiKey?: string;
+}
+
+export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
 
@@ -169,9 +174,15 @@ export const InspectPage: React.FC = () => {
   // Re-solve question handler
   const handleReSolveQuestion = useCallback(async (q: QuestionImage) => {
     try {
-      const analysis = await analyzeQuestionViaProxy(q.dataUrl, MODEL_IDS.FLASH, 3);
+      const model = selectedModel || MODEL_IDS.FLASH;
+      const analysis = await analyzeQuestionViaProxy(q.dataUrl, model, 3, apiKey);
 
-      const updatedQuestion = { ...q, analysis };
+      const updatedQuestion = { ...q };
+      if (model === MODEL_IDS.PRO) {
+        updatedQuestion.pro_analysis = analysis;
+      } else {
+        updatedQuestion.analysis = analysis;
+      }
 
       setQuestions(prev => prev.map(item => 
         item.fileName === q.fileName && item.id === q.id ? updatedQuestion : item

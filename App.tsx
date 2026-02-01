@@ -602,7 +602,7 @@ const App: React.FC = () => {
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 pb-32`}>
       <Routes>
         <Route path="/key-stats" element={<ApiKeyStatsPage />} />
-        <Route path="/inspect/:examId" element={<InspectPage />} />
+        <Route path="/inspect/:examId" element={<InspectPage selectedModel={state.selectedModel} apiKey={state.apiKey} />} />
         <Route path="*" element={
           <>
       <div className="fixed top-6 right-6 z-[100] flex items-center gap-2">
