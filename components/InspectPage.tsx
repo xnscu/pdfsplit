@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { DebugPageData, QuestionImage, DetectedQuestion } from "../types";
 import { DebugToolbar } from "./debug/DebugToolbar";
 import { DebugPageViewer } from "./debug/DebugPageViewer";
@@ -27,7 +27,7 @@ const defaultCropSettings: CropSettings = {
 export const InspectPage: React.FC = () => {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
-  const location = useLocation();
+
 
   // State for loaded data
   const [pages, setPages] = useState<DebugPageData[]>([]);
@@ -108,17 +108,23 @@ export const InspectPage: React.FC = () => {
   }, [examId]);
 
   // Scroll to question anchor on initial load or hash change
+  // For HashRouter, window.location.hash contains: #/inspect/examId#question-X
+  // We need to extract the question-X part
   useEffect(() => {
-    if (!isLoading && questions.length > 0 && location.hash) {
-      const questionId = location.hash.substring(1); // Remove '#'
-      const element = document.getElementById(`question-${questionId}`);
-      if (element) {
-        setTimeout(() => {
-          element.scrollIntoView({ behavior: "smooth", block: "start" });
-        }, 100);
+    if (!isLoading && questions.length > 0) {
+      const fullHash = window.location.hash; // e.g., "#/inspect/uuid#question-5"
+      const questionMatch = fullHash.match(/#question-([^#&]+)/);
+      if (questionMatch) {
+        const questionId = questionMatch[1];
+        const element = document.getElementById(`question-${questionId}`);
+        if (element) {
+          setTimeout(() => {
+            element.scrollIntoView({ behavior: "smooth", block: "start" });
+          }, 100);
+        }
       }
     }
-  }, [isLoading, questions, location.hash]);
+  }, [isLoading, questions]);
 
   // Navigation handlers
   const handleNextFile = useCallback(() => {

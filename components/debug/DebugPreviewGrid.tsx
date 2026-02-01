@@ -148,8 +148,15 @@ export const DebugPreviewGrid: React.FC<Props> = ({
   }, [questions]);
 
   // Copy anchor link to clipboard
+  // For HashRouter, the URL format is: origin/#/inspect/examId
+  // We append the question anchor using the format: origin/#/inspect/examId#question-{id}
   const handleCopyLink = useCallback((questionId: string) => {
-    const url = `${window.location.origin}${window.location.pathname}#${questionId}`;
+    // Get current location which includes the hash route
+    const currentUrl = window.location.href;
+    // Remove any existing question anchor (after the second #)
+    const baseUrl = currentUrl.split('#question-')[0];
+    // Append the question anchor
+    const url = `${baseUrl}#question-${questionId}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopiedId(questionId);
       setTimeout(() => setCopiedId(null), 2000);
