@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import { QuestionImage } from "../../types";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -11,6 +11,7 @@ interface Props {
   onReSolveQuestion?: (q: QuestionImage) => Promise<void>;
   onDeleteAnalysis?: (q: QuestionImage, type: "standard" | "pro") => void;
   onCopyAnalysis?: (q: QuestionImage, fromType: "standard" | "pro") => void;
+  enableAnchors?: boolean; // Enable anchor links for each question
 }
 
 // Helper to clean Gemini markdown output
@@ -131,8 +132,10 @@ export const DebugPreviewGrid: React.FC<Props> = ({
   onReSolveQuestion,
   onDeleteAnalysis,
   onCopyAnalysis,
+  enableAnchors = false,
 }) => {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const sortedQuestions = useMemo(() => {
     return [...questions].sort((a, b) => {
@@ -143,6 +146,15 @@ export const DebugPreviewGrid: React.FC<Props> = ({
       });
     });
   }, [questions]);
+
+  // Copy anchor link to clipboard
+  const handleCopyLink = useCallback((questionId: string) => {
+    const url = `${window.location.origin}${window.location.pathname}#${questionId}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedId(questionId);
+      setTimeout(() => setCopiedId(null), 2000);
+    });
+  }, []);
 
   if (questions.length === 0) {
     return (
@@ -179,8 +191,41 @@ export const DebugPreviewGrid: React.FC<Props> = ({
           {sortedQuestions.map((q) => (
             <div
               key={q.id}
-              className="w-full mb-8 border-b border-slate-100 pb-8 last:border-0"
+              id={enableAnchors ? `question-${q.id}` : undefined}
+              className="w-full mb-8 border-b border-slate-100 pb-8 last:border-0 scroll-mt-4"
             >
+              {/* Question Header with Anchor */}
+              <div className="flex items-center gap-3 mb-4">
+                <span className="text-lg font-black text-slate-800">Q{q.id}</span>
+                {enableAnchors && (
+                  <button
+                    onClick={() => handleCopyLink(q.id)}
+                    className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                      copiedId === q.id
+                        ? "bg-green-100 text-green-600"
+                        : "bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                    }`}
+                    title="复制题目链接"
+                  >
+                    {copiedId === q.id ? (
+                      <>
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        已复制
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                        复制链接
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
               {/* Image and Controls */}
               <div className="flex items-start gap-4 mb-4">
                  {/* Image */}

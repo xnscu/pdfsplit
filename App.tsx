@@ -15,6 +15,7 @@ import { SyncHistoryPanel } from "./components/SyncHistoryPanel";
 import { KeyStatsPanel } from "./components/KeyStatsPanel";
 import { Routes, Route, Link } from "react-router-dom";
 import { ApiKeyStatsPage } from "./components/ApiKeyStatsPage";
+import { InspectPage } from "./components/InspectPage";
 import packageJson from "./package.json";
 import SyncStatus from "./components/SyncStatus";
 
@@ -601,6 +602,7 @@ const App: React.FC = () => {
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 pb-32`}>
       <Routes>
         <Route path="/key-stats" element={<ApiKeyStatsPage />} />
+        <Route path="/inspect/:examId" element={<InspectPage />} />
         <Route path="*" element={
           <>
       <div className="fixed top-6 right-6 z-[100] flex items-center gap-2">
@@ -901,12 +903,28 @@ const App: React.FC = () => {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
                         </svg>
                       </button>
+                      {/* Quick inspect in modal */}
                       <button
                         onClick={() => updateDebugFile(fileName)}
-                        className="px-4 py-2 bg-blue-50 text-blue-600 font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-blue-100 transition-colors"
+                        className="p-2 bg-slate-50 text-slate-600 hover:bg-slate-600 hover:text-white rounded-lg border border-slate-100 transition-colors"
+                        title="Quick Inspect (Modal)"
                       >
-                        Inspect
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c-.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        </svg>
                       </button>
+                      {/* Navigate to standalone inspect page */}
+                      <Link
+                        to={`/inspect/${state.historyList.find((h) => h.name === fileName)?.id || fileName}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="px-4 py-2 bg-blue-50 text-blue-600 font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1.5"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                        Inspect
+                      </Link>
                     </div>
                   </div>
                 ))}
