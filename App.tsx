@@ -19,6 +19,7 @@ import { ApiKeyDetailsPage } from "./components/ApiKeyDetailsPage";
 import { InspectPage } from "./components/InspectPage";
 import packageJson from "./package.json";
 import SyncStatus from "./components/SyncStatus";
+import { SyncControls } from "./components/SyncControls";
 
 // Hooks
 import { useExamState } from "./hooks/useExamState";
@@ -886,9 +887,9 @@ const App: React.FC = () => {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
+                      <SyncControls
+                        variant="icon"
+                        onPush={() => {
                           const item = state.historyList.find((h) => h.name === fileName);
                           if (item) {
                             actions.addNotification(null, "success", `Pushing ${fileName}...`);
@@ -897,16 +898,7 @@ const App: React.FC = () => {
                              actions.addNotification(null, "error", `Could not find ID for ${fileName}`);
                           }
                         }}
-                        className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg border border-indigo-100 transition-colors"
-                        title="Push (Upload)"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        onPull={() => {
                           const item = state.historyList.find((h) => h.name === fileName);
                           if (item) {
                             actions.addNotification(null, "success", `Pulling ${fileName}...`);
@@ -915,13 +907,7 @@ const App: React.FC = () => {
                              actions.addNotification(null, "error", `Could not find ID for ${fileName}`);
                           }
                         }}
-                        className="p-2 bg-cyan-50 text-cyan-600 hover:bg-cyan-600 hover:text-white rounded-lg border border-cyan-100 transition-colors"
-                        title="Pull (Download)"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-                        </svg>
-                      </button>
+                      />
                       {/* Quick inspect in modal */}
                       <button
                         onClick={() => updateDebugFile(fileName)}

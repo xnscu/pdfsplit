@@ -10,6 +10,9 @@ import { getHistoryList, loadExamResult, updateQuestionsForFile, reSaveExamResul
 import { analyzeQuestionViaProxy } from "../services/geminiProxyService";
 import { MODEL_IDS } from "../shared/ai-config";
 import { NotificationToast } from "./NotificationToast";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { useSync } from "../hooks/useSync";
+import { getRemoteExam } from "../services/syncService";
 
 interface Notification {
   id: string;
@@ -61,6 +64,62 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
     setNotifications(prev => [...prev, { id, fileName, type, message }]);
   }, []);
 
+  // Sync hook
+  const syncHook = useSync();
+
+  // Confirm Dialog State
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    action: () => void;
+    isDestructive: boolean;
+    confirmLabel?: string;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    action: () => {},
+    isDestructive: false,
+  });
+
+  // Sync Recommendation State
+  const [recommendPush, setRecommendPush] = useState(false);
+  const [recommendPull, setRecommendPull] = useState(false);
+
+  const checkSyncStatus = useCallback(async () => {
+    if (!examId) return;
+    try {
+      const localExam = await loadExamResult(examId);
+      if (!localExam) return;
+
+      const remoteExam = await getRemoteExam(examId);
+      if (remoteExam) {
+        if (localExam.timestamp > remoteExam.timestamp) {
+          setRecommendPush(true);
+          setRecommendPull(false);
+        } else if (remoteExam.timestamp > localExam.timestamp) {
+          setRecommendPush(false);
+          setRecommendPull(true);
+        } else {
+          setRecommendPush(false);
+          setRecommendPull(false);
+        }
+      } else {
+        // Not on remote yet -> recommend push
+        setRecommendPush(true);
+        setRecommendPull(false);
+      }
+    } catch (e) {
+      console.warn("Failed to check sync status:", e);
+    }
+  }, [examId]);
+
+  // Check sync status on load and examId change
+  useEffect(() => {
+    checkSyncStatus();
+  }, [checkSyncStatus]);
+
   // Load exam list for navigation
   useEffect(() => {
     const loadExamList = async () => {
@@ -110,7 +169,87 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
     };
 
     loadExam();
+    loadExam();
   }, [examId]);
+
+  // Sync Handlers
+  const handlePush = useCallback(async () => {
+    if (!examId) return;
+    try {
+      const localExam = await loadExamResult(examId);
+      if (!localExam) {
+        addNotification(null, "error", "Local exam not found");
+        return;
+      }
+      
+      addNotification(null, "success", "Checking remote version...");
+      const remoteExam = await getRemoteExam(examId);
+
+      if (remoteExam && remoteExam.timestamp > localExam.timestamp) {
+        setConfirmState({
+          isOpen: true,
+          title: "Remote Version Newer",
+          message: "The version on the server is newer than your local version. Pushing will overwrite the server version. Are you sure?",
+          action: async () => {
+             addNotification(null, "success", "Pushing to remote...");
+             await syncHook.forceUploadSelected([examId]);
+             addNotification(null, "success", "Push completed");
+          },
+          isDestructive: true,
+          confirmLabel: "Overwrite Remote",
+        });
+      } else {
+         addNotification(null, "success", "Pushing to remote...");
+         await syncHook.forceUploadSelected([examId]);
+         addNotification(null, "success", "Push completed");
+         await checkSyncStatus();
+      }
+    } catch (e: any) {
+      addNotification(null, "error", `Push failed: ${e.message}`);
+    }
+  }, [examId, syncHook, addNotification]);
+
+  const handlePull = useCallback(async () => {
+    if (!examId) return;
+    try {
+      const localExam = await loadExamResult(examId);
+      const remoteExam = await getRemoteExam(examId);
+
+      if (!remoteExam) {
+         addNotification(null, "error", "Remote exam not found");
+         return;
+      }
+
+      const proceedWithPull = async () => {
+         addNotification(null, "success", "Pulling from remote...");
+         await syncHook.forceDownloadSelected([examId]);
+         // Reload data
+         const updatedExam = await loadExamResult(examId);
+         if (updatedExam) {
+            setTitle(updatedExam.name);
+            setPages(updatedExam.rawPages || []);
+            setQuestions(updatedExam.questions || []);
+            addNotification(null, "success", "Pull completed & reloaded");
+            await checkSyncStatus();
+         }
+      };
+
+      if (localExam && localExam.timestamp > remoteExam.timestamp) {
+        setConfirmState({
+          isOpen: true,
+          title: "Local Version Newer",
+          message: "Your local version is newer than the server version. Pulling will overwrite your local changes. Are you sure?",
+          action: proceedWithPull,
+          isDestructive: true,
+          confirmLabel: "Overwrite Local",
+        });
+      } else {
+         await proceedWithPull();
+      }
+    } catch (e: any) {
+      addNotification(null, "error", `Pull failed: ${e.message}`);
+    }
+  }, [examId, syncHook, addNotification]);
 
   // Scroll to question anchor on initial load or hash change
   // For HashRouter, window.location.hash contains: #/inspect/examId#question-X
@@ -474,6 +613,10 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
         onClose={handleClose}
         hasNextFile={currentExamIndex < allExamIds.length - 1}
         hasPrevFile={currentExamIndex > 0}
+        onPush={handlePush}
+        onPull={handlePull}
+        recommendPush={recommendPush}
+        recommendPull={recommendPull}
       />
 
       <div className="flex-1 flex overflow-hidden relative" ref={containerRef}>
@@ -535,6 +678,19 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
         onView={(fileName) => {
           // No action needed since we're already in inspect view
         }}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmState.isOpen}
+        title={confirmState.title}
+        message={confirmState.message}
+        onConfirm={() => {
+          confirmState.action();
+          setConfirmState((prev) => ({ ...prev, isOpen: false }));
+        }}
+        onCancel={() => setConfirmState((prev) => ({ ...prev, isOpen: false }))}
+        isDestructive={confirmState.isDestructive}
+        confirmLabel={confirmState.confirmLabel}
       />
     </div>
   );

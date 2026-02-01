@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { SyncControls } from "../SyncControls";
 
 interface Props {
   title?: string;
@@ -25,6 +26,10 @@ interface Props {
   hasPrevFile?: boolean;
   isAutoAnalyze?: boolean;
   setIsAutoAnalyze?: (val: boolean) => void;
+  onPush?: () => void;
+  onPull?: () => void;
+  recommendPush?: boolean;
+  recommendPull?: boolean;
 }
 
 export const DebugToolbar: React.FC<Props> = ({
@@ -52,6 +57,10 @@ export const DebugToolbar: React.FC<Props> = ({
   hasPrevFile,
   isAutoAnalyze,
   setIsAutoAnalyze,
+  onPush,
+  onPull,
+  recommendPush,
+  recommendPull,
 }) => {
   const [fileIndexInput, setFileIndexInput] = useState(
     currentFileIndex.toString(),
@@ -331,7 +340,16 @@ export const DebugToolbar: React.FC<Props> = ({
           </div>
         )}
 
-        {/* 5. ZIP */}
+        {/* 5. Sync Actions */}
+        <SyncControls 
+          onPush={onPush} 
+          onPull={onPull} 
+          recommendPush={recommendPush} 
+          recommendPull={recommendPull} 
+          variant="labeled" 
+        />
+
+        {/* 6. ZIP */}
         {onDownloadZip && (
           <button
             onClick={onDownloadZip}
