@@ -177,6 +177,42 @@ async function handleApiRoutes(request, env, ctx, path, method) {
     return handleUpdateQuestions(db, id, body.questions);
   }
 
+  // === Pro Analysis Server Routes ===
+
+  // POST /api/pro-analysis/pending - Get N questions without pro_analysis
+  if (path === '/api/pro-analysis/pending' && method === 'POST') {
+    const body = await parseBody(request);
+    if (!body || typeof body.limit !== 'number') {
+      return errorResponse('Invalid request: expected { limit: number }');
+    }
+    return handleGetPendingQuestions(db, body.limit);
+  }
+
+  // PUT /api/pro-analysis/update - Update a single question's pro_analysis
+  if (path === '/api/pro-analysis/update' && method === 'PUT') {
+    const body = await parseBody(request);
+    if (!body || !body.exam_id || !body.question_id) {
+      return errorResponse('Invalid request: expected { exam_id, question_id, pro_analysis }');
+    }
+    return handleUpdateProAnalysis(db, body.exam_id, body.question_id, body.pro_analysis);
+  }
+
+  // POST /api/key-stats/record - Record an API key call
+  if (path === '/api/key-stats/record' && method === 'POST') {
+    const body = await parseBody(request);
+    if (!body || !body.api_key_prefix) {
+      return errorResponse('Invalid request: expected { api_key_prefix, success, ... }');
+    }
+    return handleRecordKeyStats(db, body);
+  }
+
+  // GET /api/key-stats - Get API key statistics
+  if (path === '/api/key-stats' && method === 'GET') {
+    const url = new URL(request.url);
+    const days = parseInt(url.searchParams.get('days')) || 0; // 0 = all time
+    return handleGetKeyStats(db, days);
+  }
+
   // === Gemini Proxy Routes (Transparent, using src/proxy.mjs directly) ===
 
   // Proxy all requests starting with /api/gemini/
@@ -828,3 +864,151 @@ async function saveExamToDb(db, examData, source) {
 }
 
 
+// ============ Pro Analysis Handlers ============
+
+/**
+ * Get N questions that don't have pro_analysis yet
+ * Returns questions with their exam_id and image data
+ */
+async function handleGetPendingQuestions(db, limit) {
+  const result = await db.prepare(`
+    SELECT 
+      q.id as question_id,
+      q.exam_id,
+      q.data_url,
+      q.analysis,
+      e.name as exam_name
+    FROM questions q
+    JOIN exams e ON e.id = q.exam_id
+    WHERE q.pro_analysis IS NULL
+    ORDER BY e.timestamp DESC, q.page_number
+    LIMIT ?
+  `).bind(limit).all();
+
+  return jsonResponse({
+    questions: result.results.map(q => ({
+      ...q,
+      analysis: q.analysis ? JSON.parse(q.analysis) : null,
+    })),
+    count: result.results.length,
+  });
+}
+
+/**
+ * Update a single question's pro_analysis field
+ */
+async function handleUpdateProAnalysis(db, examId, questionId, proAnalysis) {
+  const serverTimestamp = Date.now();
+  
+  const statements = [];
+  
+  // Update the question's pro_analysis
+  statements.push(
+    db.prepare(`
+      UPDATE questions 
+      SET pro_analysis = ?
+      WHERE exam_id = ? AND id = ?
+    `).bind(
+      proAnalysis ? JSON.stringify(proAnalysis) : null,
+      examId,
+      questionId
+    )
+  );
+  
+  // Update exam timestamp so sync can detect changes
+  statements.push(
+    db.prepare(`
+      UPDATE exams 
+      SET timestamp = ?, updated_at = ?
+      WHERE id = ?
+    `).bind(
+      serverTimestamp,
+      new Date().toISOString().replace('T', ' ').slice(0, 19),
+      examId
+    )
+  );
+  
+  await db.batch(statements);
+  
+  return jsonResponse({ success: true, timestamp: serverTimestamp });
+}
+
+// ============ API Key Stats Handlers ============
+
+/**
+ * Record an API key call for statistics
+ */
+async function handleRecordKeyStats(db, data) {
+  const {
+    api_key_prefix,
+    api_key_hash,
+    success,
+    error_message,
+    question_id,
+    exam_id,
+    duration_ms,
+    model_id,
+  } = data;
+
+  await db.prepare(`
+    INSERT INTO api_key_stats (
+      id, api_key_hash, api_key_prefix, call_time, success, 
+      error_message, question_id, exam_id, duration_ms, model_id
+    )
+    VALUES (?, ?, ?, datetime('now', 'utc'), ?, ?, ?, ?, ?, ?)
+  `).bind(
+    crypto.randomUUID(),
+    api_key_hash || api_key_prefix, // fallback if hash not provided
+    api_key_prefix,
+    success ? 1 : 0,
+    error_message || null,
+    question_id || null,
+    exam_id || null,
+    duration_ms || null,
+    model_id || 'gemini-3-pro-preview'
+  ).run();
+
+  return jsonResponse({ success: true });
+}
+
+/**
+ * Get API key statistics aggregated by key
+ */
+async function handleGetKeyStats(db, days) {
+  let dateFilter = '';
+  if (days > 0) {
+    dateFilter = `WHERE call_time >= datetime('now', 'utc', '-${days} days')`;
+  }
+
+  // Get per-key statistics
+  const perKeyResult = await db.prepare(`
+    SELECT 
+      api_key_prefix,
+      COUNT(*) as total_calls,
+      SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
+      SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failure_count,
+      AVG(duration_ms) as avg_duration_ms,
+      MAX(call_time) as last_call_time
+    FROM api_key_stats
+    ${dateFilter}
+    GROUP BY api_key_prefix
+    ORDER BY total_calls DESC
+  `).all();
+
+  // Get overall totals
+  const totalsResult = await db.prepare(`
+    SELECT 
+      COUNT(*) as total_calls,
+      SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
+      SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failure_count,
+      AVG(duration_ms) as avg_duration_ms
+    FROM api_key_stats
+    ${dateFilter}
+  `).first();
+
+  return jsonResponse({
+    keys: perKeyResult.results,
+    totals: totalsResult || { total_calls: 0, success_count: 0, failure_count: 0, avg_duration_ms: 0 },
+    days_filter: days,
+  });
+}

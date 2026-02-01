@@ -1,0 +1,22 @@
+{
+  "name": "gksx-pro-analysis-server",
+  "version": "1.0.0",
+  "description": "Server-side script for batch processing questions with Gemini Pro",
+  "type": "module",
+  "main": "pro-analysis-server.mjs",
+  "scripts": {
+    "start": "node pro-analysis-server.mjs",
+    "pm2:start": "pm2 start pro-analysis-server.mjs --name gksx-pro-analysis",
+    "pm2:stop": "pm2 stop gksx-pro-analysis",
+    "pm2:restart": "pm2 restart gksx-pro-analysis",
+    "pm2:logs": "pm2 logs gksx-pro-analysis",
+    "pm2:delete": "pm2 delete gksx-pro-analysis"
+  },
+  "dependencies": {
+    "@google/genai": "^0.7.0",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
