@@ -624,6 +624,25 @@ const App: React.FC = () => {
           问题试卷
         </button>
         <button
+          onClick={() => setters.setShowHistory(true)}
+          className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
+          title="History"
+        >
+          <svg
+            className="w-6 h-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+        </button>
+        <button
           onClick={() => setShowSyncHistory(true)}
           className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
           title="同步记录"
@@ -638,7 +657,7 @@ const App: React.FC = () => {
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth={2}
-              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+              d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
             />
           </svg>
         </button>
@@ -674,7 +693,6 @@ const App: React.FC = () => {
       </div>
 
       <Header
-        onShowHistory={() => setters.setShowHistory(true)}
         onReset={actions.resetState}
         showReset={state.sourcePages.length > 0 && !isGlobalProcessing}
       />
