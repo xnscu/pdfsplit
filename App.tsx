@@ -599,6 +599,21 @@ const App: React.FC = () => {
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 pb-32`}>
       <div className="fixed top-6 right-6 z-[100] flex items-center gap-2">
         <button
+          onClick={handleLoadExamsWithPictureOkFalse}
+          className="h-12 px-4 bg-amber-50 text-amber-600 rounded-xl shadow-xl shadow-amber-200/50 border border-amber-200 hover:bg-amber-100 transition-all flex items-center gap-2 font-bold text-[10px] uppercase tracking-widest group"
+          title="加载所有剪裁区域可能有问题的试卷"
+        >
+          <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            />
+          </svg>
+          问题试卷
+        </button>
+        <button
           onClick={() => setShowSyncHistory(true)}
           className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
           title="同步记录"
@@ -763,21 +778,6 @@ const App: React.FC = () => {
                       Upload Selected ({selectedFiles.size})
                     </button>
                   )}
-                  <button
-                    onClick={handleLoadExamsWithPictureOkFalse}
-                    className="px-5 py-2.5 bg-amber-50 text-amber-600 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-amber-100 transition-all shadow-lg flex items-center gap-2 border border-amber-200"
-                    title="加载所有剪裁区域可能有问题的试卷"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                      />
-                    </svg>
-                    问题试卷
-                  </button>
                   <button
                     onClick={handleGlobalDownload}
                     disabled={zippingFile !== null}
