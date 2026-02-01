@@ -331,6 +331,56 @@ const App: React.FC = () => {
     }
   }, [state.selectedModel, state.apiKey, state.questions, setters, actions]);
 
+  const handleDeleteAnalysis = useCallback(async (q: QuestionImage, type: "standard" | "pro") => {
+    const updatedQuestion = { ...q };
+    if (type === "standard") {
+      updatedQuestion.analysis = undefined;
+    } else {
+      updatedQuestion.pro_analysis = undefined;
+    }
+
+    setters.setQuestions((prev: QuestionImage[]) => {
+      return prev.map((item) => {
+        if (item.fileName === q.fileName && item.id === q.id) {
+          return updatedQuestion;
+        }
+        return item;
+      });
+    });
+
+    const fileQuestions = state.questions
+      .filter((item) => item.fileName === q.fileName)
+      .map((item) => (item.id === q.id ? updatedQuestion : item));
+    await updateQuestionsForFile(q.fileName, fileQuestions);
+    actions.addNotification(q.fileName, "success", `Q${q.id} ${type === "standard" ? "标准" : "Pro"}解析已删除`);
+  }, [state.questions, setters, actions]);
+
+  const handleCopyAnalysis = useCallback(async (q: QuestionImage, fromType: "standard" | "pro") => {
+    const updatedQuestion = { ...q };
+    if (fromType === "standard") {
+      if (!q.analysis) return;
+      updatedQuestion.pro_analysis = JSON.parse(JSON.stringify(q.analysis));
+    } else {
+      if (!q.pro_analysis) return;
+      updatedQuestion.analysis = JSON.parse(JSON.stringify(q.pro_analysis));
+    }
+
+    setters.setQuestions((prev: QuestionImage[]) => {
+      return prev.map((item) => {
+        if (item.fileName === q.fileName && item.id === q.id) {
+          return updatedQuestion;
+        }
+        return item;
+      });
+    });
+
+    const fileQuestions = state.questions
+      .filter((item) => item.fileName === q.fileName)
+      .map((item) => (item.id === q.id ? updatedQuestion : item));
+    await updateQuestionsForFile(q.fileName, fileQuestions);
+    actions.addNotification(q.fileName, "success", `Q${q.id} 解析已复制`);
+  }, [state.questions, setters, actions]);
+
   const handleNextFile = () => {
     const currentFileIndex = sortedFileNames.indexOf(state.debugFile || "");
     if (currentFileIndex !== -1 && currentFileIndex < sortedFileNames.length - 1) {
@@ -662,6 +712,8 @@ const App: React.FC = () => {
             onProcessFile={(fileName) => handleRecropFile(fileName, state.cropSettings)}
             onAnalyzeFile={handleAnalyzeWrapper}
             onReSolveQuestion={handleReSolveQuestion}
+            onDeleteAnalysis={handleDeleteAnalysis}
+            onCopyAnalysis={handleCopyAnalysis}
             onStopAnalyze={actions.handleStop}
             analyzingTotal={state.analyzingTotal}
             analyzingDone={state.analyzingDone}
@@ -711,6 +763,21 @@ const App: React.FC = () => {
                       Upload Selected ({selectedFiles.size})
                     </button>
                   )}
+                  <button
+                    onClick={handleLoadExamsWithPictureOkFalse}
+                    className="px-5 py-2.5 bg-amber-50 text-amber-600 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-amber-100 transition-all shadow-lg flex items-center gap-2 border border-amber-200"
+                    title="加载所有剪裁区域可能有问题的试卷"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                      />
+                    </svg>
+                    问题试卷
+                  </button>
                   <button
                     onClick={handleGlobalDownload}
                     disabled={zippingFile !== null}
@@ -934,6 +1001,8 @@ const App: React.FC = () => {
         isOpen={showSyncHistory}
         onClose={() => setShowSyncHistory(false)}
         onLoadHistoryByName={handleLoadHistoryByName}
+        onSyncComplete={refreshHistoryList}
+        onFilesUpdated={handleFilesUpdated}
       />
 
       {/* API Key Stats Panel - shown during analysis */}

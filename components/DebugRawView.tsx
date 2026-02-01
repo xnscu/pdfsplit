@@ -33,6 +33,8 @@ interface Props {
   onProcessFile?: (fileName: string) => void;
   onAnalyzeFile?: (fileName: string) => void; // New
   onReSolveQuestion?: (q: QuestionImage) => Promise<void>; // Re-solve single question
+  onDeleteAnalysis?: (q: QuestionImage, type: "standard" | "pro") => void;
+  onCopyAnalysis?: (q: QuestionImage, fromType: "standard" | "pro") => void;
   onStopAnalyze?: () => void; // Stop analysis
   analyzingTotal?: number;
   analyzingDone?: number;
@@ -64,6 +66,8 @@ export const DebugRawView: React.FC<Props> = ({
   onProcessFile,
   onAnalyzeFile,
   onReSolveQuestion,
+  onDeleteAnalysis,
+  onCopyAnalysis,
   onStopAnalyze,
   analyzingTotal,
   analyzingDone,
@@ -464,6 +468,8 @@ export const DebugRawView: React.FC<Props> = ({
             questions={currentFileQuestions}
             onQuestionClick={handleQuestionClick}
             onReSolveQuestion={onReSolveQuestion}
+            onDeleteAnalysis={onDeleteAnalysis}
+            onCopyAnalysis={onCopyAnalysis}
           />
         ) : (
           <>

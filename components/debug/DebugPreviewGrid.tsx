@@ -9,6 +9,8 @@ interface Props {
   questions: QuestionImage[];
   onQuestionClick: (q: QuestionImage) => void;
   onReSolveQuestion?: (q: QuestionImage) => Promise<void>;
+  onDeleteAnalysis?: (q: QuestionImage, type: "standard" | "pro") => void;
+  onCopyAnalysis?: (q: QuestionImage, fromType: "standard" | "pro") => void;
 }
 
 // Helper to clean Gemini markdown output
@@ -24,22 +26,55 @@ const AnalysisContent: React.FC<{
   analysis: any;
   title?: string;
   isPro?: boolean;
-}> = ({ analysis, title, isPro }) => {
+  onDelete?: () => void;
+  onCopy?: () => void;
+}> = ({ analysis, title, isPro, onDelete, onCopy }) => {
   if (!analysis) return <div className="text-slate-400 italic text-sm p-4">暂无解析数据</div>;
 
   return (
     <div className={`bg-white rounded-xl p-6 border shadow-sm ${isPro ? "border-purple-200 shadow-purple-50" : "border-slate-200"}`}>
       {/* Metadata Tags */}
-      <div className="flex flex-wrap items-center gap-2 mb-4 pb-3 border-b border-slate-100">
-        <span className={`text-[10px] font-black uppercase tracking-widest mr-2 flex items-center gap-1 ${isPro ? "text-purple-600" : "text-slate-500"}`}>
-          {title || "AI 解析"}
-        </span>
-        <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded text-xs font-bold border border-slate-200">
-          难度: {analysis.difficulty}/5
-        </span>
-        <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded text-xs font-bold border border-slate-200">
-          {analysis.question_type}
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-100">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`text-[10px] font-black uppercase tracking-widest mr-2 flex items-center gap-1 ${isPro ? "text-purple-600" : "text-slate-500"}`}>
+            {title || "AI 解析"}
+          </span>
+          <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded text-xs font-bold border border-slate-200">
+            难度: {analysis.difficulty}/5
+          </span>
+          <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded text-xs font-bold border border-slate-200">
+            {analysis.question_type}
+          </span>
+          <span className={`px-3 py-1 rounded text-xs font-bold border ${analysis.picture_ok ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200"}`}>
+            图片: {analysis.picture_ok ? "OK" : "待检查"}
+          </span>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex items-center gap-1">
+          {onCopy && (
+            <button
+              onClick={onCopy}
+              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100"
+              title={isPro ? "复制到标准解析" : "复制到 Pro 解析"}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              </svg>
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100"
+              title="删除此解析"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="space-y-6">
@@ -94,6 +129,8 @@ export const DebugPreviewGrid: React.FC<Props> = ({
   questions,
   onQuestionClick,
   onReSolveQuestion,
+  onDeleteAnalysis,
+  onCopyAnalysis,
 }) => {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
@@ -209,16 +246,31 @@ export const DebugPreviewGrid: React.FC<Props> = ({
                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <div>
                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 pl-1">Standard Analysis</div>
-                           <AnalysisContent analysis={q.analysis} title="Flash/Standard" />
+                           <AnalysisContent 
+                            analysis={q.analysis} 
+                            title="Flash/Standard" 
+                            onDelete={onDeleteAnalysis ? () => onDeleteAnalysis(q, "standard") : undefined}
+                            onCopy={onCopyAnalysis ? () => onCopyAnalysis(q, "standard") : undefined}
+                           />
                         </div>
                         <div>
                            <div className="text-xs font-bold text-purple-400 uppercase tracking-widest mb-2 pl-1">Pro Analysis</div>
-                           <AnalysisContent analysis={q.pro_analysis} title="Gemini Pro" isPro />
+                           <AnalysisContent 
+                            analysis={q.pro_analysis} 
+                            title="Gemini Pro" 
+                            isPro 
+                            onDelete={onDeleteAnalysis ? () => onDeleteAnalysis(q, "pro") : undefined}
+                            onCopy={onCopyAnalysis ? () => onCopyAnalysis(q, "pro") : undefined}
+                           />
                         </div>
                      </div>
                   ) : (
                      // Single View
-                     <AnalysisContent analysis={q.analysis} />
+                     <AnalysisContent 
+                      analysis={q.analysis} 
+                      onDelete={onDeleteAnalysis ? () => onDeleteAnalysis(q, "standard") : undefined}
+                      onCopy={onCopyAnalysis ? () => onCopyAnalysis(q, "standard") : undefined}
+                     />
                   )}
                 </div>
               )}

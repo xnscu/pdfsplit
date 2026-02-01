@@ -6,11 +6,15 @@
 import React, { useState, useEffect } from "react";
 import { SyncHistoryRecord, getSyncHistory, clearSyncHistory } from "../services/syncHistoryService";
 import { ConfirmDialog } from "./ConfirmDialog";
+import SyncStatus from "./SyncStatus";
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   onLoadHistoryByName?: (fileName: string) => void;
+  onSyncComplete?: () => void;
+  onFilesUpdated?: (pulledNames: string[]) => void;
+  selectedHistoryIds?: Set<string>;
 }
 
 const formatTime = (timestamp: number): string => {
@@ -76,7 +80,14 @@ const getActionColor = (actionType: "push" | "pull" | "full_sync"): string => {
   }
 };
 
-export const SyncHistoryPanel: React.FC<Props> = ({ isOpen, onClose, onLoadHistoryByName }) => {
+export const SyncHistoryPanel: React.FC<Props> = ({
+  isOpen,
+  onClose,
+  onLoadHistoryByName,
+  onSyncComplete,
+  onFilesUpdated,
+  selectedHistoryIds,
+}) => {
   const [historyRecords, setHistoryRecords] = useState<SyncHistoryRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -172,6 +183,15 @@ export const SyncHistoryPanel: React.FC<Props> = ({ isOpen, onClose, onLoadHisto
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
+          <SyncStatus
+            onSyncComplete={() => {
+              loadHistory();
+              onSyncComplete?.();
+            }}
+            onFilesUpdated={onFilesUpdated}
+            selectedHistoryIds={selectedHistoryIds}
+          />
+
           {isLoading ? (
             <div className="text-center py-20">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent"></div>

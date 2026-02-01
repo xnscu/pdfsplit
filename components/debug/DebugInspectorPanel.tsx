@@ -179,11 +179,18 @@ export const DebugInspectorPanel: React.FC<Props> = ({
             {/* Header Info */}
             <div>
               <div className="flex justify-between items-start mb-1">
-                <h2 className="text-3xl font-black text-white tracking-tight">
-                  {selectedDetection.id === "continuation"
-                    ? "Cont."
-                    : `Q${selectedDetection.id}`}
-                </h2>
+                <div className="flex flex-col">
+                  <h2 className="text-3xl font-black text-white tracking-tight">
+                    {selectedDetection.id === "continuation"
+                      ? "Cont."
+                      : `Q${selectedDetection.id}`}
+                  </h2>
+                  {(selectedImage?.analysis?.picture_ok !== undefined) && (
+                    <span className={`mt-1 inline-block px-2 py-0.5 rounded text-[10px] font-bold border w-fit ${selectedImage.analysis.picture_ok ? "bg-green-950/40 text-green-400 border-green-900/40" : "bg-red-950/40 text-red-400 border-red-900/40"}`}>
+                      Picture: {selectedImage.analysis.picture_ok ? "OK" : "Check"}
+                    </span>
+                  )}
+                </div>
                 <span className="bg-slate-800 text-slate-400 px-3 py-1 rounded-full text-[10px] font-bold border border-slate-700">
                   P{selectedDetection.pageNumber}
                 </span>
