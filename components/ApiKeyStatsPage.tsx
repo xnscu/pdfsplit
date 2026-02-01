@@ -159,7 +159,7 @@ export function ApiKeyStatsPage() {
               <table className="keys-table">
                 <thead>
                   <tr>
-                    <th>Key (前8位)</th>
+                    <th>Key (后4位)</th>
                     <th>总调用</th>
                     <th>成功</th>
                     <th>失败</th>

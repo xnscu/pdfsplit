@@ -84,9 +84,9 @@ class KeyPool {
     this.keyDelays.set(key, CONFIG.INITIAL_DELAY_MS);
   }
   
-  // Get key prefix for display (first 8 chars)
+  // Get key suffix for display (last 4 chars)
   getKeyPrefix(key) {
-    return key.slice(0, 8);
+    return key.slice(-4);
   }
   
   // Get key hash for storage

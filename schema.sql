@@ -79,7 +79,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_history_sync_time ON sync_history(sync_time 
 CREATE TABLE IF NOT EXISTS api_key_stats (
     id TEXT PRIMARY KEY,
     api_key_hash TEXT NOT NULL,  -- SHA-256 hash of the API key (only first 8 chars shown in UI)
-    api_key_prefix TEXT NOT NULL, -- First 8 characters of the key for display
+    api_key_prefix TEXT NOT NULL, -- Last 4 characters of the key for display
     call_time TEXT NOT NULL DEFAULT (datetime('now', 'utc')),  -- UTC timestamp
     success BOOLEAN NOT NULL DEFAULT 0,
     error_message TEXT,  -- Error message if failed
