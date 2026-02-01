@@ -199,7 +199,7 @@ class GeminiAnalyzer {
         },
       });
       
-      const fullText = response.text();
+      const fullText = response.text;
       
       if (!fullText) {
         throw new Error("Empty response from Gemini");
