@@ -137,8 +137,10 @@ export function ApiKeyStatsPage() {
               <div className="stat-label">总调用次数</div>
             </div>
             <div className="stat-card success">
-              <div className="stat-value">{stats.totals.success_count.toLocaleString()}</div>
-              <div className="stat-label">成功次数</div>
+              <Link to={`/key-stats/details?days=${timeRange}`} className="stat-link">
+                <div className="stat-value">{stats.totals.success_count.toLocaleString()}</div>
+                <div className="stat-label">成功次数 ↗</div>
+              </Link>
             </div>
             <div className="stat-card failure">
               <div className="stat-value">{stats.totals.failure_count.toLocaleString()}</div>
@@ -183,7 +185,15 @@ export function ApiKeyStatsPage() {
                         <code>{key.api_key_prefix}...</code>
                       </td>
                       <td>{key.total_calls.toLocaleString()}</td>
-                      <td className="success-cell">{key.success_count.toLocaleString()}</td>
+                      <td className="success-cell">
+                        <Link 
+                          to={`/key-stats/details?days=${timeRange}&prefix=${key.api_key_prefix}`}
+                          className="table-link"
+                          title="查看成功明细"
+                        >
+                          {key.success_count.toLocaleString()}
+                        </Link>
+                      </td>
                       <td className="failure-cell">{key.failure_count.toLocaleString()}</td>
                       <td>
                         <span className={`rate-badge ${
@@ -326,6 +336,12 @@ export function ApiKeyStatsPage() {
           text-align: center;
           box-shadow: 0 2px 8px rgba(0,0,0,0.08);
           border: 1px solid #e5e7eb;
+          transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.12);
         }
         
         .stat-card .stat-value {
@@ -338,6 +354,11 @@ export function ApiKeyStatsPage() {
           color: #6b7280;
           font-size: 0.875rem;
           margin-top: 4px;
+        }
+        
+        .stat-link {
+          text-decoration: none;
+          display: block;
         }
         
         .stat-card.total .stat-value { color: #3b82f6; }
@@ -399,6 +420,16 @@ export function ApiKeyStatsPage() {
         
         .success-cell { color: #10b981; }
         .failure-cell { color: #ef4444; }
+
+        .table-link {
+          color: inherit;
+          text-decoration: none;
+          border-bottom: 1px dotted currentColor;
+          font-weight: 600;
+        }
+        .table-link:hover {
+          border-bottom-style: solid;
+        }
         
         .rate-badge {
           display: inline-block;

@@ -90,4 +90,75 @@ keyStatsRoutes.get('/', async (c) => {
   });
 });
 
+// GET /details - Get successful call details
+keyStatsRoutes.get('/details', async (c) => {
+  const db = c.env.DB;
+  const days = parseInt(c.req.query('days')) || 0;
+  const keyPrefix = c.req.query('prefix');
+
+  let query = `
+    SELECT 
+      s.exam_id,
+      e.name as exam_name,
+      s.question_id,
+      s.call_time
+    FROM api_key_stats s
+    LEFT JOIN exams e ON s.exam_id = e.id
+    WHERE s.success = 1 
+    AND s.question_id IS NOT NULL 
+    AND s.exam_id IS NOT NULL
+  `;
+  
+  const params = [];
+
+  if (days > 0) {
+    query += ` AND s.call_time >= datetime('now', 'utc', '-? days')`;
+    params.push(days);
+  }
+
+  if (keyPrefix) {
+    query += ` AND s.api_key_prefix = ?`;
+    params.push(keyPrefix);
+  }
+
+  query += ` ORDER BY s.call_time DESC LIMIT 1000`; // Limit to prevent massive payloads
+
+  // Note: D1 binding with variable arguments is tricky if using raw string interpolation for days
+  // Let's use direct injection for the integer days since we parse it as int above
+  // but for safety let's use the binding API properly if possible.
+  // Actually, standard D1 prepare().bind(). It supports ? parameters.
+
+  // Re-constructing query to be cleaner for bind
+  let whereClauses = ["s.success = 1", "s.question_id IS NOT NULL", "s.exam_id IS NOT NULL"];
+  let bindParams = [];
+
+  if (days > 0) {
+    whereClauses.push(`s.call_time >= datetime('now', 'utc', '-${days} days')`);
+    // Note: Parameterizing the interval string in SQLite can be tricky. 
+    // Since we parseInt(days), it's safe to inject directly into the string literal for the interval.
+  }
+
+  if (keyPrefix) {
+    whereClauses.push("s.api_key_prefix = ?");
+    bindParams.push(keyPrefix);
+  }
+
+  const finalQuery = `
+    SELECT 
+      s.exam_id,
+      e.name as exam_name,
+      s.question_id,
+      s.call_time
+    FROM api_key_stats s
+    LEFT JOIN exams e ON s.exam_id = e.id
+    WHERE ${whereClauses.join(' AND ')}
+    ORDER BY s.call_time DESC 
+    LIMIT 2000
+  `;
+
+  const results = await db.prepare(finalQuery).bind(...bindParams).all();
+
+  return c.json(results.results);
+});
+
 export default keyStatsRoutes;

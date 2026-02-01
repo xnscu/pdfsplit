@@ -15,6 +15,7 @@ import { SyncHistoryPanel } from "./components/SyncHistoryPanel";
 import { KeyStatsPanel } from "./components/KeyStatsPanel";
 import { Routes, Route, Link } from "react-router-dom";
 import { ApiKeyStatsPage } from "./components/ApiKeyStatsPage";
+import { ApiKeyDetailsPage } from "./components/ApiKeyDetailsPage";
 import { InspectPage } from "./components/InspectPage";
 import packageJson from "./package.json";
 import SyncStatus from "./components/SyncStatus";
@@ -602,6 +603,7 @@ const App: React.FC = () => {
     <div className={`min-h-screen px-4 md:px-8 bg-slate-50 relative transition-all duration-300 pb-32`}>
       <Routes>
         <Route path="/key-stats" element={<ApiKeyStatsPage />} />
+        <Route path="/key-stats/details" element={<ApiKeyDetailsPage />} />
         <Route path="/inspect/:examId" element={<InspectPage selectedModel={state.selectedModel} apiKey={state.apiKey} />} />
         <Route path="*" element={
           <>
