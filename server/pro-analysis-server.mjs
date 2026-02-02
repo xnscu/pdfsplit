@@ -20,6 +20,29 @@ import { PROMPTS, SCHEMAS, MODEL_IDS } from '../shared/ai-config.js';
 // Load environment variables
 dotenv.config();
 
+// ============ Logging Setup ============
+
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+
+function getTimestamp() {
+  const now = new Date();
+  // Format: YYYY-MM-DD HH:mm:ss
+  const pad = (n) => n.toString().padStart(2, '0');
+  const yyyy = now.getFullYear();
+  const MM = pad(now.getMonth() + 1);
+  const dd = pad(now.getDate());
+  const HH = pad(now.getHours());
+  const mm = pad(now.getMinutes());
+  const ss = pad(now.getSeconds());
+  return `${yyyy}-${MM}-${dd} ${HH}:${mm}:${ss}`;
+}
+
+console.log = (...args) => originalLog(`[${getTimestamp()}]`, ...args);
+console.error = (...args) => originalError(`[${getTimestamp()}]`, ...args);
+console.warn = (...args) => originalWarn(`[${getTimestamp()}]`, ...args);
+
 // ============ Configuration ============
 
 const CONFIG = {

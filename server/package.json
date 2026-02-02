@@ -6,7 +6,7 @@
   "main": "pro-analysis-server.mjs",
   "scripts": {
     "start": "node pro-analysis-server.mjs",
-    "pm2:start": "pm2 start pro-analysis-server.mjs --name gksx-pro-analysis",
+    "pm2:start": "pm2 start pro-analysis-server.mjs --name gksx-pro-analysis --time",
     "pm2:stop": "pm2 stop gksx-pro-analysis",
     "pm2:restart": "pm2 restart gksx-pro-analysis",
     "pm2:logs": "pm2 logs gksx-pro-analysis",
