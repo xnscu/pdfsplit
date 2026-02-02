@@ -45,18 +45,58 @@ console.warn = (...args) => originalWarn(`[${getTimestamp()}]`, ...args);
 
 // ============ Configuration ============
 
+// Parse command line arguments
+function parseArgs() {
+  const args = {};
+  for (let i = 2; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg.startsWith('--')) {
+      let key = arg.slice(2);
+      let value = true;
+      
+      // Handle --key=value
+      if (key.includes('=')) {
+        const parts = key.split('=');
+        key = parts[0];
+        value = parts.slice(1).join('=');
+      } 
+      // Handle --key value
+      else if (i + 1 < process.argv.length && !process.argv[i + 1].startsWith('--')) {
+        value = process.argv[i + 1];
+        i++;
+      }
+      
+      // Normalize key: toUpperCase and replace - with _ (e.g. batch-size -> BATCH_SIZE)
+      const normalizedKey = key.toUpperCase().replace(/-/g, '_');
+      args[normalizedKey] = value;
+    }
+  }
+  return args;
+}
+
+const args = parseArgs();
+if (Object.keys(args).length > 0) {
+  console.log('[Config] CLI Overrides detected:', JSON.stringify(args));
+}
+
+const getConfig = (key, defaultValue, parser = v => v) => {
+  const val = args[key] !== undefined ? args[key] : process.env[key];
+  if (val === undefined) return defaultValue;
+  return parser(val) || defaultValue;
+};
+
 const CONFIG = {
-  API_BASE_URL: process.env.API_BASE_URL || 'https://gksx.xnscu.com',
-  CDN_URL: process.env.CDN_URL || 'https://r2-gksx.xnscu.com',
-  BATCH_SIZE: parseInt(process.env.BATCH_SIZE) || 50,
-  CONCURRENCY: parseInt(process.env.CONCURRENCY) || 5,
-  INITIAL_DELAY_MS: parseInt(process.env.INITIAL_DELAY_MS) || 1000,
-  MAX_DELAY_MS: parseInt(process.env.MAX_DELAY_MS) || 60000,
-  MAX_RETRIES_PER_QUESTION: parseInt(process.env.MAX_RETRIES_PER_QUESTION) || 3,
-  MODEL_ID: process.env.MODEL_ID || MODEL_IDS.PRO,
-  KEYS_FILE: process.env.KEYS_FILE || 'keys.txt',
-  REQUEST_TIMEOUT_MS: parseInt(process.env.REQUEST_TIMEOUT_MS) || 1000 * 60 * 5,
-  GEMINI_TIMEOUT_MS: parseInt(process.env.GEMINI_TIMEOUT_MS) || 1000 * 60 * 5,
+  API_BASE_URL: getConfig('API_BASE_URL', 'https://gksx.xnscu.com'),
+  CDN_URL: getConfig('CDN_URL', 'https://r2-gksx.xnscu.com'),
+  BATCH_SIZE: getConfig('BATCH_SIZE', 50, parseInt),
+  CONCURRENCY: getConfig('CONCURRENCY', 5, parseInt),
+  INITIAL_DELAY_MS: getConfig('INITIAL_DELAY_MS', 1000, parseInt),
+  MAX_DELAY_MS: getConfig('MAX_DELAY_MS', 60000, parseInt),
+  MAX_RETRIES_PER_QUESTION: getConfig('MAX_RETRIES_PER_QUESTION', 3, parseInt),
+  MODEL_ID: getConfig('MODEL_ID', MODEL_IDS.PRO),
+  KEYS_FILE: getConfig('KEYS_FILE', 'keys.txt'),
+  REQUEST_TIMEOUT_MS: getConfig('REQUEST_TIMEOUT_MS', 1000 * 60 * 5, parseInt),
+  GEMINI_TIMEOUT_MS: getConfig('GEMINI_TIMEOUT_MS', 1000 * 60 * 5, parseInt),
 };
 
 // ============ Key Pool Management ============
