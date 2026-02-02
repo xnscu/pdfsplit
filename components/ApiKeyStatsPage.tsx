@@ -31,7 +31,7 @@ interface StatsResponse {
   days_filter: number;
 }
 
-type TimeRange = 0 | 7 | 30;
+type TimeRange = 0 | 1 | 7 | 30;
 
 export function ApiKeyStatsPage() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -87,6 +87,7 @@ export function ApiKeyStatsPage() {
   const timeRangeLabel = (range: TimeRange) => {
     switch (range) {
       case 0: return '全部时间';
+      case 1: return '近1天';
       case 7: return '近7天';
       case 30: return '近30天';
       default: return '全部';
@@ -106,7 +107,7 @@ export function ApiKeyStatsPage() {
         </div>
         <div className="controls">
           <div className="time-range-buttons">
-            {([0, 7, 30] as TimeRange[]).map((range) => (
+            {([0, 1, 7, 30] as TimeRange[]).map((range) => (
               <button
                 key={range}
                 className={`time-btn ${timeRange === range ? 'active' : ''}`}
@@ -133,8 +134,10 @@ export function ApiKeyStatsPage() {
           {/* Summary Cards */}
           <div className="summary-cards">
             <div className="stat-card total">
-              <div className="stat-value">{stats.totals.total_calls.toLocaleString()}</div>
-              <div className="stat-label">总调用次数</div>
+              <Link to={`/key-stats/logs?days=${timeRange}`} className="stat-link">
+                <div className="stat-value">{stats.totals.total_calls.toLocaleString()}</div>
+                <div className="stat-label">总调用次数 ↗</div>
+              </Link>
             </div>
             <div className="stat-card success">
               <Link to={`/key-stats/details?days=${timeRange}`} className="stat-link">
@@ -169,7 +172,7 @@ export function ApiKeyStatsPage() {
               <table className="keys-table">
                 <thead>
                   <tr>
-                    <th>Key (后4位)</th>
+                    <th>Key</th>
                     <th>总调用</th>
                     <th>成功</th>
                     <th>失败</th>
@@ -182,7 +185,7 @@ export function ApiKeyStatsPage() {
                   {stats.keys.map((key) => (
                     <tr key={key.api_key_prefix}>
                       <td className="key-prefix">
-                        <code>{key.api_key_prefix}...</code>
+                        <code>{key.api_key_prefix}</code>
                       </td>
                       <td>{key.total_calls.toLocaleString()}</td>
                       <td className="success-cell">

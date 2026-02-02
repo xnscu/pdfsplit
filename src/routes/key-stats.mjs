@@ -126,14 +126,27 @@ keyStatsRoutes.get('/details', async (c) => {
   // but for safety let's use the binding API properly if possible.
   // Actually, standard D1 prepare().bind(). It supports ? parameters.
 
-  // Re-constructing query to be cleaner for bind
-  let whereClauses = ["s.success = 1", "s.question_id IS NOT NULL", "s.exam_id IS NOT NULL"];
+  const successParam = c.req.query('success');
+  const typeParam = c.req.query('type'); // 'all', 'success', 'failure'
+
+  // Default where clauses
+  // We remove "s.success = 1" as a hard default
+  let whereClauses = ["s.question_id IS NOT NULL", "s.exam_id IS NOT NULL"];
   let bindParams = [];
+
+  // Handle success filter
+  if (successParam !== undefined) {
+    const isSuccess = successParam === 'true' || successParam === '1';
+    whereClauses.push("s.success = ?");
+    bindParams.push(isSuccess ? 1 : 0);
+  } else if (typeParam === 'success') {
+    whereClauses.push("s.success = 1");
+  } else if (typeParam === 'failure') {
+    whereClauses.push("s.success = 0");
+  }
 
   if (days > 0) {
     whereClauses.push(`s.call_time >= datetime('now', 'utc', '-${days} days')`);
-    // Note: Parameterizing the interval string in SQLite can be tricky. 
-    // Since we parseInt(days), it's safe to inject directly into the string literal for the interval.
   }
 
   if (keyPrefix) {
@@ -143,10 +156,16 @@ keyStatsRoutes.get('/details', async (c) => {
 
   const finalQuery = `
     SELECT 
+      s.id,
       s.exam_id,
       e.name as exam_name,
       s.question_id,
-      s.call_time
+      s.call_time,
+      s.success,
+      s.error_message,
+      s.duration_ms,
+      s.api_key_prefix,
+      s.model_id
     FROM api_key_stats s
     LEFT JOIN exams e ON s.exam_id = e.id
     WHERE ${whereClauses.join(' AND ')}

@@ -16,6 +16,7 @@ import { KeyStatsPanel } from "./components/KeyStatsPanel";
 import { Routes, Route, Link } from "react-router-dom";
 import { ApiKeyStatsPage } from "./components/ApiKeyStatsPage";
 import { ApiKeyDetailsPage } from "./components/ApiKeyDetailsPage";
+import { ApiCallLogsPage } from "./components/ApiCallLogsPage";
 import { InspectPage } from "./components/InspectPage";
 import packageJson from "./package.json";
 import SyncStatus from "./components/SyncStatus";
@@ -635,6 +636,7 @@ const App: React.FC = () => {
       <Routes>
         <Route path="/key-stats" element={<ApiKeyStatsPage />} />
         <Route path="/key-stats/details" element={<ApiKeyDetailsPage />} />
+        <Route path="/key-stats/logs" element={<ApiCallLogsPage />} />
         <Route path="/inspect/:examId" element={<InspectPage selectedModel={state.selectedModel} apiKey={state.apiKey} />} />
         <Route path="*" element={
           <>
