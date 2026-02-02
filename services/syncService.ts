@@ -513,33 +513,54 @@ export const fullSync = async (): Promise<SyncResult> => {
     // An exam needs to be pushed if:
     // - It doesn't exist on remote, OR
     // - Its local timestamp > lastSyncTime (was modified locally since last sync)
+    // Also identify exams to force pull (Remote > Local)
     const examsToPush: string[] = [];
+    const examsToForcePull: string[] = [];
+
     for (const local of localList) {
       const remote = remoteMap.get(local.id);
       if (!remote) {
         // Doesn't exist on remote - push it
         examsToPush.push(local.id);
-      } else if (local.timestamp > syncState.lastSyncTime) {
-        // Local was modified since last sync
-        // Check for conflict: was remote also modified?
-        if (remote.timestamp > syncState.lastSyncTime) {
-          // Conflict: both sides modified
-          // For now, use "last write wins" - the more recent one wins
-          if (local.timestamp > remote.timestamp) {
+      } else {
+        // Check for push (Local modified)
+        if (local.timestamp > syncState.lastSyncTime) {
+          // Local was modified since last sync
+          // Check for conflict: was remote also modified?
+          if (remote.timestamp > syncState.lastSyncTime) {
+            // Conflict: both sides modified
+            // For now, use "last write wins" - the more recent one wins
+            if (local.timestamp > remote.timestamp) {
+              examsToPush.push(local.id);
+            }
+            // If remote is newer, it will be pulled later via /sync/pull or examsToForcePull
+            result.conflicts.push({
+              id: local.id,
+              name: local.name,
+              localTimestamp: local.timestamp,
+              remoteTimestamp: remote.timestamp,
+              resolution: local.timestamp > remote.timestamp ? "local" : "remote",
+            });
+          } else {
+            // Only local was modified - push it
             examsToPush.push(local.id);
           }
-          // If remote is newer, it will be pulled later
-          result.conflicts.push({
-            id: local.id,
-            name: local.name,
-            localTimestamp: local.timestamp,
-            remoteTimestamp: remote.timestamp,
-            resolution: local.timestamp > remote.timestamp ? "local" : "remote",
-          });
-        } else {
-          // Only local was modified - push it
-          examsToPush.push(local.id);
         }
+
+        // Check for force pull (Remote is newer than Local)
+        // This covers cases where Local is "stale" (reverted/restored to old version)
+        // even if it hasn't been modified "since last sync"
+        if (remote.timestamp > local.timestamp) {
+          examsToForcePull.push(local.id);
+        }
+      }
+    }
+
+    // Step 3.5: Find exams that exist on remote but not locally
+    // These need to be pulled regardless of lastSyncTime
+    for (const remote of remoteList) {
+      if (!localMap.has(remote.id)) {
+        examsToForcePull.push(remote.id);
       }
     }
 
@@ -626,6 +647,32 @@ export const fullSync = async (): Promise<SyncResult> => {
       // Only delete if we didn't just push it
       if (!examsToPush.includes(deletedId)) {
         await storageService.deleteExamResult(deletedId);
+      }
+    }
+
+    // Capture IDs processed by standard pull
+    const processedIds = new Set(pullResult.exams.map(e => e.id));
+
+    // Step 6: Force pull exams that are newer on remote but missed by /sync/pull
+    // (This happens when local files are reverted to old versions older than lastSyncTime)
+    for (const id of examsToForcePull) {
+      if (processedIds.has(id)) continue;
+      if (pullResult.deleted.includes(id)) continue;
+      
+      try {
+        const exam = await getRemoteExam(id);
+        if (exam) {
+          // Check again if we should overwrite (though examsToForcePull logic implies we should)
+          const currentLocal = await storageService.loadExamResult(id);
+          if (currentLocal && currentLocal.timestamp >= exam.timestamp) continue;
+
+          await saveExamToLocal(exam);
+          result.pulled++;
+          result.pulledNames!.push(exam.name);
+          processedIds.add(id);
+        }
+      } catch (e) {
+        result.errors.push(`补充拉取失败: ${id} - ${e}`);
       }
     }
 
