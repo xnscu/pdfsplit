@@ -32,6 +32,8 @@ const CONFIG = {
   MAX_RETRIES_PER_QUESTION: parseInt(process.env.MAX_RETRIES_PER_QUESTION) || 3,
   MODEL_ID: process.env.MODEL_ID || MODEL_IDS.PRO,
   KEYS_FILE: process.env.KEYS_FILE || 'keys.txt',
+  REQUEST_TIMEOUT_MS: parseInt(process.env.REQUEST_TIMEOUT_MS) || 1000 * 60 * 5,
+  GEMINI_TIMEOUT_MS: parseInt(process.env.GEMINI_TIMEOUT_MS) || 1000 * 60 * 5,
 };
 
 // ============ Key Pool Management ============
@@ -100,8 +102,29 @@ class CloudAPIClient {
     this.baseUrl = baseUrl;
   }
   
+  async fetchWithTimeout(url, options = {}) {
+    const timeout = options.timeout || CONFIG.REQUEST_TIMEOUT_MS;
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(id);
+      return response;
+    } catch (error) {
+      clearTimeout(id);
+      if (error.name === 'AbortError') {
+        throw new Error(`Request timed out after ${timeout}ms`);
+      }
+      throw error;
+    }
+  }
+  
   async fetchPendingQuestions(limit) {
-    const response = await fetch(`${this.baseUrl}/api/pro-analysis/pending`, {
+    const response = await this.fetchWithTimeout(`${this.baseUrl}/api/pro-analysis/pending`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ limit }),
@@ -115,7 +138,7 @@ class CloudAPIClient {
   }
   
   async updateProAnalysis(examId, questionId, proAnalysis) {
-    const response = await fetch(`${this.baseUrl}/api/pro-analysis/update`, {
+    const response = await this.fetchWithTimeout(`${this.baseUrl}/api/pro-analysis/update`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -134,7 +157,7 @@ class CloudAPIClient {
   
   async recordKeyStats(data) {
     try {
-      await fetch(`${this.baseUrl}/api/key-stats/record`, {
+      await this.fetchWithTimeout(`${this.baseUrl}/api/key-stats/record`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -179,8 +202,8 @@ class GeminiAnalyzer {
       // Get image data (supports both hash and data URL)
       const { mimeType, data } = await this.getImageData(question.data_url);
       
-      // Call Gemini API with non-streaming
-      const response = await ai.models.generateContent({
+      // Call Gemini API with non-streaming and timeout protection
+      const generatePromise = ai.models.generateContent({
         model: CONFIG.MODEL_ID,
         contents: [{
           parts: [
@@ -195,6 +218,14 @@ class GeminiAnalyzer {
           responseSchema: SCHEMAS.ANALYSIS,
         },
       });
+
+      // Wrap in timeout
+      const response = await Promise.race([
+        generatePromise,
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error(`Gemini API timed out after ${CONFIG.GEMINI_TIMEOUT_MS}ms`)), CONFIG.GEMINI_TIMEOUT_MS)
+        )
+      ]);
       
       const fullText = response.text;
       
@@ -305,7 +336,7 @@ class GeminiAnalyzer {
    * Fetch image from URL and convert to base64 data URL
    */
   async fetchImageAsBase64(url) {
-    const response = await fetch(url);
+    const response = await this.cloudClient.fetchWithTimeout(url);
     if (!response.ok) {
       throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
     }
