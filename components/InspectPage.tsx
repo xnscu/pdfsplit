@@ -310,14 +310,14 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
     }
   }, [pages]);
 
-  // Re-solve question handler
-  const handleReSolveQuestion = useCallback(async (q: QuestionImage) => {
+  // Re-solve question handler with specific model type
+  const handleReSolveQuestion = useCallback(async (q: QuestionImage, modelType: "flash" | "pro") => {
     try {
-      const model = selectedModel || MODEL_IDS.FLASH;
+      const model = modelType === "pro" ? MODEL_IDS.PRO : MODEL_IDS.FLASH;
       const analysis = await analyzeQuestionViaProxy(q.dataUrl, model, 3, apiKey);
 
       const updatedQuestion = { ...q };
-      if (model === MODEL_IDS.PRO) {
+      if (modelType === "pro") {
         updatedQuestion.pro_analysis = analysis;
       } else {
         updatedQuestion.analysis = analysis;
@@ -333,13 +333,13 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
         .map(item => (item.id === q.id ? updatedQuestion : item));
       await updateQuestionsForFile(q.fileName, fileQuestions);
 
-      addNotification(q.fileName, "success", `Q${q.id} 重新解题完成`);
+      addNotification(q.fileName, "success", `Q${q.id} 重新解题完成 (${modelType === "pro" ? "Pro" : "Flash"})`);
     } catch (error: any) {
       console.error("Re-solve question failed:", error);
       addNotification(q.fileName, "error", `Q${q.id} 解题失败: ${error.message}`);
       throw error;
     }
-  }, [questions, addNotification]);
+  }, [questions, addNotification, apiKey]);
 
   // Delete analysis handler
   const handleDeleteAnalysis = useCallback(async (q: QuestionImage, type: "standard" | "pro") => {
@@ -381,6 +381,31 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
       .map(item => (item.id === q.id ? updatedQuestion : item));
     await updateQuestionsForFile(q.fileName, fileQuestions);
     addNotification(q.fileName, "success", `Q${q.id} 解析已复制`);
+  }, [questions, addNotification]);
+
+  // Edit analysis handler
+  const handleEditAnalysis = useCallback(async (
+    q: QuestionImage,
+    type: "standard" | "pro",
+    field: string,
+    value: string
+  ) => {
+    const updatedQuestion = { ...q };
+    if (type === "standard" && updatedQuestion.analysis) {
+      updatedQuestion.analysis = { ...updatedQuestion.analysis, [field]: value };
+    } else if (type === "pro" && updatedQuestion.pro_analysis) {
+      updatedQuestion.pro_analysis = { ...updatedQuestion.pro_analysis, [field]: value };
+    }
+
+    setQuestions(prev => prev.map(item =>
+      item.fileName === q.fileName && item.id === q.id ? updatedQuestion : item
+    ));
+
+    const fileQuestions = questions
+      .filter(item => item.fileName === q.fileName)
+      .map(item => (item.id === q.id ? updatedQuestion : item));
+    await updateQuestionsForFile(q.fileName, fileQuestions);
+    addNotification(q.fileName, "success", `Q${q.id} 内容已更新`);
   }, [questions, addNotification]);
 
   // Update detections handler
@@ -627,6 +652,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
             onReSolveQuestion={handleReSolveQuestion}
             onDeleteAnalysis={handleDeleteAnalysis}
             onCopyAnalysis={handleCopyAnalysis}
+            onEditAnalysis={handleEditAnalysis}
             enableAnchors={true}
           />
         ) : (

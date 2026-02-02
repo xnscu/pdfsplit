@@ -294,20 +294,20 @@ const App: React.FC = () => {
     }
   };
 
-  // Handle re-solving a single question
-  const handleReSolveQuestion = useCallback(async (q: QuestionImage) => {
+  // Handle re-solving a single question with specific model type
+  const handleReSolveQuestion = useCallback(async (q: QuestionImage, modelType: "flash" | "pro") => {
     try {
+      const model = modelType === "pro" ? MODEL_IDS.PRO : MODEL_IDS.FLASH;
       const analysis = await analyzeQuestionViaProxy(
         q.dataUrl,
-        state.selectedModel || MODEL_IDS.FLASH,
+        model,
         3,
         state.apiKey
       );
 
       // Update state
-      const isPro = (state.selectedModel || MODEL_IDS.FLASH) === MODEL_IDS.PRO;
       const updatedQuestion = { ...q };
-      if (isPro) {
+      if (modelType === "pro") {
         updatedQuestion.pro_analysis = analysis;
       } else {
         updatedQuestion.analysis = analysis;
@@ -328,13 +328,13 @@ const App: React.FC = () => {
         .map((item) => (item.id === q.id ? updatedQuestion : item));
       await updateQuestionsForFile(q.fileName, fileQuestions);
 
-      actions.addNotification(q.fileName, "success", `Q${q.id} 重新解题完成`);
+      actions.addNotification(q.fileName, "success", `Q${q.id} 重新解题完成 (${modelType === "pro" ? "Pro" : "Flash"})`);
     } catch (error: any) {
       console.error("Re-solve question failed:", error);
       actions.addNotification(q.fileName, "error", `Q${q.id} 解题失败: ${error.message}`);
       throw error;
     }
-  }, [state.selectedModel, state.apiKey, state.questions, setters, actions]);
+  }, [state.apiKey, state.questions, setters, actions]);
 
   const handleDeleteAnalysis = useCallback(async (q: QuestionImage, type: "standard" | "pro") => {
     const updatedQuestion = { ...q };
@@ -384,6 +384,36 @@ const App: React.FC = () => {
       .map((item) => (item.id === q.id ? updatedQuestion : item));
     await updateQuestionsForFile(q.fileName, fileQuestions);
     actions.addNotification(q.fileName, "success", `Q${q.id} 解析已复制`);
+  }, [state.questions, setters, actions]);
+
+  // Handle editing analysis fields
+  const handleEditAnalysis = useCallback(async (
+    q: QuestionImage,
+    type: "standard" | "pro",
+    field: string,
+    value: string
+  ) => {
+    const updatedQuestion = { ...q };
+    if (type === "standard" && updatedQuestion.analysis) {
+      updatedQuestion.analysis = { ...updatedQuestion.analysis, [field]: value };
+    } else if (type === "pro" && updatedQuestion.pro_analysis) {
+      updatedQuestion.pro_analysis = { ...updatedQuestion.pro_analysis, [field]: value };
+    }
+
+    setters.setQuestions((prev: QuestionImage[]) => {
+      return prev.map((item) => {
+        if (item.fileName === q.fileName && item.id === q.id) {
+          return updatedQuestion;
+        }
+        return item;
+      });
+    });
+
+    const fileQuestions = state.questions
+      .filter((item) => item.fileName === q.fileName)
+      .map((item) => (item.id === q.id ? updatedQuestion : item));
+    await updateQuestionsForFile(q.fileName, fileQuestions);
+    actions.addNotification(q.fileName, "success", `Q${q.id} 内容已更新`);
   }, [state.questions, setters, actions]);
 
   const handleNextFile = () => {
@@ -766,6 +796,7 @@ const App: React.FC = () => {
             onReSolveQuestion={handleReSolveQuestion}
             onDeleteAnalysis={handleDeleteAnalysis}
             onCopyAnalysis={handleCopyAnalysis}
+            onEditAnalysis={handleEditAnalysis}
             onStopAnalyze={actions.handleStop}
             analyzingTotal={state.analyzingTotal}
             analyzingDone={state.analyzingDone}
