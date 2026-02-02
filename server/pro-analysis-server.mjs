@@ -180,14 +180,22 @@ class CloudAPIClient {
   
   async recordKeyStats(data) {
     try {
-      await this.fetchWithTimeout(`${this.baseUrl}/api/key-stats/record`, {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/api/key-stats/record`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
+
+      if (!response.ok) {
+        console.warn(`[Stats] Failed to record key stats: ${response.status} ${response.statusText}`);
+        try {
+          const text = await response.text();
+          if (text) console.warn(`[Stats] Response body: ${text.slice(0, 200)}`);
+        } catch (e) { /* ignore body read error */ }
+      }
     } catch (err) {
       // Non-critical, just log
-      console.warn('[Stats] Failed to record key stats:', err.message);
+      console.warn('[Stats] Failed to record key stats (network):', err.message);
     }
   }
 }
