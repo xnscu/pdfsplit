@@ -27,7 +27,7 @@ keyStatsRoutes.post('/record', async (c) => {
 
     await db.prepare(`
     INSERT INTO api_key_stats (
-      id, api_key_prefix, call_time, success, 
+      id, api_key_prefix, call_time, success,
       error_message, question_id, exam_id, duration_ms, model_id
     )
     VALUES (?, ?, datetime('now', 'utc'), ?, ?, ?, ?, ?, ?)
@@ -57,7 +57,7 @@ keyStatsRoutes.get('/', async (c) => {
 
   // Get per-key statistics
   const perKeyResult = await db.prepare(`
-    SELECT 
+    SELECT
       api_key_prefix,
       COUNT(*) as total_calls,
       SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
@@ -72,7 +72,7 @@ keyStatsRoutes.get('/', async (c) => {
 
   // Get overall totals
   const totalsResult = await db.prepare(`
-    SELECT 
+    SELECT
       COUNT(*) as total_calls,
       SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
       SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failure_count,
@@ -93,38 +93,6 @@ keyStatsRoutes.get('/details', async (c) => {
   const db = c.env.DB;
   const days = parseInt(c.req.query('days')) || 0;
   const keyPrefix = c.req.query('prefix');
-
-  let query = `
-    SELECT 
-      s.exam_id,
-      e.name as exam_name,
-      s.question_id,
-      s.call_time
-    FROM api_key_stats s
-    LEFT JOIN exams e ON s.exam_id = e.id
-    WHERE s.success = 1 
-    AND s.question_id IS NOT NULL 
-    AND s.exam_id IS NOT NULL
-  `;
-  
-  const params = [];
-
-  if (days > 0) {
-    query += ` AND s.call_time >= datetime('now', 'utc', '-? days')`;
-    params.push(days);
-  }
-
-  if (keyPrefix) {
-    query += ` AND s.api_key_prefix = ?`;
-    params.push(keyPrefix);
-  }
-
-  query += ` ORDER BY s.call_time DESC LIMIT 1000`; // Limit to prevent massive payloads
-
-  // Note: D1 binding with variable arguments is tricky if using raw string interpolation for days
-  // Let's use direct injection for the integer days since we parse it as int above
-  // but for safety let's use the binding API properly if possible.
-  // Actually, standard D1 prepare().bind(). It supports ? parameters.
 
   const successParam = c.req.query('success');
   const typeParam = c.req.query('type'); // 'all', 'success', 'failure'
@@ -155,7 +123,7 @@ keyStatsRoutes.get('/details', async (c) => {
   }
 
   const finalQuery = `
-    SELECT 
+    SELECT
       s.id,
       s.exam_id,
       e.name as exam_name,
@@ -169,8 +137,7 @@ keyStatsRoutes.get('/details', async (c) => {
     FROM api_key_stats s
     LEFT JOIN exams e ON s.exam_id = e.id
     WHERE ${whereClauses.join(' AND ')}
-    ORDER BY s.call_time DESC 
-    LIMIT 2000
+    ORDER BY s.call_time DESC
   `;
 
   const results = await db.prepare(finalQuery).bind(...bindParams).all();
