@@ -3,6 +3,7 @@
  * Handles recording and retrieving API key usage statistics
  */
 import { Hono } from 'hono';
+import { SCHEMAS } from '../../shared/ai-config.js';
 
 const keyStatsRoutes = new Hono();
 
@@ -79,11 +80,45 @@ keyStatsRoutes.get('/', async (c) => {
       AVG(duration_ms) as avg_duration_ms
     FROM api_key_stats
     ${dateFilter}
+    FROM api_key_stats
+    ${dateFilter}
   `).first();
+
+  // Calculate progress stats (Total vs Pending)
+  const requiredFields = SCHEMAS.ANALYSIS.required;
+  const analysisChecks = requiredFields.map(field => {
+    const jsonPath = `$.${field}`;
+    const checks = [`json_extract(q.pro_analysis, '${jsonPath}') IS NULL`];
+
+    if (field === 'tags') {
+      checks.push(`json_array_length(json_extract(q.pro_analysis, '${jsonPath}')) = 0`);
+    } else if (field !== 'picture_ok') {
+      checks.push(`json_extract(q.pro_analysis, '${jsonPath}') = ''`);
+    }
+    // Only verify non-empty fields
+    return `(${checks.join(' OR ')})`;
+  }).join(' OR ');
+
+  const progressResult = await db.prepare(`
+    SELECT
+      COUNT(*) as total_questions,
+      SUM(CASE WHEN q.pro_analysis IS NULL OR ${analysisChecks} THEN 1 ELSE 0 END) as pending_count
+    FROM questions q
+  `).first();
+
+  const totalQuestions = progressResult?.total_questions || 0;
+  const pendingCount = progressResult?.pending_count || 0;
+  const processedCount = totalQuestions - pendingCount;
 
   return c.json({
     keys: perKeyResult.results,
     totals: totalsResult || { total_calls: 0, success_count: 0, failure_count: 0, avg_duration_ms: 0 },
+    progress: {
+      total: totalQuestions,
+      pending: pendingCount,
+      processed: processedCount
+    },
+    days_filter: days,
     days_filter: days,
   });
 });
