@@ -72,14 +72,13 @@ keyStatsRoutes.get('/', async (c) => {
   `).all();
 
   // Get overall totals
+  // Get overall totals
   const totalsResult = await db.prepare(`
     SELECT
       COUNT(*) as total_calls,
       SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
       SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failure_count,
       AVG(duration_ms) as avg_duration_ms
-    FROM api_key_stats
-    ${dateFilter}
     FROM api_key_stats
     ${dateFilter}
   `).first();
@@ -118,7 +117,6 @@ keyStatsRoutes.get('/', async (c) => {
       pending: pendingCount,
       processed: processedCount
     },
-    days_filter: days,
     days_filter: days,
   });
 });
