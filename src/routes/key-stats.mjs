@@ -3,6 +3,7 @@
  * Handles recording and retrieving API key usage statistics
  */
 import { Hono } from 'hono';
+import { SCHEMAS } from '../../shared/ai-config.js';
 
 const keyStatsRoutes = new Hono();
 
@@ -27,7 +28,7 @@ keyStatsRoutes.post('/record', async (c) => {
 
     await db.prepare(`
     INSERT INTO api_key_stats (
-      id, api_key_prefix, call_time, success, 
+      id, api_key_prefix, call_time, success,
       error_message, question_id, exam_id, duration_ms, model_id
     )
     VALUES (?, ?, datetime('now', 'utc'), ?, ?, ?, ?, ?, ?)
@@ -57,7 +58,7 @@ keyStatsRoutes.get('/', async (c) => {
 
   // Get per-key statistics
   const perKeyResult = await db.prepare(`
-    SELECT 
+    SELECT
       api_key_prefix,
       COUNT(*) as total_calls,
       SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
@@ -71,8 +72,9 @@ keyStatsRoutes.get('/', async (c) => {
   `).all();
 
   // Get overall totals
+  // Get overall totals
   const totalsResult = await db.prepare(`
-    SELECT 
+    SELECT
       COUNT(*) as total_calls,
       SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
       SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failure_count,
@@ -81,9 +83,40 @@ keyStatsRoutes.get('/', async (c) => {
     ${dateFilter}
   `).first();
 
+  // Calculate progress stats (Total vs Pending)
+  const requiredFields = SCHEMAS.ANALYSIS.required;
+  const analysisChecks = requiredFields.map(field => {
+    const jsonPath = `$.${field}`;
+    const checks = [`json_extract(q.pro_analysis, '${jsonPath}') IS NULL`];
+
+    if (field === 'tags') {
+      checks.push(`json_array_length(json_extract(q.pro_analysis, '${jsonPath}')) = 0`);
+    } else if (field !== 'picture_ok') {
+      checks.push(`json_extract(q.pro_analysis, '${jsonPath}') = ''`);
+    }
+    // Only verify non-empty fields
+    return `(${checks.join(' OR ')})`;
+  }).join(' OR ');
+
+  const progressResult = await db.prepare(`
+    SELECT
+      COUNT(*) as total_questions,
+      SUM(CASE WHEN q.pro_analysis IS NULL OR ${analysisChecks} THEN 1 ELSE 0 END) as pending_count
+    FROM questions q
+  `).first();
+
+  const totalQuestions = progressResult?.total_questions || 0;
+  const pendingCount = progressResult?.pending_count || 0;
+  const processedCount = totalQuestions - pendingCount;
+
   return c.json({
     keys: perKeyResult.results,
     totals: totalsResult || { total_calls: 0, success_count: 0, failure_count: 0, avg_duration_ms: 0 },
+    progress: {
+      total: totalQuestions,
+      pending: pendingCount,
+      processed: processedCount
+    },
     days_filter: days,
   });
 });
@@ -93,38 +126,6 @@ keyStatsRoutes.get('/details', async (c) => {
   const db = c.env.DB;
   const days = parseInt(c.req.query('days')) || 0;
   const keyPrefix = c.req.query('prefix');
-
-  let query = `
-    SELECT 
-      s.exam_id,
-      e.name as exam_name,
-      s.question_id,
-      s.call_time
-    FROM api_key_stats s
-    LEFT JOIN exams e ON s.exam_id = e.id
-    WHERE s.success = 1 
-    AND s.question_id IS NOT NULL 
-    AND s.exam_id IS NOT NULL
-  `;
-  
-  const params = [];
-
-  if (days > 0) {
-    query += ` AND s.call_time >= datetime('now', 'utc', '-? days')`;
-    params.push(days);
-  }
-
-  if (keyPrefix) {
-    query += ` AND s.api_key_prefix = ?`;
-    params.push(keyPrefix);
-  }
-
-  query += ` ORDER BY s.call_time DESC LIMIT 1000`; // Limit to prevent massive payloads
-
-  // Note: D1 binding with variable arguments is tricky if using raw string interpolation for days
-  // Let's use direct injection for the integer days since we parse it as int above
-  // but for safety let's use the binding API properly if possible.
-  // Actually, standard D1 prepare().bind(). It supports ? parameters.
 
   const successParam = c.req.query('success');
   const typeParam = c.req.query('type'); // 'all', 'success', 'failure'
@@ -155,7 +156,7 @@ keyStatsRoutes.get('/details', async (c) => {
   }
 
   const finalQuery = `
-    SELECT 
+    SELECT
       s.id,
       s.exam_id,
       e.name as exam_name,
@@ -169,8 +170,7 @@ keyStatsRoutes.get('/details', async (c) => {
     FROM api_key_stats s
     LEFT JOIN exams e ON s.exam_id = e.id
     WHERE ${whereClauses.join(' AND ')}
-    ORDER BY s.call_time DESC 
-    LIMIT 2000
+    ORDER BY s.call_time DESC
   `;
 
   const results = await db.prepare(finalQuery).bind(...bindParams).all();

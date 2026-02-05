@@ -3,6 +3,7 @@
  * Handles Gemini Pro analysis operations for questions
  */
 import { Hono } from 'hono';
+import { SCHEMAS } from '../../shared/ai-config.js';
 
 const proAnalysisRoutes = new Hono();
 
@@ -17,8 +18,21 @@ proAnalysisRoutes.post('/pending', async (c) => {
 
   const { limit } = body;
 
+  const requiredFields = SCHEMAS.ANALYSIS.required;
+  const analysisChecks = requiredFields.map(field => {
+    const jsonPath = `$.${field}`;
+    const checks = [`json_extract(q.pro_analysis, '${jsonPath}') IS NULL`];
+
+    if (field === 'tags') {
+      checks.push(`json_array_length(json_extract(q.pro_analysis, '${jsonPath}')) = 0`);
+    } else if (field !== 'picture_ok') {
+      checks.push(`json_extract(q.pro_analysis, '${jsonPath}') = ''`);
+    }
+    return `(${checks.join(' OR ')})`;
+  }).join(' OR ');
+
   const result = await db.prepare(`
-    SELECT 
+    SELECT
       q.id as question_id,
       q.exam_id,
       q.data_url,
@@ -26,7 +40,10 @@ proAnalysisRoutes.post('/pending', async (c) => {
       e.name as exam_name
     FROM questions q
     JOIN exams e ON e.id = q.exam_id
-    WHERE q.pro_analysis IS NULL
+    WHERE (
+      q.pro_analysis IS NULL
+      OR ${analysisChecks}
+    )
     ORDER BY e.timestamp DESC, q.page_number
     LIMIT ?
   `).bind(limit).all();
@@ -57,7 +74,7 @@ proAnalysisRoutes.put('/update', async (c) => {
   // Update the question's pro_analysis
   statements.push(
     db.prepare(`
-      UPDATE questions 
+      UPDATE questions
       SET pro_analysis = ?
       WHERE exam_id = ? AND id = ?
     `).bind(
@@ -70,7 +87,7 @@ proAnalysisRoutes.put('/update', async (c) => {
   // Update exam timestamp so sync can detect changes
   statements.push(
     db.prepare(`
-      UPDATE exams 
+      UPDATE exams
       SET timestamp = ?, updated_at = ?
       WHERE id = ?
     `).bind(

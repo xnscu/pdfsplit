@@ -1,15 +1,15 @@
 /**
  * API Key Statistics Dashboard
- * 
+ *
  * Displays call statistics for each API key used by the pro-analysis server.
  * Shows success/failure counts, average duration, and filtering by time range.
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 
 // API base URL
-const API_BASE = '/api';
+const API_BASE = "/api";
 
 interface KeyStats {
   api_key_prefix: string;
@@ -28,6 +28,11 @@ interface StatsResponse {
     failure_count: number;
     avg_duration_ms: number | null;
   };
+  progress?: {
+    total: number;
+    pending: number;
+    processed: number;
+  };
   days_filter: number;
 }
 
@@ -38,59 +43,64 @@ export function ApiKeyStatsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>(0);
-  
+
   const fetchStats = useCallback(async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
-      const url = `${API_BASE}/key-stats${timeRange > 0 ? `?days=${timeRange}` : ''}`;
+      const url = `${API_BASE}/key-stats${timeRange > 0 ? `?days=${timeRange}` : ""}`;
       const response = await fetch(url);
-      
+
       if (!response.ok) {
         throw new Error(`Failed to fetch stats: ${response.status}`);
       }
-      
+
       const data = await response.json();
       setStats(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
   }, [timeRange]);
-  
+
   useEffect(() => {
     fetchStats();
-    
+
     // Auto-refresh every 30 seconds
     const interval = setInterval(fetchStats, 30000);
     return () => clearInterval(interval);
   }, [fetchStats]);
-  
+
   const getSuccessRate = (success: number, total: number): string => {
-    if (total === 0) return '0.0';
+    if (total === 0) return "0.0";
     return ((success / total) * 100).toFixed(1);
   };
-  
+
   const formatDuration = (ms: number | null) => {
-    if (ms === null) return '-';
+    if (ms === null) return "-";
     if (ms < 1000) return `${Math.round(ms)}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
   };
-  
+
   const formatTime = (time: string | null) => {
-    if (!time) return '-';
-    return new Date(time + 'Z').toLocaleString('zh-CN');
+    if (!time) return "-";
+    return new Date(time + "Z").toLocaleString("zh-CN");
   };
-  
+
   const timeRangeLabel = (range: TimeRange) => {
     switch (range) {
-      case 0: return '全部时间';
-      case 1: return '近1天';
-      case 7: return '近7天';
-      case 30: return '近30天';
-      default: return '全部';
+      case 0:
+        return "全部时间";
+      case 1:
+        return "近1天";
+      case 7:
+        return "近7天";
+      case 30:
+        return "近30天";
+      default:
+        return "全部";
     }
   };
 
@@ -110,7 +120,7 @@ export function ApiKeyStatsPage() {
             {([0, 1, 7, 30] as TimeRange[]).map((range) => (
               <button
                 key={range}
-                className={`time-btn ${timeRange === range ? 'active' : ''}`}
+                className={`time-btn ${timeRange === range ? "active" : ""}`}
                 onClick={() => setTimeRange(range)}
               >
                 {timeRangeLabel(range)}
@@ -118,19 +128,44 @@ export function ApiKeyStatsPage() {
             ))}
           </div>
           <button className="refresh-btn" onClick={fetchStats} disabled={loading}>
-            {loading ? '加载中...' : '🔄 刷新'}
+            {loading ? "加载中..." : "🔄 刷新"}
           </button>
         </div>
       </div>
-      
-      {error && (
-        <div className="error-banner">
-          ⚠️ {error}
-        </div>
-      )}
-      
+
+      {error && <div className="error-banner">⚠️ {error}</div>}
+
       {stats && (
         <>
+          {/* Progress Section */}
+          {stats.progress && (
+            <div className="progress-section">
+              <h2>总体处理进度</h2>
+              <div className="progress-content">
+                <div className="progress-percent">
+                  {stats.progress.total > 0
+                    ? ((stats.progress.processed / stats.progress.total) * 100).toFixed(1)
+                    : "0.0"}
+                  %
+                </div>
+                <div className="progress-details">
+                  <div className="detail-item">
+                    <span className="label">已处理</span>
+                    <span className="value success">{stats.progress.processed.toLocaleString()}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="label">待处理</span>
+                    <span className="value pending">{stats.progress.pending.toLocaleString()}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="label">总题目</span>
+                    <span className="value">{stats.progress.total.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Summary Cards */}
           <div className="summary-cards">
             <div className="stat-card total">
@@ -150,9 +185,7 @@ export function ApiKeyStatsPage() {
               <div className="stat-label">失败次数</div>
             </div>
             <div className="stat-card rate">
-              <div className="stat-value">
-                {getSuccessRate(stats.totals.success_count, stats.totals.total_calls)}%
-              </div>
+              <div className="stat-value">{getSuccessRate(stats.totals.success_count, stats.totals.total_calls)}%</div>
               <div className="stat-label">成功率</div>
             </div>
             <div className="stat-card duration">
@@ -160,14 +193,12 @@ export function ApiKeyStatsPage() {
               <div className="stat-label">平均耗时</div>
             </div>
           </div>
-          
+
           {/* Per-Key Table */}
           <div className="keys-table-container">
             <h2>各 Key 统计明细</h2>
             {stats.keys.length === 0 ? (
-              <div className="empty-state">
-                暂无调用记录
-              </div>
+              <div className="empty-state">暂无调用记录</div>
             ) : (
               <table className="keys-table">
                 <thead>
@@ -189,7 +220,7 @@ export function ApiKeyStatsPage() {
                       </td>
                       <td>{key.total_calls.toLocaleString()}</td>
                       <td className="success-cell">
-                        <Link 
+                        <Link
                           to={`/key-stats/details?days=${timeRange}&prefix=${key.api_key_prefix}`}
                           className="table-link"
                           title="查看成功明细"
@@ -199,10 +230,15 @@ export function ApiKeyStatsPage() {
                       </td>
                       <td className="failure-cell">{key.failure_count.toLocaleString()}</td>
                       <td>
-                        <span className={`rate-badge ${
-                          parseFloat(getSuccessRate(key.success_count, key.total_calls)) >= 90 ? 'good' :
-                          parseFloat(getSuccessRate(key.success_count, key.total_calls)) >= 70 ? 'ok' : 'bad'
-                        }`}>
+                        <span
+                          className={`rate-badge ${
+                            parseFloat(getSuccessRate(key.success_count, key.total_calls)) >= 90
+                              ? "good"
+                              : parseFloat(getSuccessRate(key.success_count, key.total_calls)) >= 70
+                                ? "ok"
+                                : "bad"
+                          }`}
+                        >
                           {getSuccessRate(key.success_count, key.total_calls)}%
                         </span>
                       </td>
@@ -214,14 +250,14 @@ export function ApiKeyStatsPage() {
               </table>
             )}
           </div>
-          
+
           <div className="stats-footer">
             <span>数据每30秒自动刷新</span>
             <span>当前筛选: {timeRangeLabel(timeRange)}</span>
           </div>
         </>
       )}
-      
+
       <style>{`
         .api-key-stats-page {
           padding: 24px;
@@ -229,7 +265,7 @@ export function ApiKeyStatsPage() {
           margin: 0 auto;
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
-        
+
         .stats-header {
           display: flex;
           justify-content: space-between;
@@ -238,7 +274,7 @@ export function ApiKeyStatsPage() {
           flex-wrap: wrap;
           gap: 16px;
         }
-        
+
         .stats-header h1 {
           margin: 0;
           font-size: 1.5rem;
@@ -264,18 +300,18 @@ export function ApiKeyStatsPage() {
           color: #1a1a2e;
           transform: translateX(-2px);
         }
-        
+
         .controls {
           display: flex;
           gap: 16px;
           align-items: center;
         }
-        
+
         .time-range-buttons {
           display: flex;
           gap: 8px;
         }
-        
+
         .time-btn {
           padding: 8px 16px;
           border: 1px solid #d1d5db;
@@ -285,17 +321,17 @@ export function ApiKeyStatsPage() {
           font-size: 14px;
           transition: all 0.2s;
         }
-        
+
         .time-btn:hover {
           background: #f3f4f6;
         }
-        
+
         .time-btn.active {
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           color: white;
           border-color: transparent;
         }
-        
+
         .refresh-btn {
           padding: 8px 16px;
           background: #10b981;
@@ -306,16 +342,16 @@ export function ApiKeyStatsPage() {
           font-size: 14px;
           transition: all 0.2s;
         }
-        
+
         .refresh-btn:hover:not(:disabled) {
           background: #059669;
         }
-        
+
         .refresh-btn:disabled {
           opacity: 0.6;
           cursor: not-allowed;
         }
-        
+
         .error-banner {
           background: #fef2f2;
           border: 1px solid #fecaca;
@@ -324,14 +360,67 @@ export function ApiKeyStatsPage() {
           border-radius: 8px;
           margin-bottom: 24px;
         }
-        
+
+        .progress-section {
+          background: white;
+          border-radius: 12px;
+          padding: 24px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+          border: 1px solid #e5e7eb;
+          margin-bottom: 24px;
+        }
+
+        .progress-section h2 {
+          margin: 0 0 16px 0;
+          font-size: 1.125rem;
+          color: #374151;
+        }
+
+        .progress-content {
+          display: flex;
+          align-items: center;
+          gap: 32px;
+        }
+
+        .progress-percent {
+          font-size: 3.5rem;
+          font-weight: 800;
+          color: #3b82f6;
+          line-height: 1;
+        }
+
+        .progress-details {
+          display: flex;
+          gap: 24px;
+        }
+
+        .detail-item {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .detail-item .label {
+          font-size: 0.875rem;
+          color: #6b7280;
+        }
+
+        .detail-item .value {
+          font-size: 1.25rem;
+          font-weight: 600;
+          color: #1f2937;
+        }
+
+        .detail-item .value.success { color: #10b981; }
+        .detail-item .value.pending { color: #f59e0b; }
+
         .summary-cards {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
           gap: 16px;
           margin-bottom: 32px;
         }
-        
+
         .stat-card {
           background: white;
           border-radius: 12px;
@@ -346,30 +435,30 @@ export function ApiKeyStatsPage() {
           transform: translateY(-2px);
           box-shadow: 0 4px 12px rgba(0,0,0,0.12);
         }
-        
+
         .stat-card .stat-value {
           font-size: 2rem;
           font-weight: 700;
           color: #1f2937;
         }
-        
+
         .stat-card .stat-label {
           color: #6b7280;
           font-size: 0.875rem;
           margin-top: 4px;
         }
-        
+
         .stat-link {
           text-decoration: none;
           display: block;
         }
-        
+
         .stat-card.total .stat-value { color: #3b82f6; }
         .stat-card.success .stat-value { color: #10b981; }
         .stat-card.failure .stat-value { color: #ef4444; }
         .stat-card.rate .stat-value { color: #8b5cf6; }
         .stat-card.duration .stat-value { color: #f59e0b; }
-        
+
         .keys-table-container {
           background: white;
           border-radius: 12px;
@@ -377,42 +466,42 @@ export function ApiKeyStatsPage() {
           box-shadow: 0 2px 8px rgba(0,0,0,0.08);
           border: 1px solid #e5e7eb;
         }
-        
+
         .keys-table-container h2 {
           margin: 0 0 16px 0;
           font-size: 1.125rem;
           color: #374151;
         }
-        
+
         .empty-state {
           text-align: center;
           padding: 48px;
           color: #9ca3af;
         }
-        
+
         .keys-table {
           width: 100%;
           border-collapse: collapse;
         }
-        
+
         .keys-table th,
         .keys-table td {
           padding: 12px 16px;
           text-align: left;
           border-bottom: 1px solid #e5e7eb;
         }
-        
+
         .keys-table th {
           background: #f9fafb;
           font-weight: 600;
           color: #374151;
           font-size: 0.875rem;
         }
-        
+
         .keys-table tbody tr:hover {
           background: #f9fafb;
         }
-        
+
         .key-prefix code {
           background: #f3f4f6;
           padding: 4px 8px;
@@ -420,7 +509,7 @@ export function ApiKeyStatsPage() {
           font-family: 'SF Mono', Monaco, monospace;
           font-size: 0.875rem;
         }
-        
+
         .success-cell { color: #10b981; }
         .failure-cell { color: #ef4444; }
 
@@ -433,7 +522,7 @@ export function ApiKeyStatsPage() {
         .table-link:hover {
           border-bottom-style: solid;
         }
-        
+
         .rate-badge {
           display: inline-block;
           padding: 4px 8px;
@@ -441,27 +530,27 @@ export function ApiKeyStatsPage() {
           font-size: 0.75rem;
           font-weight: 600;
         }
-        
+
         .rate-badge.good {
           background: #d1fae5;
           color: #065f46;
         }
-        
+
         .rate-badge.ok {
           background: #fef3c7;
           color: #92400e;
         }
-        
+
         .rate-badge.bad {
           background: #fee2e2;
           color: #991b1b;
         }
-        
+
         .time-cell {
           font-size: 0.875rem;
           color: #6b7280;
         }
-        
+
         .stats-footer {
           display: flex;
           justify-content: space-between;
@@ -469,17 +558,17 @@ export function ApiKeyStatsPage() {
           font-size: 0.75rem;
           color: #9ca3af;
         }
-        
+
         @media (max-width: 768px) {
           .stats-header {
             flex-direction: column;
             align-items: flex-start;
           }
-          
+
           .keys-table-container {
             overflow-x: auto;
           }
-          
+
           .keys-table {
             min-width: 700px;
           }
