@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { AnalysisContent } from "./AnalysisContent";
 import { DetectedQuestion, QuestionImage, DebugPageData } from "../../types";
 import { generateDebugPreviews } from "../../services/generationService";
 import { CropSettings } from "../../services/pdfService";
@@ -6,9 +7,7 @@ import { resolveImageUrl } from "../../services/r2Service";
 
 interface Props {
   width: number;
-  selectedDetection:
-    | (DetectedQuestion & { pageNumber: number; fileName: string })
-    | null;
+  selectedDetection: (DetectedQuestion & { pageNumber: number; fileName: string }) | null;
   selectedImage: QuestionImage | null;
   pageData?: DebugPageData;
   isProcessing: boolean;
@@ -41,6 +40,7 @@ export const DebugInspectorPanel: React.FC<Props> = ({
   } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [showAnalysis, setShowAnalysis] = useState(true);
 
   // Effect: Generate previews when selection changes
   useEffect(() => {
@@ -63,9 +63,7 @@ export const DebugInspectorPanel: React.FC<Props> = ({
         let maxBoxWidthPx = 0;
         if (pageData && pageData.detections) {
           pageData.detections.forEach((det) => {
-            const dBoxes = Array.isArray(det.boxes_2d[0])
-              ? det.boxes_2d
-              : [det.boxes_2d];
+            const dBoxes = Array.isArray(det.boxes_2d[0]) ? det.boxes_2d : [det.boxes_2d];
             dBoxes.forEach((b) => {
               // @ts-ignore
               const w = ((b[3] - b[1]) / 1000) * pageData.width;
@@ -95,28 +93,14 @@ export const DebugInspectorPanel: React.FC<Props> = ({
     generatePreviews();
   }, [selectedDetection, pageData, cropSettings]);
 
-  const PreviewCard = ({
-    title,
-    url,
-    color,
-    desc,
-  }: {
-    title: string;
-    url?: string;
-    color: string;
-    desc: string;
-  }) => (
+  const PreviewCard = ({ title, url, color, desc }: { title: string; url?: string; color: string; desc: string }) => (
     <div className="space-y-2">
       <div className="flex justify-between items-center">
-        <h4
-          className={`font-bold text-xs uppercase tracking-widest flex items-center gap-2 text-${color}-400`}
-        >
+        <h4 className={`font-bold text-xs uppercase tracking-widest flex items-center gap-2 text-${color}-400`}>
           <span className={`w-2 h-2 bg-${color}-500 rounded-full`}></span>
           {title}
         </h4>
-        <span className="text-[9px] text-slate-500 font-bold uppercase">
-          {desc}
-        </span>
+        <span className="text-[9px] text-slate-500 font-bold uppercase">{desc}</span>
       </div>
 
       <div
@@ -131,11 +115,7 @@ export const DebugInspectorPanel: React.FC<Props> = ({
                 backgroundSize: "10px 10px",
               }}
             ></div>
-            <img
-              src={url}
-              alt={title}
-              className="relative max-w-full h-auto object-contain"
-            />
+            <img src={url} alt={title} className="relative max-w-full h-auto object-contain" />
           </div>
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-slate-700 min-h-[100px]">
@@ -144,9 +124,7 @@ export const DebugInspectorPanel: React.FC<Props> = ({
                 className={`w-5 h-5 border-2 border-${color}-500 border-t-transparent rounded-full animate-spin`}
               ></div>
             ) : (
-              <span className="text-[10px] uppercase font-bold">
-                Preview Unavailable
-              </span>
+              <span className="text-[10px] uppercase font-bold">Preview Unavailable</span>
             )}
           </div>
         )}
@@ -155,22 +133,15 @@ export const DebugInspectorPanel: React.FC<Props> = ({
   );
 
   return (
-    <div
-      className="bg-slate-900 flex flex-col shadow-2xl relative z-20"
-      style={{ width: `${width}%` }}
-    >
+    <div className="bg-slate-900 flex flex-col shadow-2xl relative z-20" style={{ width: `${width}%` }}>
       <div className="p-4 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md">
-        <h3 className="text-slate-400 font-bold text-xs uppercase tracking-[0.2em]">
-          Processing Stages
-        </h3>
+        <h3 className="text-slate-400 font-bold text-xs uppercase tracking-[0.2em]">Processing Stages</h3>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 relative custom-scrollbar">
         {isProcessing && (
           <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-[2px] z-50 flex items-center justify-center">
-            <span className="text-blue-400 font-black uppercase tracking-widest text-xs animate-pulse">
-              Syncing...
-            </span>
+            <span className="text-blue-400 font-black uppercase tracking-widest text-xs animate-pulse">Syncing...</span>
           </div>
         )}
 
@@ -181,12 +152,12 @@ export const DebugInspectorPanel: React.FC<Props> = ({
               <div className="flex justify-between items-start mb-1">
                 <div className="flex flex-col">
                   <h2 className="text-3xl font-black text-white tracking-tight">
-                    {selectedDetection.id === "continuation"
-                      ? "Cont."
-                      : `Q${selectedDetection.id}`}
+                    {selectedDetection.id === "continuation" ? "Cont." : `Q${selectedDetection.id}`}
                   </h2>
-                  {(selectedImage?.analysis?.picture_ok !== undefined) && (
-                    <span className={`mt-1 inline-block px-2 py-0.5 rounded text-[10px] font-bold border w-fit ${selectedImage.analysis.picture_ok ? "bg-green-950/40 text-green-400 border-green-900/40" : "bg-red-950/40 text-red-400 border-red-900/40"}`}>
+                  {selectedImage?.analysis?.picture_ok !== undefined && (
+                    <span
+                      className={`mt-1 inline-block px-2 py-0.5 rounded text-[10px] font-bold border w-fit ${selectedImage.analysis.picture_ok ? "bg-green-950/40 text-green-400 border-green-900/40" : "bg-red-950/40 text-red-400 border-red-900/40"}`}
+                    >
                       Picture: {selectedImage.analysis.picture_ok ? "OK" : "Check"}
                     </span>
                   )}
@@ -196,9 +167,7 @@ export const DebugInspectorPanel: React.FC<Props> = ({
                 </span>
               </div>
               {columnInfo && (
-                <p className="mt-1 text-blue-400 text-[10px] font-bold uppercase tracking-wide">
-                  Column Mode Active
-                </p>
+                <p className="mt-1 text-blue-400 text-[10px] font-bold uppercase tracking-wide">Column Mode Active</p>
               )}
             </div>
 
@@ -215,31 +184,14 @@ export const DebugInspectorPanel: React.FC<Props> = ({
                 color="green"
                 desc={selectedImage ? "Full Merged Result" : "Aligned Fragment"}
               />
-              <PreviewCard
-                title="1. Raw AI Detection"
-                url={stages?.stage1}
-                color="blue"
-                desc="Exact box coordinates"
-              />
-              <PreviewCard
-                title="2. Crop Padding"
-                url={stages?.stage2}
-                color="indigo"
-                desc="Applied Crop Buffer"
-              />
-              <PreviewCard
-                title="3. Whitespace Trim"
-                url={stages?.stage3}
-                color="violet"
-                desc="Analyzed Content"
-              />
+              <PreviewCard title="1. Raw AI Detection" url={stages?.stage1} color="blue" desc="Exact box coordinates" />
+              <PreviewCard title="2. Crop Padding" url={stages?.stage2} color="indigo" desc="Applied Crop Buffer" />
+              <PreviewCard title="3. Whitespace Trim" url={stages?.stage3} color="violet" desc="Analyzed Content" />
             </div>
 
             {/* Coords */}
             <div className="pt-4 border-t border-slate-800">
-              <h4 className="text-slate-500 font-bold text-[10px] uppercase tracking-widest mb-3">
-                Coordinates
-              </h4>
+              <h4 className="text-slate-500 font-bold text-[10px] uppercase tracking-widest mb-3">Coordinates</h4>
               <div className="grid grid-cols-2 gap-2 text-[10px]">
                 <div
                   className={`bg-slate-800/50 p-2 rounded text-center border ${draggingSide === "top" ? "border-green-500 text-green-400" : "border-slate-800 text-slate-300"}`}
@@ -291,16 +243,50 @@ export const DebugInspectorPanel: React.FC<Props> = ({
                 </div>
               </div>
             </div>
+
+            {/* Analysis Section */}
+            {selectedImage && (
+              <div className="pt-4 border-t border-slate-800">
+                <div className="flex justify-between items-center mb-3">
+                  <h4 className="text-slate-500 font-bold text-[10px] uppercase tracking-widest">Analysis</h4>
+                  <button
+                    onClick={() => setShowAnalysis(!showAnalysis)}
+                    className="text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider"
+                  >
+                    {showAnalysis ? "Hide" : "Show"}
+                  </button>
+                </div>
+
+                {showAnalysis && (
+                  <div className="space-y-6">
+                    {/* Standard Analysis */}
+                    <div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 pl-1">
+                        Standard Analysis
+                      </div>
+                      <div className="rounded-lg overflow-hidden">
+                        <AnalysisContent analysis={selectedImage.analysis} title="Flash/Standard" />
+                      </div>
+                    </div>
+
+                    {/* Pro Analysis */}
+                    <div>
+                      <div className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-2 pl-1">
+                        Pro Analysis
+                      </div>
+                      <div className="rounded-lg overflow-hidden">
+                        <AnalysisContent analysis={selectedImage.pro_analysis} title="Gemini Pro" isPro />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-center opacity-40">
             <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6">
-              <svg
-                className="w-10 h-10 text-slate-500"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+              <svg className="w-10 h-10 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
