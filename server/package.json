@@ -11,7 +11,7 @@
     "pm2:restart": "pm2 restart gksx-pro-analysis",
     "pm2:logs": "pm2 logs gksx-pro-analysis",
     "pm2:delete": "pm2 delete gksx-pro-analysis",
-    "pm2:start:gemini-2.5": "pm2 start pro-analysis-server.mjs --name gksx-pro-analysis-2.5 --time -- --model-id gemini-2.5-pro --concurrency 7",
+    "pm2:start:gemini-2.5": "pm2 start pro-analysis-server.mjs --name gksx-pro-analysis-2.5 --time -- --model-id gemini-2.5-pro --concurrency 20",
     "pm2:stop:gemini-2.5": "pm2 stop gksx-pro-analysis-2.5",
     "pm2:restart:gemini-2.5": "pm2 restart gksx-pro-analysis-2.5",
     "pm2:logs:gemini-2.5": "pm2 logs gksx-pro-analysis-2.5",
