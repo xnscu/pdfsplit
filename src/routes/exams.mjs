@@ -7,6 +7,28 @@ import { getFullExam } from '../utils/db-helpers.mjs';
 
 const examRoutes = new Hono();
 
+// GET /debug/mismatched-counts - Find exams where rawpages question count != questions table count
+examRoutes.get('/debug/mismatched-counts', async (c) => {
+  const db = c.env.DB;
+  const result = await db.prepare(`
+    SELECT
+      e.id,
+      e.name,
+      (SELECT COUNT(*) FROM questions q WHERE q.exam_id = e.id) as questionCount,
+      (
+        SELECT COUNT(*)
+        FROM raw_pages rp, json_each(rp.detections)
+        WHERE rp.exam_id = e.id
+        AND json_extract(json_each.value, '$.id') != 'continuation'
+      ) as detectedCount
+    FROM exams e
+    GROUP BY e.id, e.name
+    HAVING questionCount != detectedCount
+  `).all();
+
+  return c.json(result.results);
+});
+
 // GET / - List all exams (metadata only)
 examRoutes.get('/', async (c) => {
   const db = c.env.DB;

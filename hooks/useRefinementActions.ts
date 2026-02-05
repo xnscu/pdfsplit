@@ -25,13 +25,19 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
   const mergeExistingAnalysis = (newQuestions: any[], fileName: string) => {
     const existingFileQuestions = questions.filter((q: any) => q.fileName === fileName);
     const analysisMap = new Map();
+    const proAnalysisMap = new Map();
+
     existingFileQuestions.forEach((q: any) => {
       if (q.analysis) analysisMap.set(q.id, q.analysis);
+      if (q.pro_analysis) proAnalysisMap.set(q.id, q.pro_analysis);
     });
 
     newQuestions.forEach((q: any) => {
       if (analysisMap.has(q.id)) {
         q.analysis = analysisMap.get(q.id);
+      }
+      if (proAnalysisMap.has(q.id)) {
+        q.pro_analysis = proAnalysisMap.get(q.id);
       }
     });
     return newQuestions;
@@ -55,7 +61,7 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
         {
           onProgress: () => setCroppingDone((p: number) => p + 1),
         },
-        batchSize || 10
+        batchSize || 10,
       );
 
       if (!taskController.signal.aborted) {
@@ -118,7 +124,7 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
             const detections = await detectQuestionsViaProxy(page.dataUrl, selectedModel, undefined, apiKey, signal);
             const newPage = { ...page, detections };
             newResults.push(newPage);
-          })
+          }),
         );
       }
 
@@ -140,7 +146,7 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
         {
           onProgress: () => setCroppingDone((p: number) => p + 1),
         },
-        batchSize || 10
+        batchSize || 10,
       );
 
       if (!signal.aborted) {
@@ -297,6 +303,9 @@ export const useRefinementActions = ({ state, setters, actions, refreshHistoryLi
             const existingQ = existingQuestionMap.get(task.id);
             if (existingQ?.analysis) {
               regenerated.analysis = existingQ.analysis;
+            }
+            if (existingQ?.pro_analysis) {
+              regenerated.pro_analysis = existingQ.pro_analysis;
             }
             newQuestions.push(regenerated);
           }

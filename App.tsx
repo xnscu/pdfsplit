@@ -53,6 +53,7 @@ const App: React.FC = () => {
     handleBatchDeleteHistoryItems,
     handleFilesUpdated,
     handleLoadExamsWithPictureOkFalse,
+    handleLoadExamsWithMismatchCounts,
   } = useHistoryActions({ state, setters, refs, actions });
   const { processZipFiles, handleFileChange } = useFileProcessor({
     state,
@@ -107,7 +108,7 @@ const App: React.FC = () => {
 
   // Ref to track if analysis is running to prevent auto-advance after stop
   const isAnalysisRunningRef = useRef(false);
-  
+
   // Selection State for Processed Files
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
@@ -170,9 +171,13 @@ const App: React.FC = () => {
     // 只要有开始时间且不是初始状态或错误状态，就运行计时器
     const shouldRunTimer =
       state.startTime &&
-      ([ProcessingStatus.LOADING_PDF, ProcessingStatus.DETECTING_QUESTIONS, ProcessingStatus.CROPPING, ProcessingStatus.ANALYZING].includes(
-        state.status,
-      ) || (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal));
+      ([
+        ProcessingStatus.LOADING_PDF,
+        ProcessingStatus.DETECTING_QUESTIONS,
+        ProcessingStatus.CROPPING,
+        ProcessingStatus.ANALYZING,
+      ].includes(state.status) ||
+        (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal));
 
     if (shouldRunTimer) {
       interval = window.setInterval(() => {
@@ -296,24 +301,58 @@ const App: React.FC = () => {
   };
 
   // Handle re-solving a single question with specific model type
-  const handleReSolveQuestion = useCallback(async (q: QuestionImage, modelType: "flash" | "pro") => {
-    try {
-      const model = modelType === "pro" ? MODEL_IDS.PRO : MODEL_IDS.FLASH;
-      const analysis = await analyzeQuestionViaProxy(
-        q.dataUrl,
-        model,
-        3,
-        state.apiKey
-      );
+  const handleReSolveQuestion = useCallback(
+    async (q: QuestionImage, modelType: "flash" | "pro") => {
+      try {
+        const model = modelType === "pro" ? MODEL_IDS.PRO : MODEL_IDS.FLASH;
+        const analysis = await analyzeQuestionViaProxy(q.dataUrl, model, 3, state.apiKey);
 
-      // Update state
-      const updatedQuestion = { ...q };
-      if (modelType === "pro") {
-        updatedQuestion.pro_analysis = analysis;
-      } else {
-        updatedQuestion.analysis = analysis;
+        // Update state
+        const updatedQuestion = { ...q };
+        if (modelType === "pro") {
+          updatedQuestion.pro_analysis = analysis;
+        } else {
+          updatedQuestion.analysis = analysis;
+        }
+
+        setters.setQuestions((prev: QuestionImage[]) => {
+          return prev.map((item) => {
+            if (item.fileName === q.fileName && item.id === q.id) {
+              return updatedQuestion;
+            }
+            return item;
+          });
+        });
+
+        // Save to storage
+        const fileQuestions = state.questions
+          .filter((item) => item.fileName === q.fileName)
+          .map((item) => (item.id === q.id ? updatedQuestion : item));
+        await updateQuestionsForFile(q.fileName, fileQuestions);
+
+        actions.addNotification(
+          q.fileName,
+          "success",
+          `Q${q.id} 重新解题完成 (${modelType === "pro" ? "Pro" : "Flash"})`,
+        );
+      } catch (error: any) {
+        console.error("Re-solve question failed:", error);
+        actions.addNotification(q.fileName, "error", `Q${q.id} 解题失败: ${error.message}`);
+        throw error;
       }
-      
+    },
+    [state.apiKey, state.questions, setters, actions],
+  );
+
+  const handleDeleteAnalysis = useCallback(
+    async (q: QuestionImage, type: "standard" | "pro") => {
+      const updatedQuestion = { ...q };
+      if (type === "standard") {
+        updatedQuestion.analysis = undefined;
+      } else {
+        updatedQuestion.pro_analysis = undefined;
+      }
+
       setters.setQuestions((prev: QuestionImage[]) => {
         return prev.map((item) => {
           if (item.fileName === q.fileName && item.id === q.id) {
@@ -323,99 +362,71 @@ const App: React.FC = () => {
         });
       });
 
-      // Save to storage
       const fileQuestions = state.questions
         .filter((item) => item.fileName === q.fileName)
         .map((item) => (item.id === q.id ? updatedQuestion : item));
       await updateQuestionsForFile(q.fileName, fileQuestions);
+      actions.addNotification(q.fileName, "success", `Q${q.id} ${type === "standard" ? "标准" : "Pro"}解析已删除`);
+    },
+    [state.questions, setters, actions],
+  );
 
-      actions.addNotification(q.fileName, "success", `Q${q.id} 重新解题完成 (${modelType === "pro" ? "Pro" : "Flash"})`);
-    } catch (error: any) {
-      console.error("Re-solve question failed:", error);
-      actions.addNotification(q.fileName, "error", `Q${q.id} 解题失败: ${error.message}`);
-      throw error;
-    }
-  }, [state.apiKey, state.questions, setters, actions]);
+  const handleCopyAnalysis = useCallback(
+    async (q: QuestionImage, fromType: "standard" | "pro") => {
+      const updatedQuestion = { ...q };
+      if (fromType === "standard") {
+        if (!q.analysis) return;
+        updatedQuestion.pro_analysis = JSON.parse(JSON.stringify(q.analysis));
+      } else {
+        if (!q.pro_analysis) return;
+        updatedQuestion.analysis = JSON.parse(JSON.stringify(q.pro_analysis));
+      }
 
-  const handleDeleteAnalysis = useCallback(async (q: QuestionImage, type: "standard" | "pro") => {
-    const updatedQuestion = { ...q };
-    if (type === "standard") {
-      updatedQuestion.analysis = undefined;
-    } else {
-      updatedQuestion.pro_analysis = undefined;
-    }
-
-    setters.setQuestions((prev: QuestionImage[]) => {
-      return prev.map((item) => {
-        if (item.fileName === q.fileName && item.id === q.id) {
-          return updatedQuestion;
-        }
-        return item;
+      setters.setQuestions((prev: QuestionImage[]) => {
+        return prev.map((item) => {
+          if (item.fileName === q.fileName && item.id === q.id) {
+            return updatedQuestion;
+          }
+          return item;
+        });
       });
-    });
 
-    const fileQuestions = state.questions
-      .filter((item) => item.fileName === q.fileName)
-      .map((item) => (item.id === q.id ? updatedQuestion : item));
-    await updateQuestionsForFile(q.fileName, fileQuestions);
-    actions.addNotification(q.fileName, "success", `Q${q.id} ${type === "standard" ? "标准" : "Pro"}解析已删除`);
-  }, [state.questions, setters, actions]);
-
-  const handleCopyAnalysis = useCallback(async (q: QuestionImage, fromType: "standard" | "pro") => {
-    const updatedQuestion = { ...q };
-    if (fromType === "standard") {
-      if (!q.analysis) return;
-      updatedQuestion.pro_analysis = JSON.parse(JSON.stringify(q.analysis));
-    } else {
-      if (!q.pro_analysis) return;
-      updatedQuestion.analysis = JSON.parse(JSON.stringify(q.pro_analysis));
-    }
-
-    setters.setQuestions((prev: QuestionImage[]) => {
-      return prev.map((item) => {
-        if (item.fileName === q.fileName && item.id === q.id) {
-          return updatedQuestion;
-        }
-        return item;
-      });
-    });
-
-    const fileQuestions = state.questions
-      .filter((item) => item.fileName === q.fileName)
-      .map((item) => (item.id === q.id ? updatedQuestion : item));
-    await updateQuestionsForFile(q.fileName, fileQuestions);
-    actions.addNotification(q.fileName, "success", `Q${q.id} 解析已复制`);
-  }, [state.questions, setters, actions]);
+      const fileQuestions = state.questions
+        .filter((item) => item.fileName === q.fileName)
+        .map((item) => (item.id === q.id ? updatedQuestion : item));
+      await updateQuestionsForFile(q.fileName, fileQuestions);
+      actions.addNotification(q.fileName, "success", `Q${q.id} 解析已复制`);
+    },
+    [state.questions, setters, actions],
+  );
 
   // Handle editing analysis fields
-  const handleEditAnalysis = useCallback(async (
-    q: QuestionImage,
-    type: "standard" | "pro",
-    field: string,
-    value: string
-  ) => {
-    const updatedQuestion = { ...q };
-    if (type === "standard" && updatedQuestion.analysis) {
-      updatedQuestion.analysis = { ...updatedQuestion.analysis, [field]: value };
-    } else if (type === "pro" && updatedQuestion.pro_analysis) {
-      updatedQuestion.pro_analysis = { ...updatedQuestion.pro_analysis, [field]: value };
-    }
+  const handleEditAnalysis = useCallback(
+    async (q: QuestionImage, type: "standard" | "pro", field: string, value: string) => {
+      const updatedQuestion = { ...q };
+      if (type === "standard" && updatedQuestion.analysis) {
+        updatedQuestion.analysis = { ...updatedQuestion.analysis, [field]: value };
+      } else if (type === "pro" && updatedQuestion.pro_analysis) {
+        updatedQuestion.pro_analysis = { ...updatedQuestion.pro_analysis, [field]: value };
+      }
 
-    setters.setQuestions((prev: QuestionImage[]) => {
-      return prev.map((item) => {
-        if (item.fileName === q.fileName && item.id === q.id) {
-          return updatedQuestion;
-        }
-        return item;
+      setters.setQuestions((prev: QuestionImage[]) => {
+        return prev.map((item) => {
+          if (item.fileName === q.fileName && item.id === q.id) {
+            return updatedQuestion;
+          }
+          return item;
+        });
       });
-    });
 
-    const fileQuestions = state.questions
-      .filter((item) => item.fileName === q.fileName)
-      .map((item) => (item.id === q.id ? updatedQuestion : item));
-    await updateQuestionsForFile(q.fileName, fileQuestions);
-    actions.addNotification(q.fileName, "success", `Q${q.id} 内容已更新`);
-  }, [state.questions, setters, actions]);
+      const fileQuestions = state.questions
+        .filter((item) => item.fileName === q.fileName)
+        .map((item) => (item.id === q.id ? updatedQuestion : item));
+      await updateQuestionsForFile(q.fileName, fileQuestions);
+      actions.addNotification(q.fileName, "success", `Q${q.id} 内容已更新`);
+    },
+    [state.questions, setters, actions],
+  );
 
   const handleNextFile = () => {
     const currentFileIndex = sortedFileNames.indexOf(state.debugFile || "");
@@ -598,7 +609,7 @@ const App: React.FC = () => {
 
     if (missingFiles.length > 0) {
       actions.addNotification(null, "error", `Cannot upload unsaved files: ${missingFiles.join(", ")}`);
-      // If we found some valid IDs, we can still proceed with those, or abort. 
+      // If we found some valid IDs, we can still proceed with those, or abort.
       // Let's abort to be safe and encourage saving.
       if (selectedIds.length === 0) return;
     }
@@ -637,456 +648,534 @@ const App: React.FC = () => {
         <Route path="/key-stats" element={<ApiKeyStatsPage />} />
         <Route path="/key-stats/details" element={<ApiKeyDetailsPage />} />
         <Route path="/key-stats/logs" element={<ApiCallLogsPage />} />
-        <Route path="/inspect/:examId" element={<InspectPage selectedModel={state.selectedModel} apiKey={state.apiKey} />} />
-        <Route path="*" element={
-          <>
-      <div className="fixed top-6 right-6 z-[100] flex items-center gap-2">
-        <button
-          onClick={handleLoadExamsWithPictureOkFalse}
-          className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl shadow-xl shadow-amber-200/50 border border-amber-200 hover:bg-amber-100 hover:scale-105 transition-all flex items-center justify-center group"
-          title="加载所有剪裁区域可能有问题的试卷"
-        >
-          <svg className="w-6 h-6 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-            />
-          </svg>
-        </button>
-        <button
-          onClick={() => setters.setShowHistory(true)}
-          className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
-          title="History"
-        >
-          <svg
-            className="w-6 h-6"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-        </button>
-        <button
-          onClick={() => setShowSyncHistory(true)}
-          className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
-          title="同步记录"
-        >
-          <svg
-            className="w-6 h-6 group-hover:rotate-180 transition-transform duration-700"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
-          </svg>
-        </button>
-        <button
-          onClick={() => setShowSettings(true)}
-          className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
-          title="Settings"
-        >
-          <svg
-            className="w-6 h-6 group-hover:rotate-45 transition-transform duration-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c-.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-            />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-        </button>
-        <Link
-          to="/key-stats"
-          className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-purple-600 hover:scale-105 transition-all flex items-center justify-center group"
-          title="API Key Statistics"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2" />
-          </svg>
-        </Link>
-      </div>
-
-      <Header
-        onReset={actions.resetState}
-        showReset={state.sourcePages.length > 0 && !isGlobalProcessing}
-      />
-
-      <main className={`mx-auto transition-all duration-300 ${isWideLayout ? "w-full max-w-[98vw]" : "max-w-4xl"}`}>
-        {showInitialUI && (
-          <div className="space-y-8 animate-fade-in">
-            <UploadSection onFileChange={handleFileChange} />
-          </div>
-        )}
-
-        {/* 只在全局处理或分析进行中时显示 ProcessingState，但已停止时也显示 */}
-        {(isGlobalProcessing ||
-          (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal) ||
-          state.status === ProcessingStatus.STOPPED) && (
-          <ProcessingState
-            status={state.status === ProcessingStatus.STOPPED
-              ? ProcessingStatus.STOPPED
-              : (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal
-                  ? ProcessingStatus.ANALYZING
-                  : state.status)}
-            progress={state.progress}
-            total={
-              (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal)
-                ? state.analyzingTotal
-                : state.total
-            }
-            completedCount={
-              (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal)
-                ? state.analyzingDone
-                : state.completedCount
-            }
-            error={state.error}
-            detailedStatus={state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal
-              ? `正在分析: ${state.debugFile || ""}`
-              : state.detailedStatus}
-            croppingTotal={state.croppingTotal}
-            croppingDone={state.croppingDone}
-            elapsedTime={state.elapsedTime}
-            currentRound={state.currentRound}
-            failedCount={state.failedCount}
-            onAbort={(isGlobalProcessing || (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal)) && state.status !== ProcessingStatus.STOPPED
-              ? actions.handleStop
-              : undefined}
-            onClose={() => {
-              setters.setStatus(ProcessingStatus.IDLE);
-              setters.setAnalyzingTotal(0);
-              setters.setAnalyzingDone(0);
-              refs.stopRequestedRef.current = false;
-            }}
-          />
-        )}
-
-        {state.debugFile ? (
-          <DebugRawView
-            pages={debugPages}
-            questions={debugQuestions}
-            onClose={() => setters.setDebugFile(null)}
-            title={state.debugFile}
-            onNextFile={handleNextFile}
-            onPrevFile={handlePrevFile}
-            onJumpToIndex={handleJumpToIndex}
-            hasNextFile={sortedFileNames.indexOf(state.debugFile) < sortedFileNames.length - 1}
-            hasPrevFile={sortedFileNames.indexOf(state.debugFile) > 0}
-            onUpdateDetections={handleUpdateDetections}
-            onReanalyzeFile={handleReanalyzeFile}
-            onDownloadZip={generateZip}
-            onRefineFile={(fileName) => setters.setRefiningFile(fileName)}
-            onProcessFile={(fileName) => handleRecropFile(fileName, state.cropSettings)}
-            onAnalyzeFile={handleAnalyzeWrapper}
-            onReSolveQuestion={handleReSolveQuestion}
-            onDeleteAnalysis={handleDeleteAnalysis}
-            onCopyAnalysis={handleCopyAnalysis}
-            onEditAnalysis={handleEditAnalysis}
-            onStopAnalyze={actions.handleStop}
-            analyzingTotal={state.analyzingTotal}
-            analyzingDone={state.analyzingDone}
-            isZipping={zippingFile !== null}
-            zippingProgress={zippingProgress}
-            isGlobalProcessing={isGlobalProcessing}
-            processingFiles={state.processingFiles}
-            currentFileIndex={sortedFileNames.indexOf(state.debugFile) + 1}
-            totalFiles={sortedFileNames.length}
-            cropSettings={state.cropSettings}
-            isAutoAnalyze={isAutoAnalyze}
-            setIsAutoAnalyze={setIsAutoAnalyze}
-          />
-        ) : (
-          !isGlobalProcessing &&
-          sortedFileNames.length > 0 && (
-            <div className="w-full max-w-4xl mx-auto mt-8 animate-fade-in">
-              <div className="flex justify-between items-center mb-6">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-2xl font-black text-slate-900 tracking-tight">Processed Files</h2>
-                  <span className="bg-slate-100 text-slate-500 px-3 py-1 rounded-lg text-xs font-bold border border-slate-200 shadow-sm">
-                    {sortedFileNames.length} Files · {state.rawPages.length} Pages
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  {(!state.debugFile && state.lastViewedFile) && (
-                    <button
-                      onClick={() => setters.setDebugFile(state.lastViewedFile)}
-                      className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg flex items-center gap-2"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c-.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                      </svg>
-                      Return to Inspector
-                    </button>
-                  )}
-                  {selectedFiles.size > 0 && (
-                    <button
-                      onClick={handleUploadSelected}
-                      disabled={syncHook.status.isSyncing}
-                      className="px-5 py-2.5 bg-green-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                      Upload Selected ({selectedFiles.size})
-                    </button>
-                  )}
-                  <button
-                    onClick={handleGlobalDownload}
-                    disabled={zippingFile !== null}
-                    className={`bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-slate-700 transition-colors shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait min-w-[200px] justify-center`}
+        <Route
+          path="/inspect/:examId"
+          element={<InspectPage selectedModel={state.selectedModel} apiKey={state.apiKey} />}
+        />
+        <Route
+          path="*"
+          element={
+            <>
+              <div className="fixed top-6 right-6 z-[100] flex items-center gap-2">
+                <button
+                  onClick={handleLoadExamsWithPictureOkFalse}
+                  className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl shadow-xl shadow-amber-200/50 border border-amber-200 hover:bg-amber-100 hover:scale-105 transition-all flex items-center justify-center group"
+                  title="加载所有剪裁区域可能有问题的试卷"
+                >
+                  <svg
+                    className="w-6 h-6 group-hover:scale-110 transition-transform"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
                   >
-                    {zippingFile === "ALL" ? (
-                      <>
-                        <svg className="animate-spin w-4 h-4 text-white/50" fill="none" viewBox="0 0 24 24">
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          ></circle>
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          ></path>
-                        </svg>
-                        <span>{zippingProgress || "Processing..."}</span>
-                      </>
-                    ) : (
-                      "Download All (ZIP)"
-                    )}
-                  </button>
-                </div>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                </button>
+                <button
+                  onClick={handleLoadExamsWithMismatchCounts}
+                  className="w-12 h-12 bg-red-50 text-red-600 rounded-2xl shadow-xl shadow-red-200/50 border border-red-200 hover:bg-red-100 hover:scale-105 transition-all flex items-center justify-center group"
+                  title="加载D1中题目数量不一致的试卷"
+                >
+                  <svg
+                    className="w-6 h-6 group-hover:scale-110 transition-transform"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setters.setShowHistory(true)}
+                  className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
+                  title="History"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setShowSyncHistory(true)}
+                  className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
+                  title="同步记录"
+                >
+                  <svg
+                    className="w-6 h-6 group-hover:rotate-180 transition-transform duration-700"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-blue-600 hover:scale-105 transition-all flex items-center justify-center group"
+                  title="Settings"
+                >
+                  <svg
+                    className="w-6 h-6 group-hover:rotate-45 transition-transform duration-500"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c-.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                </button>
+                <Link
+                  to="/key-stats"
+                  className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-purple-600 hover:scale-105 transition-all flex items-center justify-center group"
+                  title="API Key Statistics"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2"
+                    />
+                  </svg>
+                </Link>
               </div>
-              <div className="grid gap-4">
-                <div className="flex items-center gap-2 mb-2">
-                   <div className="flex items-center">
-                     <input
-                       type="checkbox"
-                       checked={sortedFileNames.length > 0 && selectedFiles.size === sortedFileNames.length}
-                       onChange={handleSelectAll}
-                       className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer ml-1"
-                     />
-                     <span className="ml-2 text-sm text-slate-500 font-medium cursor-pointer" onClick={handleSelectAll}>Select All</span>
-                   </div>
-                </div>
-                {sortedFileNames.map((fileName, idx) => (
-                  <div
-                    key={fileName}
-                    className={`bg-white p-5 rounded-2xl border transition-all flex items-center justify-between group ${
-                      selectedFiles.has(fileName) ? "border-blue-400 shadow-md ring-1 ring-blue-100" : "border-slate-200 shadow-sm hover:shadow-md"
-                    }`}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="flex items-center h-full">
-                        <input
-                          type="checkbox"
-                          checked={selectedFiles.has(fileName)}
-                          onChange={() => handleToggleFile(fileName)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        />
-                      </div>
-                      <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-black text-sm">
-                        {idx + 1}
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-slate-800 text-sm truncate max-w-[200px] md:max-w-md">
-                          {fileName}
-                        </h3>
-                        <p className="text-xs text-slate-400 font-medium">
-                          {state.questions.filter((q) => q.fileName === fileName).length} Questions Extracted
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <SyncControls
-                        variant="icon"
-                        onPush={() => {
-                          const item = state.historyList.find((h) => h.name === fileName);
-                          if (item) {
-                            actions.addNotification(null, "success", `Pushing ${fileName}...`);
-                            syncHook.forceUploadSelected([item.id]);
-                          } else {
-                             actions.addNotification(null, "error", `Could not find ID for ${fileName}`);
-                          }
-                        }}
-                        onPull={() => {
-                          const item = state.historyList.find((h) => h.name === fileName);
-                          if (item) {
-                            actions.addNotification(null, "success", `Pulling ${fileName}...`);
-                            syncHook.forceDownloadSelected([item.id]);
-                          } else {
-                             actions.addNotification(null, "error", `Could not find ID for ${fileName}`);
-                          }
-                        }}
-                      />
-                      {/* Quick inspect in modal */}
-                      <button
-                        onClick={() => updateDebugFile(fileName)}
-                        className="p-2 bg-slate-50 text-slate-600 hover:bg-slate-600 hover:text-white rounded-xl border border-slate-100 transition-colors shadow-sm"
-                        title="Quick Inspect (Modal)"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                      </button>
-                      {/* Navigate to standalone inspect page */}
-                      <Link
-                        to={`/inspect/${state.historyList.find((h) => h.name === fileName)?.id || fileName}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-colors shadow-sm flex items-center justify-center border border-blue-100"
-                        title="Open Inspect Page"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                      </Link>
-                    </div>
+
+              <Header onReset={actions.resetState} showReset={state.sourcePages.length > 0 && !isGlobalProcessing} />
+
+              <main
+                className={`mx-auto transition-all duration-300 ${isWideLayout ? "w-full max-w-[98vw]" : "max-w-4xl"}`}
+              >
+                {showInitialUI && (
+                  <div className="space-y-8 animate-fade-in">
+                    <UploadSection onFileChange={handleFileChange} />
                   </div>
-                ))}
+                )}
+
+                {/* 只在全局处理或分析进行中时显示 ProcessingState，但已停止时也显示 */}
+                {(isGlobalProcessing ||
+                  (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal) ||
+                  state.status === ProcessingStatus.STOPPED) && (
+                  <ProcessingState
+                    status={
+                      state.status === ProcessingStatus.STOPPED
+                        ? ProcessingStatus.STOPPED
+                        : state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal
+                          ? ProcessingStatus.ANALYZING
+                          : state.status
+                    }
+                    progress={state.progress}
+                    total={
+                      state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal
+                        ? state.analyzingTotal
+                        : state.total
+                    }
+                    completedCount={
+                      state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal
+                        ? state.analyzingDone
+                        : state.completedCount
+                    }
+                    error={state.error}
+                    detailedStatus={
+                      state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal
+                        ? `正在分析: ${state.debugFile || ""}`
+                        : state.detailedStatus
+                    }
+                    croppingTotal={state.croppingTotal}
+                    croppingDone={state.croppingDone}
+                    elapsedTime={state.elapsedTime}
+                    currentRound={state.currentRound}
+                    failedCount={state.failedCount}
+                    onAbort={
+                      (isGlobalProcessing ||
+                        (state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal)) &&
+                      state.status !== ProcessingStatus.STOPPED
+                        ? actions.handleStop
+                        : undefined
+                    }
+                    onClose={() => {
+                      setters.setStatus(ProcessingStatus.IDLE);
+                      setters.setAnalyzingTotal(0);
+                      setters.setAnalyzingDone(0);
+                      refs.stopRequestedRef.current = false;
+                    }}
+                  />
+                )}
+
+                {state.debugFile ? (
+                  <DebugRawView
+                    pages={debugPages}
+                    questions={debugQuestions}
+                    onClose={() => setters.setDebugFile(null)}
+                    title={state.debugFile}
+                    onNextFile={handleNextFile}
+                    onPrevFile={handlePrevFile}
+                    onJumpToIndex={handleJumpToIndex}
+                    hasNextFile={sortedFileNames.indexOf(state.debugFile) < sortedFileNames.length - 1}
+                    hasPrevFile={sortedFileNames.indexOf(state.debugFile) > 0}
+                    onUpdateDetections={handleUpdateDetections}
+                    onReanalyzeFile={handleReanalyzeFile}
+                    onDownloadZip={generateZip}
+                    onRefineFile={(fileName) => setters.setRefiningFile(fileName)}
+                    onProcessFile={(fileName) => handleRecropFile(fileName, state.cropSettings)}
+                    onAnalyzeFile={handleAnalyzeWrapper}
+                    onReSolveQuestion={handleReSolveQuestion}
+                    onDeleteAnalysis={handleDeleteAnalysis}
+                    onCopyAnalysis={handleCopyAnalysis}
+                    onEditAnalysis={handleEditAnalysis}
+                    onStopAnalyze={actions.handleStop}
+                    analyzingTotal={state.analyzingTotal}
+                    analyzingDone={state.analyzingDone}
+                    isZipping={zippingFile !== null}
+                    zippingProgress={zippingProgress}
+                    isGlobalProcessing={isGlobalProcessing}
+                    processingFiles={state.processingFiles}
+                    currentFileIndex={sortedFileNames.indexOf(state.debugFile) + 1}
+                    totalFiles={sortedFileNames.length}
+                    cropSettings={state.cropSettings}
+                    isAutoAnalyze={isAutoAnalyze}
+                    setIsAutoAnalyze={setIsAutoAnalyze}
+                  />
+                ) : (
+                  !isGlobalProcessing &&
+                  sortedFileNames.length > 0 && (
+                    <div className="w-full max-w-4xl mx-auto mt-8 animate-fade-in">
+                      <div className="flex justify-between items-center mb-6">
+                        <div className="flex items-center gap-3">
+                          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Processed Files</h2>
+                          <span className="bg-slate-100 text-slate-500 px-3 py-1 rounded-lg text-xs font-bold border border-slate-200 shadow-sm">
+                            {sortedFileNames.length} Files · {state.rawPages.length} Pages
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {!state.debugFile && state.lastViewedFile && (
+                            <button
+                              onClick={() => setters.setDebugFile(state.lastViewedFile)}
+                              className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg flex items-center gap-2"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                                />
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c-.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                                />
+                              </svg>
+                              Return to Inspector
+                            </button>
+                          )}
+                          {selectedFiles.size > 0 && (
+                            <button
+                              onClick={handleUploadSelected}
+                              disabled={syncHook.status.isSyncing}
+                              className="px-5 py-2.5 bg-green-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                                />
+                              </svg>
+                              Upload Selected ({selectedFiles.size})
+                            </button>
+                          )}
+                          <button
+                            onClick={handleGlobalDownload}
+                            disabled={zippingFile !== null}
+                            className={`bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-slate-700 transition-colors shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait min-w-[200px] justify-center`}
+                          >
+                            {zippingFile === "ALL" ? (
+                              <>
+                                <svg className="animate-spin w-4 h-4 text-white/50" fill="none" viewBox="0 0 24 24">
+                                  <circle
+                                    className="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                  ></circle>
+                                  <path
+                                    className="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                  ></path>
+                                </svg>
+                                <span>{zippingProgress || "Processing..."}</span>
+                              </>
+                            ) : (
+                              "Download All (ZIP)"
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid gap-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="flex items-center">
+                            <input
+                              type="checkbox"
+                              checked={sortedFileNames.length > 0 && selectedFiles.size === sortedFileNames.length}
+                              onChange={handleSelectAll}
+                              className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer ml-1"
+                            />
+                            <span
+                              className="ml-2 text-sm text-slate-500 font-medium cursor-pointer"
+                              onClick={handleSelectAll}
+                            >
+                              Select All
+                            </span>
+                          </div>
+                        </div>
+                        {sortedFileNames.map((fileName, idx) => (
+                          <div
+                            key={fileName}
+                            className={`bg-white p-5 rounded-2xl border transition-all flex items-center justify-between group ${
+                              selectedFiles.has(fileName)
+                                ? "border-blue-400 shadow-md ring-1 ring-blue-100"
+                                : "border-slate-200 shadow-sm hover:shadow-md"
+                            }`}
+                          >
+                            <div className="flex items-center gap-4">
+                              <div className="flex items-center h-full">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedFiles.has(fileName)}
+                                  onChange={() => handleToggleFile(fileName)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                />
+                              </div>
+                              <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center font-black text-sm">
+                                {idx + 1}
+                              </div>
+                              <div>
+                                <h3 className="font-bold text-slate-800 text-sm truncate max-w-[200px] md:max-w-md">
+                                  {fileName}
+                                </h3>
+                                <p className="text-xs text-slate-400 font-medium">
+                                  {state.questions.filter((q) => q.fileName === fileName).length} Questions Extracted
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <SyncControls
+                                variant="icon"
+                                onPush={() => {
+                                  const item = state.historyList.find((h) => h.name === fileName);
+                                  if (item) {
+                                    actions.addNotification(null, "success", `Pushing ${fileName}...`);
+                                    syncHook.forceUploadSelected([item.id]);
+                                  } else {
+                                    actions.addNotification(null, "error", `Could not find ID for ${fileName}`);
+                                  }
+                                }}
+                                onPull={() => {
+                                  const item = state.historyList.find((h) => h.name === fileName);
+                                  if (item) {
+                                    actions.addNotification(null, "success", `Pulling ${fileName}...`);
+                                    syncHook.forceDownloadSelected([item.id]);
+                                  } else {
+                                    actions.addNotification(null, "error", `Could not find ID for ${fileName}`);
+                                  }
+                                }}
+                              />
+                              {/* Quick inspect in modal */}
+                              <button
+                                onClick={() => updateDebugFile(fileName)}
+                                className="p-2 bg-slate-50 text-slate-600 hover:bg-slate-600 hover:text-white rounded-xl border border-slate-100 transition-colors shadow-sm"
+                                title="Quick Inspect (Modal)"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                                  />
+                                </svg>
+                              </button>
+                              {/* Navigate to standalone inspect page */}
+                              <Link
+                                to={`/inspect/${state.historyList.find((h) => h.name === fileName)?.id || fileName}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-colors shadow-sm flex items-center justify-center border border-blue-100"
+                                title="Open Inspect Page"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                                  />
+                                </svg>
+                              </Link>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                )}
+              </main>
+
+              <HistorySidebar
+                isOpen={state.showHistory}
+                onClose={() => setters.setShowHistory(false)}
+                historyList={state.historyList}
+                isLoading={state.isLoadingHistory}
+                loadingText={state.detailedStatus}
+                progress={state.total > 0 ? (state.completedCount / state.total) * 100 : 0}
+                onLoadHistory={handleLoadHistory}
+                onBatchLoadHistory={handleBatchLoadHistory}
+                onBatchReprocessHistory={handleBatchReprocessHistory}
+                onRefreshList={refreshHistoryList}
+                onCleanupAll={handleCleanupAllHistory}
+                onDeleteHistory={handleDeleteHistoryItem}
+                onBatchDelete={handleBatchDeleteHistoryItems}
+                onFilesUpdated={handleFilesUpdated}
+                onLoadExamsWithPictureOkFalse={handleLoadExamsWithPictureOkFalse}
+                onPush={async (id) => {
+                  try {
+                    actions.addNotification(null, "success", "正在推送到云端...");
+                    await syncHook.forceUploadSelected([id]);
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
+                onPull={async (id) => {
+                  try {
+                    actions.addNotification(null, "success", "正在从云端拉取...");
+                    await syncHook.forceDownloadSelected([id]);
+                    await refreshHistoryList();
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
+              />
+              <ConfigurationPanel
+                isOpen={showSettings}
+                onClose={() => setShowSettings(false)}
+                selectedModel={state.selectedModel}
+                setSelectedModel={setters.setSelectedModel}
+                concurrency={state.concurrency}
+                setConcurrency={setters.setConcurrency}
+                analysisConcurrency={state.analysisConcurrency}
+                setAnalysisConcurrency={setters.setAnalysisConcurrency}
+                cropSettings={state.cropSettings}
+                setCropSettings={setters.setCropSettings}
+                useHistoryCache={state.useHistoryCache}
+                setUseHistoryCache={setters.setUseHistoryCache}
+                batchSize={state.batchSize}
+                setBatchSize={setters.setBatchSize}
+                apiKey={state.apiKey}
+                setApiKey={setters.setApiKey}
+                skipSolvedQuestions={state.skipSolvedQuestions}
+                setSkipSolvedQuestions={setters.setSkipSolvedQuestions}
+                syncConcurrency={syncHook.status.uploadConcurrency}
+                setSyncConcurrency={syncHook.setUploadConcurrency}
+                batchCheckChunkSize={syncHook.status.batchCheckChunkSize}
+                setBatchCheckChunkSize={syncHook.setBatchCheckChunkSize}
+                batchCheckConcurrency={syncHook.status.batchCheckConcurrency}
+                setBatchCheckConcurrency={syncHook.setBatchCheckConcurrency}
+                autoSyncEnabled={syncHook.autoSyncEnabled}
+                setAutoSyncEnabled={syncHook.setAutoSyncEnabled}
+                autoSyncIntervalMinutes={syncHook.autoSyncIntervalMinutes}
+                setAutoSyncIntervalMinutes={syncHook.setAutoSyncIntervalMinutes}
+                useGeminiProxy={state.useGeminiProxy}
+                setUseGeminiProxy={setters.setUseGeminiProxy}
+              />
+              {state.refiningFile && (
+                <RefinementModal
+                  fileName={state.refiningFile}
+                  initialSettings={state.cropSettings}
+                  status={state.status}
+                  onClose={() => setters.setRefiningFile(null)}
+                  onApply={(fileName, settings) => {
+                    handleRecropFile(fileName, settings);
+                    setters.setCropSettings(settings);
+                  }}
+                />
+              )}
+              <ConfirmDialog
+                isOpen={confirmState.isOpen}
+                title={confirmState.title}
+                message={confirmState.message}
+                onConfirm={() => {
+                  confirmState.action();
+                  setConfirmState((prev) => ({ ...prev, isOpen: false }));
+                }}
+                onCancel={() => setConfirmState((prev) => ({ ...prev, isOpen: false }))}
+                isDestructive={confirmState.isDestructive}
+                confirmLabel={confirmState.confirmLabel}
+              />
+              <NotificationToast
+                notifications={state.notifications}
+                onDismiss={(id) => setters.setNotifications((prev) => prev.filter((n) => n.id !== id))}
+                onView={(fileName) => updateDebugFile(fileName)}
+              />
+
+              <SyncHistoryPanel
+                isOpen={showSyncHistory}
+                onClose={() => setShowSyncHistory(false)}
+                onLoadHistoryByName={handleLoadHistoryByName}
+                onSyncComplete={refreshHistoryList}
+                onFilesUpdated={handleFilesUpdated}
+              />
+
+              {/* API Key Stats Panel - shown during analysis */}
+              <div className="fixed bottom-6 left-6 z-[110] w-96 max-w-[90vw]">
+                <KeyStatsPanel isVisible={state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal} />
               </div>
-            </div>
-          )
-        )}
-      </main>
 
-      <HistorySidebar
-        isOpen={state.showHistory}
-        onClose={() => setters.setShowHistory(false)}
-        historyList={state.historyList}
-        isLoading={state.isLoadingHistory}
-        loadingText={state.detailedStatus}
-        progress={state.total > 0 ? (state.completedCount / state.total) * 100 : 0}
-        onLoadHistory={handleLoadHistory}
-        onBatchLoadHistory={handleBatchLoadHistory}
-        onBatchReprocessHistory={handleBatchReprocessHistory}
-        onRefreshList={refreshHistoryList}
-        onCleanupAll={handleCleanupAllHistory}
-        onDeleteHistory={handleDeleteHistoryItem}
-        onBatchDelete={handleBatchDeleteHistoryItems}
-        onFilesUpdated={handleFilesUpdated}
-        onLoadExamsWithPictureOkFalse={handleLoadExamsWithPictureOkFalse}
-        onPush={async (id) => {
-          try {
-            actions.addNotification(null, "success", "正在推送到云端...");
-            await syncHook.forceUploadSelected([id]);
-          } catch (e) {
-            console.error(e);
+              <footer className="mt-24 text-center text-slate-400 text-xs py-12 border-t border-slate-100 font-bold tracking-widest uppercase">
+                <p>© 2025 AI Exam Splitter | Precision Tooling | v{packageJson.version}</p>
+              </footer>
+            </>
           }
-        }}
-        onPull={async (id) => {
-          try {
-            actions.addNotification(null, "success", "正在从云端拉取...");
-            await syncHook.forceDownloadSelected([id]);
-            await refreshHistoryList();
-          } catch (e) {
-            console.error(e);
-          }
-        }}
-      />
-      <ConfigurationPanel
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
-        selectedModel={state.selectedModel}
-        setSelectedModel={setters.setSelectedModel}
-        concurrency={state.concurrency}
-        setConcurrency={setters.setConcurrency}
-        analysisConcurrency={state.analysisConcurrency}
-        setAnalysisConcurrency={setters.setAnalysisConcurrency}
-        cropSettings={state.cropSettings}
-        setCropSettings={setters.setCropSettings}
-        useHistoryCache={state.useHistoryCache}
-        setUseHistoryCache={setters.setUseHistoryCache}
-        batchSize={state.batchSize}
-        setBatchSize={setters.setBatchSize}
-        apiKey={state.apiKey}
-        setApiKey={setters.setApiKey}
-        skipSolvedQuestions={state.skipSolvedQuestions}
-        setSkipSolvedQuestions={setters.setSkipSolvedQuestions}
-        syncConcurrency={syncHook.status.uploadConcurrency}
-        setSyncConcurrency={syncHook.setUploadConcurrency}
-        batchCheckChunkSize={syncHook.status.batchCheckChunkSize}
-        setBatchCheckChunkSize={syncHook.setBatchCheckChunkSize}
-        batchCheckConcurrency={syncHook.status.batchCheckConcurrency}
-        setBatchCheckConcurrency={syncHook.setBatchCheckConcurrency}
-        autoSyncEnabled={syncHook.autoSyncEnabled}
-        setAutoSyncEnabled={syncHook.setAutoSyncEnabled}
-        autoSyncIntervalMinutes={syncHook.autoSyncIntervalMinutes}
-        setAutoSyncIntervalMinutes={syncHook.setAutoSyncIntervalMinutes}
-        useGeminiProxy={state.useGeminiProxy}
-        setUseGeminiProxy={setters.setUseGeminiProxy}
-      />
-      {state.refiningFile && (
-        <RefinementModal
-          fileName={state.refiningFile}
-          initialSettings={state.cropSettings}
-          status={state.status}
-          onClose={() => setters.setRefiningFile(null)}
-          onApply={(fileName, settings) => {
-            handleRecropFile(fileName, settings);
-            setters.setCropSettings(settings);
-          }}
         />
-      )}
-      <ConfirmDialog
-        isOpen={confirmState.isOpen}
-        title={confirmState.title}
-        message={confirmState.message}
-        onConfirm={() => {
-          confirmState.action();
-          setConfirmState((prev) => ({ ...prev, isOpen: false }));
-        }}
-        onCancel={() => setConfirmState((prev) => ({ ...prev, isOpen: false }))}
-        isDestructive={confirmState.isDestructive}
-        confirmLabel={confirmState.confirmLabel}
-      />
-      <NotificationToast
-        notifications={state.notifications}
-        onDismiss={(id) => setters.setNotifications((prev) => prev.filter((n) => n.id !== id))}
-        onView={(fileName) => updateDebugFile(fileName)}
-      />
-
-      <SyncHistoryPanel
-        isOpen={showSyncHistory}
-        onClose={() => setShowSyncHistory(false)}
-        onLoadHistoryByName={handleLoadHistoryByName}
-        onSyncComplete={refreshHistoryList}
-        onFilesUpdated={handleFilesUpdated}
-      />
-
-      {/* API Key Stats Panel - shown during analysis */}
-      <div className="fixed bottom-6 left-6 z-[110] w-96 max-w-[90vw]">
-        <KeyStatsPanel
-          isVisible={state.analyzingTotal > 0 && state.analyzingDone < state.analyzingTotal}
-        />
-      </div>
-
-      <footer className="mt-24 text-center text-slate-400 text-xs py-12 border-t border-slate-100 font-bold tracking-widest uppercase">
-        <p>© 2025 AI Exam Splitter | Precision Tooling | v{packageJson.version}</p>
-      </footer>
-          </>
-        } />
       </Routes>
     </div>
   );

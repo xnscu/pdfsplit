@@ -16,6 +16,7 @@ import {
   createLogicalQuestions,
   processLogicalQuestion,
 } from "../services/generationService";
+import { forceDownloadSelected } from "../services/syncService";
 
 interface HistoryProps {
   state: any;
@@ -121,7 +122,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           cropSettings,
           batchSignal, // 使用批量处理的 signal
           undefined,
-          workerConcurrency
+          workerConcurrency,
         );
 
         // 请求完成后，检查停止标志
@@ -167,7 +168,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       addNotification(
         null,
         "success",
-        `Batch complete: ${totalFilesProcessed} files processed in ${duration}s. ${totalChangedImages} images updated.`
+        `Batch complete: ${totalFilesProcessed} files processed in ${duration}s. ${totalChangedImages} images updated.`,
       );
       await refreshHistoryList();
     } catch (e: any) {
@@ -200,7 +201,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
       if (!result) throw new Error("History record not found.");
 
       const uniquePages = Array.from(
-        new Map(result.rawPages.map((p: any) => [p.pageNumber, p])).values()
+        new Map(result.rawPages.map((p: any) => [p.pageNumber, p])).values(),
       ) as DebugPageData[];
       uniquePages.sort((a, b) => a.pageNumber - b.pageNumber);
 
@@ -240,7 +241,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           {
             onProgress: () => setCroppingDone((p: number) => p + 1),
           },
-          batchSize || 10
+          batchSize || 10,
         );
 
         setQuestions(generatedQuestions);
@@ -331,7 +332,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           height: rp.height,
           pageNumber: rp.pageNumber,
           fileName: rp.fileName,
-        }))
+        })),
       );
 
       if (legacyFilesFound.size > 0) {
@@ -346,7 +347,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           cropSettings,
           abortControllerRef.current.signal,
           { onProgress: () => setCroppingDone((p: number) => p + 1) },
-          batchSize || 10
+          batchSize || 10,
         );
         setQuestions([...combinedQuestions, ...generatedLegacyQuestions]);
         setLegacySyncFiles(legacyFilesFound);
@@ -388,7 +389,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
           const fileQuestions = questions.filter((q: any) => q.fileName === fileName);
           const historyItem = history.find((h) => h.name === fileName);
           if (historyItem) await updateExamQuestionsOnly(historyItem.id, fileQuestions);
-        })
+        }),
       );
       setLegacySyncFiles(new Set());
       const duration = ((Date.now() - startTimeLocal) / 1000).toFixed(1);
@@ -510,7 +511,7 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
         setRawPages((prev: DebugPageData[]) => {
           const others = prev.filter((p) => p.fileName !== fileName);
           const uniqueNewPages = Array.from(
-            new Map(result.rawPages.map((p: any) => [p.pageNumber, p])).values()
+            new Map(result.rawPages.map((p: any) => [p.pageNumber, p])).values(),
           ) as DebugPageData[];
           uniqueNewPages.sort((a, b) => a.pageNumber - b.pageNumber);
           return [...others, ...uniqueNewPages].sort((a, b) => {
@@ -569,6 +570,38 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     }
   };
 
+  const handleLoadExamsWithMismatchCounts = async () => {
+    try {
+      addNotification(null, "info", "正在检查云端数据...");
+      const response = await fetch("/api/exams/debug/mismatched-counts");
+      if (!response.ok) throw new Error("Failed to fetch mismatched exams");
+      const exams = await response.json();
+
+      if (!Array.isArray(exams) || exams.length === 0) {
+        addNotification(null, "info", "未找到题目数量不一致的试卷");
+        return;
+      }
+
+      const examIds = exams.map((e: any) => e.id);
+      addNotification(null, "success", `找到 ${examIds.length} 个不一致的试卷，正在下载...`);
+
+      // Ensure we have the latest version from server
+      await forceDownloadSelected(examIds, (progress) => {
+        if (progress.total > 0) {
+          setDetailedStatus(`Downloading: ${progress.current}/${progress.total}`);
+        }
+      });
+
+      await handleBatchLoadHistory(examIds);
+      addNotification(null, "success", `已加载 ${examIds.length} 个不一致的试卷`);
+    } catch (e: any) {
+      console.error("Failed to load mismatched exams", e);
+      addNotification(null, "error", `操作失败: ${e.message}`);
+    } finally {
+      setDetailedStatus("");
+    }
+  };
+
   return {
     handleCleanupAllHistory,
     handleLoadHistory,
@@ -581,5 +614,6 @@ export const useHistoryActions = ({ state, setters, refs, actions }: HistoryProp
     handleBatchDeleteHistoryItems,
     handleFilesUpdated,
     handleLoadExamsWithPictureOkFalse,
+    handleLoadExamsWithMismatchCounts,
   };
 };
