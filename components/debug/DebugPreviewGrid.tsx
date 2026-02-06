@@ -11,6 +11,7 @@ interface Props {
   onCopyAnalysis?: (q: QuestionImage, fromType: "standard" | "pro") => void;
   onEditAnalysis?: (q: QuestionImage, type: "standard" | "pro", field: string, value: string) => Promise<void>;
   enableAnchors?: boolean; // Enable anchor links for each question
+  showExplanations?: boolean;
 }
 
 export const DebugPreviewGrid: React.FC<Props> = ({
@@ -21,6 +22,7 @@ export const DebugPreviewGrid: React.FC<Props> = ({
   onCopyAnalysis,
   onEditAnalysis,
   enableAnchors = false,
+  showExplanations = true,
 }) => {
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -154,7 +156,7 @@ export const DebugPreviewGrid: React.FC<Props> = ({
               </div>
 
               {/* Analysis Block(s) */}
-              {(q.analysis || q.pro_analysis) && (
+              {(q.analysis || q.pro_analysis) && showExplanations && (
                 <div className="mt-4 animate-[fade-in_0.3s_ease-out]">
                   {q.pro_analysis ? (
                     // Grid View for Comparison

@@ -36,7 +36,6 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
 
-
   // State for loaded data
   const [pages, setPages] = useState<DebugPageData[]>([]);
   const [questions, setQuestions] = useState<QuestionImage[]>([]);
@@ -51,6 +50,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
 
   // View state
   const [viewMode, setViewMode] = useState<"preview" | "debug">("preview");
+  const [showExplanations, setShowExplanations] = useState(true);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [draggingSide, setDraggingSide] = useState<"left" | "right" | "top" | "bottom" | null>(null);
   const [dragValue, setDragValue] = useState<number | null>(null);
@@ -61,7 +61,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
   // Add notification helper
   const addNotification = useCallback((fileName: string | null, type: "success" | "error", message: string) => {
     const id = `notif-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    setNotifications(prev => [...prev, { id, fileName, type, message }]);
+    setNotifications((prev) => [...prev, { id, fileName, type, message }]);
   }, []);
 
   // Sync hook
@@ -124,8 +124,10 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
   useEffect(() => {
     const loadExamList = async () => {
       const list = await getHistoryList();
-      const sorted = list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
-      setAllExamIds(sorted.map(item => ({ id: item.id, name: item.name })));
+      const sorted = list.sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }),
+      );
+      setAllExamIds(sorted.map((item) => ({ id: item.id, name: item.name })));
     };
     loadExamList();
   }, []);
@@ -133,7 +135,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
   // Update current index when exam list or examId changes
   useEffect(() => {
     if (examId && allExamIds.length > 0) {
-      const index = allExamIds.findIndex(e => e.id === examId);
+      const index = allExamIds.findIndex((e) => e.id === examId);
       setCurrentExamIndex(index);
     }
   }, [examId, allExamIds]);
@@ -181,7 +183,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
         addNotification(null, "error", "Local exam not found");
         return;
       }
-      
+
       addNotification(null, "success", "Checking remote version...");
       const remoteExam = await getRemoteExam(examId);
 
@@ -189,20 +191,21 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
         setConfirmState({
           isOpen: true,
           title: "Remote Version Newer",
-          message: "The version on the server is newer than your local version. Pushing will overwrite the server version. Are you sure?",
+          message:
+            "The version on the server is newer than your local version. Pushing will overwrite the server version. Are you sure?",
           action: async () => {
-             addNotification(null, "success", "Pushing to remote...");
-             await syncHook.forceUploadSelected([examId]);
-             addNotification(null, "success", "Push completed");
+            addNotification(null, "success", "Pushing to remote...");
+            await syncHook.forceUploadSelected([examId]);
+            addNotification(null, "success", "Push completed");
           },
           isDestructive: true,
           confirmLabel: "Overwrite Remote",
         });
       } else {
-         addNotification(null, "success", "Pushing to remote...");
-         await syncHook.forceUploadSelected([examId]);
-         addNotification(null, "success", "Push completed");
-         await checkSyncStatus();
+        addNotification(null, "success", "Pushing to remote...");
+        await syncHook.forceUploadSelected([examId]);
+        addNotification(null, "success", "Push completed");
+        await checkSyncStatus();
       }
     } catch (e: any) {
       addNotification(null, "error", `Push failed: ${e.message}`);
@@ -216,35 +219,36 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
       const remoteExam = await getRemoteExam(examId);
 
       if (!remoteExam) {
-         addNotification(null, "error", "Remote exam not found");
-         return;
+        addNotification(null, "error", "Remote exam not found");
+        return;
       }
 
       const proceedWithPull = async () => {
-         addNotification(null, "success", "Pulling from remote...");
-         await syncHook.forceDownloadSelected([examId]);
-         // Reload data
-         const updatedExam = await loadExamResult(examId);
-         if (updatedExam) {
-            setTitle(updatedExam.name);
-            setPages(updatedExam.rawPages || []);
-            setQuestions(updatedExam.questions || []);
-            addNotification(null, "success", "Pull completed & reloaded");
-            await checkSyncStatus();
-         }
+        addNotification(null, "success", "Pulling from remote...");
+        await syncHook.forceDownloadSelected([examId]);
+        // Reload data
+        const updatedExam = await loadExamResult(examId);
+        if (updatedExam) {
+          setTitle(updatedExam.name);
+          setPages(updatedExam.rawPages || []);
+          setQuestions(updatedExam.questions || []);
+          addNotification(null, "success", "Pull completed & reloaded");
+          await checkSyncStatus();
+        }
       };
 
       if (localExam && localExam.timestamp > remoteExam.timestamp) {
         setConfirmState({
           isOpen: true,
           title: "Local Version Newer",
-          message: "Your local version is newer than the server version. Pulling will overwrite your local changes. Are you sure?",
+          message:
+            "Your local version is newer than the server version. Pulling will overwrite your local changes. Are you sure?",
           action: proceedWithPull,
           isDestructive: true,
           confirmLabel: "Overwrite Local",
         });
       } else {
-         await proceedWithPull();
+        await proceedWithPull();
       }
     } catch (e: any) {
       addNotification(null, "error", `Pull failed: ${e.message}`);
@@ -285,187 +289,210 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
     }
   }, [currentExamIndex, allExamIds, navigate]);
 
-  const handleJumpToIndex = useCallback((oneBasedIndex: number) => {
-    const zeroBasedIndex = oneBasedIndex - 1;
-    if (zeroBasedIndex >= 0 && zeroBasedIndex < allExamIds.length) {
-      const targetExam = allExamIds[zeroBasedIndex];
-      navigate(`/inspect/${targetExam.id}`);
-    }
-  }, [allExamIds, navigate]);
+  const handleJumpToIndex = useCallback(
+    (oneBasedIndex: number) => {
+      const zeroBasedIndex = oneBasedIndex - 1;
+      if (zeroBasedIndex >= 0 && zeroBasedIndex < allExamIds.length) {
+        const targetExam = allExamIds[zeroBasedIndex];
+        navigate(`/inspect/${targetExam.id}`);
+      }
+    },
+    [allExamIds, navigate],
+  );
 
   const handleClose = useCallback(() => {
     navigate("/");
   }, [navigate]);
 
   // Question click handler - jump to debug view
-  const handleQuestionClick = useCallback((q: QuestionImage) => {
-    setViewMode("debug");
-    const page = pages.find(p => p.fileName === q.fileName && p.pageNumber === q.pageNumber);
-    if (page) {
-      const detIndex = page.detections.findIndex(d => d.id === q.id);
-      if (detIndex !== -1) {
-        const key = `${q.fileName}||${q.pageNumber}||${detIndex}`;
-        setSelectedKey(key);
+  const handleQuestionClick = useCallback(
+    (q: QuestionImage) => {
+      setViewMode("debug");
+      const page = pages.find((p) => p.fileName === q.fileName && p.pageNumber === q.pageNumber);
+      if (page) {
+        const detIndex = page.detections.findIndex((d) => d.id === q.id);
+        if (detIndex !== -1) {
+          const key = `${q.fileName}||${q.pageNumber}||${detIndex}`;
+          setSelectedKey(key);
+        }
       }
-    }
-  }, [pages]);
+    },
+    [pages],
+  );
 
   // Re-solve question handler with specific model type
-  const handleReSolveQuestion = useCallback(async (q: QuestionImage, modelType: "flash" | "pro") => {
-    try {
-      const model = modelType === "pro" ? MODEL_IDS.PRO : MODEL_IDS.FLASH;
-      const analysis = await analyzeQuestionViaProxy(q.dataUrl, model, 3, apiKey);
+  const handleReSolveQuestion = useCallback(
+    async (q: QuestionImage, modelType: "flash" | "pro") => {
+      try {
+        const model = modelType === "pro" ? MODEL_IDS.PRO : MODEL_IDS.FLASH;
+        const analysis = await analyzeQuestionViaProxy(q.dataUrl, model, 3, apiKey);
 
-      const updatedQuestion = { ...q };
-      if (modelType === "pro") {
-        updatedQuestion.pro_analysis = analysis;
-      } else {
-        updatedQuestion.analysis = analysis;
+        const updatedQuestion = { ...q };
+        if (modelType === "pro") {
+          updatedQuestion.pro_analysis = analysis;
+        } else {
+          updatedQuestion.analysis = analysis;
+        }
+
+        setQuestions((prev) =>
+          prev.map((item) => (item.fileName === q.fileName && item.id === q.id ? updatedQuestion : item)),
+        );
+
+        // Save to storage
+        const fileQuestions = questions
+          .filter((item) => item.fileName === q.fileName)
+          .map((item) => (item.id === q.id ? updatedQuestion : item));
+        await updateQuestionsForFile(q.fileName, fileQuestions);
+
+        addNotification(q.fileName, "success", `Q${q.id} 重新解题完成 (${modelType === "pro" ? "Pro" : "Flash"})`);
+      } catch (error: any) {
+        console.error("Re-solve question failed:", error);
+        addNotification(q.fileName, "error", `Q${q.id} 解题失败: ${error.message}`);
+        throw error;
       }
-
-      setQuestions(prev => prev.map(item => 
-        item.fileName === q.fileName && item.id === q.id ? updatedQuestion : item
-      ));
-
-      // Save to storage
-      const fileQuestions = questions
-        .filter(item => item.fileName === q.fileName)
-        .map(item => (item.id === q.id ? updatedQuestion : item));
-      await updateQuestionsForFile(q.fileName, fileQuestions);
-
-      addNotification(q.fileName, "success", `Q${q.id} 重新解题完成 (${modelType === "pro" ? "Pro" : "Flash"})`);
-    } catch (error: any) {
-      console.error("Re-solve question failed:", error);
-      addNotification(q.fileName, "error", `Q${q.id} 解题失败: ${error.message}`);
-      throw error;
-    }
-  }, [questions, addNotification, apiKey]);
+    },
+    [questions, addNotification, apiKey],
+  );
 
   // Delete analysis handler
-  const handleDeleteAnalysis = useCallback(async (q: QuestionImage, type: "standard" | "pro") => {
-    const updatedQuestion = { ...q };
-    if (type === "standard") {
-      updatedQuestion.analysis = undefined;
-    } else {
-      updatedQuestion.pro_analysis = undefined;
-    }
+  const handleDeleteAnalysis = useCallback(
+    async (q: QuestionImage, type: "standard" | "pro") => {
+      const updatedQuestion = { ...q };
+      if (type === "standard") {
+        updatedQuestion.analysis = undefined;
+      } else {
+        updatedQuestion.pro_analysis = undefined;
+      }
 
-    setQuestions(prev => prev.map(item =>
-      item.fileName === q.fileName && item.id === q.id ? updatedQuestion : item
-    ));
+      setQuestions((prev) =>
+        prev.map((item) => (item.fileName === q.fileName && item.id === q.id ? updatedQuestion : item)),
+      );
 
-    const fileQuestions = questions
-      .filter(item => item.fileName === q.fileName)
-      .map(item => (item.id === q.id ? updatedQuestion : item));
-    await updateQuestionsForFile(q.fileName, fileQuestions);
-    addNotification(q.fileName, "success", `Q${q.id} ${type === "standard" ? "标准" : "Pro"}解析已删除`);
-  }, [questions, addNotification]);
+      const fileQuestions = questions
+        .filter((item) => item.fileName === q.fileName)
+        .map((item) => (item.id === q.id ? updatedQuestion : item));
+      await updateQuestionsForFile(q.fileName, fileQuestions);
+      addNotification(q.fileName, "success", `Q${q.id} ${type === "standard" ? "标准" : "Pro"}解析已删除`);
+    },
+    [questions, addNotification],
+  );
 
   // Copy analysis handler
-  const handleCopyAnalysis = useCallback(async (q: QuestionImage, fromType: "standard" | "pro") => {
-    const updatedQuestion = { ...q };
-    if (fromType === "standard") {
-      if (!q.analysis) return;
-      updatedQuestion.pro_analysis = JSON.parse(JSON.stringify(q.analysis));
-    } else {
-      if (!q.pro_analysis) return;
-      updatedQuestion.analysis = JSON.parse(JSON.stringify(q.pro_analysis));
-    }
+  const handleCopyAnalysis = useCallback(
+    async (q: QuestionImage, fromType: "standard" | "pro") => {
+      const updatedQuestion = { ...q };
+      if (fromType === "standard") {
+        if (!q.analysis) return;
+        updatedQuestion.pro_analysis = JSON.parse(JSON.stringify(q.analysis));
+      } else {
+        if (!q.pro_analysis) return;
+        updatedQuestion.analysis = JSON.parse(JSON.stringify(q.pro_analysis));
+      }
 
-    setQuestions(prev => prev.map(item =>
-      item.fileName === q.fileName && item.id === q.id ? updatedQuestion : item
-    ));
+      setQuestions((prev) =>
+        prev.map((item) => (item.fileName === q.fileName && item.id === q.id ? updatedQuestion : item)),
+      );
 
-    const fileQuestions = questions
-      .filter(item => item.fileName === q.fileName)
-      .map(item => (item.id === q.id ? updatedQuestion : item));
-    await updateQuestionsForFile(q.fileName, fileQuestions);
-    addNotification(q.fileName, "success", `Q${q.id} 解析已复制`);
-  }, [questions, addNotification]);
+      const fileQuestions = questions
+        .filter((item) => item.fileName === q.fileName)
+        .map((item) => (item.id === q.id ? updatedQuestion : item));
+      await updateQuestionsForFile(q.fileName, fileQuestions);
+      addNotification(q.fileName, "success", `Q${q.id} 解析已复制`);
+    },
+    [questions, addNotification],
+  );
 
   // Edit analysis handler
-  const handleEditAnalysis = useCallback(async (
-    q: QuestionImage,
-    type: "standard" | "pro",
-    field: string,
-    value: string
-  ) => {
-    const updatedQuestion = { ...q };
-    if (type === "standard" && updatedQuestion.analysis) {
-      updatedQuestion.analysis = { ...updatedQuestion.analysis, [field]: value };
-    } else if (type === "pro" && updatedQuestion.pro_analysis) {
-      updatedQuestion.pro_analysis = { ...updatedQuestion.pro_analysis, [field]: value };
-    }
+  const handleEditAnalysis = useCallback(
+    async (q: QuestionImage, type: "standard" | "pro", field: string, value: string) => {
+      const updatedQuestion = { ...q };
+      if (type === "standard" && updatedQuestion.analysis) {
+        updatedQuestion.analysis = { ...updatedQuestion.analysis, [field]: value };
+      } else if (type === "pro" && updatedQuestion.pro_analysis) {
+        updatedQuestion.pro_analysis = { ...updatedQuestion.pro_analysis, [field]: value };
+      }
 
-    setQuestions(prev => prev.map(item =>
-      item.fileName === q.fileName && item.id === q.id ? updatedQuestion : item
-    ));
+      setQuestions((prev) =>
+        prev.map((item) => (item.fileName === q.fileName && item.id === q.id ? updatedQuestion : item)),
+      );
 
-    const fileQuestions = questions
-      .filter(item => item.fileName === q.fileName)
-      .map(item => (item.id === q.id ? updatedQuestion : item));
-    await updateQuestionsForFile(q.fileName, fileQuestions);
-    addNotification(q.fileName, "success", `Q${q.id} 内容已更新`);
-  }, [questions, addNotification]);
+      const fileQuestions = questions
+        .filter((item) => item.fileName === q.fileName)
+        .map((item) => (item.id === q.id ? updatedQuestion : item));
+      await updateQuestionsForFile(q.fileName, fileQuestions);
+      addNotification(q.fileName, "success", `Q${q.id} 内容已更新`);
+    },
+    [questions, addNotification],
+  );
 
   // Update detections handler
-  const handleUpdateDetections = useCallback(async (
-    fileName: string,
-    pageNumber: number,
-    newDetections: DetectedQuestion[]
-  ) => {
-    // Update pages
-    const updatedPages = pages.map(p => {
-      if (p.fileName === fileName && p.pageNumber === pageNumber) {
-        return { ...p, detections: newDetections };
-      }
-      return p;
-    });
-    setPages(updatedPages);
+  const handleUpdateDetections = useCallback(
+    async (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => {
+      // Update pages
+      const updatedPages = pages.map((p) => {
+        if (p.fileName === fileName && p.pageNumber === pageNumber) {
+          return { ...p, detections: newDetections };
+        }
+        return p;
+      });
+      setPages(updatedPages);
 
-    // Save to storage using fileName (title)
-    await reSaveExamResult(title, updatedPages, questions);
-    addNotification(fileName, "success", "检测区域已更新");
-  }, [pages, questions, title, addNotification]);
+      // Save to storage using fileName (title)
+      await reSaveExamResult(title, updatedPages, questions);
+      addNotification(fileName, "success", "检测区域已更新");
+    },
+    [pages, questions, title, addNotification],
+  );
 
   // Selection parsing
   const { selectedImage, selectedDetection, pageDetections, selectedIndex } = useMemo(() => {
     if (!selectedKey) return { selectedImage: null, selectedDetection: null, pageDetections: [], selectedIndex: -1 };
 
     const parts = selectedKey.split("||");
-    if (parts.length !== 3) return { selectedImage: null, selectedDetection: null, pageDetections: [], selectedIndex: -1 };
+    if (parts.length !== 3)
+      return { selectedImage: null, selectedDetection: null, pageDetections: [], selectedIndex: -1 };
 
     const fileName = parts[0];
     const pageNum = parseInt(parts[1], 10);
     const detIdx = parseInt(parts[2], 10);
 
-    const page = pages.find(p => p.fileName === fileName && p.pageNumber === pageNum);
+    const page = pages.find((p) => p.fileName === fileName && p.pageNumber === pageNum);
     if (!page) return { selectedImage: null, selectedDetection: null, pageDetections: [], selectedIndex: -1 };
 
     const detectionRaw = page.detections[detIdx];
     const detection = detectionRaw ? { ...detectionRaw, pageNumber: pageNum, fileName } : null;
 
     let effectiveId: string | null = null;
-    const filePages = pages.filter(p => p.fileName === fileName).sort((a, b) => a.pageNumber - b.pageNumber);
+    const filePages = pages.filter((p) => p.fileName === fileName).sort((a, b) => a.pageNumber - b.pageNumber);
     let found = false;
     for (const p of filePages) {
       for (let i = 0; i < p.detections.length; i++) {
         const d = p.detections[i];
         if (d.id !== "continuation") effectiveId = d.id;
-        if (p.pageNumber === pageNum && i === detIdx) { found = true; break; }
+        if (p.pageNumber === pageNum && i === detIdx) {
+          found = true;
+          break;
+        }
       }
       if (found) break;
     }
 
-    const image = effectiveId ? questions.find(q => q.fileName === fileName && q.id === effectiveId) || null : null;
+    const image = effectiveId ? questions.find((q) => q.fileName === fileName && q.id === effectiveId) || null : null;
 
-    return { selectedImage: image, selectedDetection: detection, pageDetections: page.detections, selectedIndex: detIdx };
+    return {
+      selectedImage: image,
+      selectedDetection: detection,
+      pageDetections: page.detections,
+      selectedIndex: detIdx,
+    };
   }, [selectedKey, pages, questions]);
 
   // Column info for column-based editing
   const columnInfo = useMemo(() => {
     if (!selectedDetection || !pageDetections.length) return null;
-    const boxes = (Array.isArray(selectedDetection.boxes_2d[0]) ? selectedDetection.boxes_2d[0] : selectedDetection.boxes_2d) as [number, number, number, number];
+    const boxes = (
+      Array.isArray(selectedDetection.boxes_2d[0]) ? selectedDetection.boxes_2d[0] : selectedDetection.boxes_2d
+    ) as [number, number, number, number];
     const targetXMin = boxes[1];
     const targetXMax = boxes[3];
     const THRESHOLD = 50;
@@ -481,13 +508,17 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
 
   const selectedBoxCoords = useMemo(() => {
     if (!selectedDetection) return null;
-    const boxes = (Array.isArray(selectedDetection.boxes_2d[0]) ? selectedDetection.boxes_2d[0] : selectedDetection.boxes_2d) as [number, number, number, number];
+    const boxes = (
+      Array.isArray(selectedDetection.boxes_2d[0]) ? selectedDetection.boxes_2d[0] : selectedDetection.boxes_2d
+    ) as [number, number, number, number];
     return { ymin: boxes[0], xmin: boxes[1], ymax: boxes[2], xmax: boxes[3] };
   }, [selectedDetection]);
 
   const selectedPageData = useMemo(() => {
     if (!selectedDetection) return undefined;
-    return pages.find(p => p.fileName === selectedDetection.fileName && p.pageNumber === selectedDetection.pageNumber);
+    return pages.find(
+      (p) => p.fileName === selectedDetection.fileName && p.pageNumber === selectedDetection.pageNumber,
+    );
   }, [pages, selectedDetection]);
 
   // Panel resizing
@@ -496,12 +527,15 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
     setIsResizingPanel(true);
   }, []);
 
-  const handlePanelResize = useCallback((e: MouseEvent) => {
-    if (!isResizingPanel || !containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
-    setLeftPanelWidth(Math.max(20, Math.min(80, newWidth)));
-  }, [isResizingPanel]);
+  const handlePanelResize = useCallback(
+    (e: MouseEvent) => {
+      if (!isResizingPanel || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
+      setLeftPanelWidth(Math.max(20, Math.min(80, newWidth)));
+    },
+    [isResizingPanel],
+  );
 
   const stopResizing = useCallback(() => setIsResizingPanel(false), []);
 
@@ -540,7 +574,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
 
     if (draggingSide === "left" || draggingSide === "right") {
       if (columnInfo) {
-        columnInfo.indices.forEach(idx => {
+        columnInfo.indices.forEach((idx) => {
           const det = newDetections[idx];
           if (Array.isArray(det.boxes_2d[0])) {
             if (draggingSide === "left") (det.boxes_2d[0] as any)[1] = Math.round(dragValue);
@@ -567,7 +601,16 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
     setDraggingSide(null);
     setDragValue(null);
     handleUpdateDetections(fileName, pageNum, newDetections);
-  }, [draggingSide, dragValue, columnInfo, selectedDetection, pageDetections, selectedKey, selectedIndex, handleUpdateDetections]);
+  }, [
+    draggingSide,
+    dragValue,
+    columnInfo,
+    selectedDetection,
+    pageDetections,
+    selectedKey,
+    selectedIndex,
+    handleUpdateDetections,
+  ]);
 
   useEffect(() => {
     if (draggingSide) {
@@ -582,9 +625,14 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (draggingSide) { setDraggingSide(null); setDragValue(null); }
-        else if (selectedKey) { setSelectedKey(null); }
-        else { handleClose(); }
+        if (draggingSide) {
+          setDraggingSide(null);
+          setDragValue(null);
+        } else if (selectedKey) {
+          setSelectedKey(null);
+        } else {
+          handleClose();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -642,6 +690,8 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
         onPull={handlePull}
         recommendPush={recommendPush}
         recommendPull={recommendPull}
+        showExplanations={showExplanations}
+        onToggleExplanations={() => setShowExplanations(!showExplanations)}
       />
 
       <div className="flex-1 flex overflow-hidden relative" ref={containerRef}>
@@ -654,6 +704,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
             onCopyAnalysis={handleCopyAnalysis}
             onEditAnalysis={handleEditAnalysis}
             enableAnchors={true}
+            showExplanations={showExplanations}
           />
         ) : (
           <>
@@ -667,7 +718,10 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
               columnInfo={columnInfo}
               draggingSide={draggingSide}
               dragValue={dragValue}
-              onDragStateChange={(side, val) => { setDraggingSide(side); setDragValue(val); }}
+              onDragStateChange={(side, val) => {
+                setDraggingSide(side);
+                setDragValue(val);
+              }}
               isProcessing={false}
               hasNextFile={currentExamIndex < allExamIds.length - 1}
               hasPrevFile={currentExamIndex > 0}
@@ -693,6 +747,8 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
               dragValue={dragValue}
               columnInfo={columnInfo}
               cropSettings={defaultCropSettings}
+              showExplanations={showExplanations}
+              onToggleExplanations={() => setShowExplanations(!showExplanations)}
             />
           </>
         )}
@@ -700,7 +756,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
 
       <NotificationToast
         notifications={notifications}
-        onDismiss={(id) => setNotifications(prev => prev.filter(n => n.id !== id))}
+        onDismiss={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}
         onView={(fileName) => {
           // No action needed since we're already in inspect view
         }}

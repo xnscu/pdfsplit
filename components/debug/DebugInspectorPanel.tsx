@@ -19,6 +19,8 @@ interface Props {
     initialRight: number;
   } | null;
   cropSettings: CropSettings;
+  showExplanations?: boolean;
+  onToggleExplanations?: () => void;
 }
 
 export const DebugInspectorPanel: React.FC<Props> = ({
@@ -31,6 +33,8 @@ export const DebugInspectorPanel: React.FC<Props> = ({
   dragValue,
   columnInfo,
   cropSettings,
+  showExplanations = true,
+  onToggleExplanations,
 }) => {
   const [stages, setStages] = useState<{
     stage1: string;
@@ -40,7 +44,6 @@ export const DebugInspectorPanel: React.FC<Props> = ({
   } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [showAnalysis, setShowAnalysis] = useState(true);
 
   // Effect: Generate previews when selection changes
   useEffect(() => {
@@ -134,7 +137,7 @@ export const DebugInspectorPanel: React.FC<Props> = ({
 
   return (
     <div className="bg-slate-900 flex flex-col shadow-2xl relative z-20" style={{ width: `${width}%` }}>
-      <div className="p-4 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md">
+      <div className="p-4 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md flex justify-between items-center">
         <h3 className="text-slate-400 font-bold text-xs uppercase tracking-[0.2em]">Processing Stages</h3>
       </div>
 
@@ -250,14 +253,14 @@ export const DebugInspectorPanel: React.FC<Props> = ({
                 <div className="flex justify-between items-center mb-3">
                   <h4 className="text-slate-500 font-bold text-[10px] uppercase tracking-widest">Analysis</h4>
                   <button
-                    onClick={() => setShowAnalysis(!showAnalysis)}
+                    onClick={onToggleExplanations}
                     className="text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-wider"
                   >
-                    {showAnalysis ? "Hide" : "Show"}
+                    {showExplanations ? "Hide" : "Show"}
                   </button>
                 </div>
 
-                {showAnalysis && (
+                {showExplanations && (
                   <div className="space-y-6">
                     {/* Standard Analysis */}
                     <div>

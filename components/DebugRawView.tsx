@@ -1,10 +1,4 @@
-import React, {
-  useState,
-  useEffect,
-  useMemo,
-  useRef,
-  useCallback,
-} from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { DebugPageData, QuestionImage, DetectedQuestion } from "../types";
 import { DebugToolbar } from "./debug/DebugToolbar";
 import { DebugPageViewer } from "./debug/DebugPageViewer";
@@ -22,11 +16,7 @@ interface Props {
   onJumpToIndex?: (index: number) => void;
   hasNextFile?: boolean;
   hasPrevFile?: boolean;
-  onUpdateDetections?: (
-    fileName: string,
-    pageNumber: number,
-    newDetections: DetectedQuestion[],
-  ) => void;
+  onUpdateDetections?: (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => void;
   onReanalyzeFile?: (fileName: string) => void;
   onDownloadZip?: (fileName: string) => void;
   onRefineFile?: (fileName: string) => void;
@@ -85,14 +75,13 @@ export const DebugRawView: React.FC<Props> = ({
 }) => {
   // Key format: "fileName||pageNumber||detIndex"
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [showExplanations, setShowExplanations] = useState(true);
 
   // VIEW MODE: Default to 'preview' (Final Output Grid)
   const [viewMode, setViewMode] = useState<"preview" | "debug">("preview");
 
   // Dragging State for Crop Lines (Shared with sub-components)
-  const [draggingSide, setDraggingSide] = useState<
-    "left" | "right" | "top" | "bottom" | null
-  >(null);
+  const [draggingSide, setDraggingSide] = useState<"left" | "right" | "top" | "bottom" | null>(null);
   const [dragValue, setDragValue] = useState<number | null>(null);
 
   // Panel Resizing State
@@ -121,77 +110,66 @@ export const DebugRawView: React.FC<Props> = ({
     // as users usually want to stay in one mode while browsing.
   }, [pages[0]?.fileName]);
 
-  const { selectedImage, selectedDetection, pageDetections, selectedIndex } =
-    useMemo(() => {
-      if (!selectedKey)
-        return {
-          selectedImage: null,
-          selectedDetection: null,
-          pageDetections: [],
-          selectedIndex: -1,
-        };
-
-      const parts = selectedKey.split("||");
-      if (parts.length !== 3)
-        return {
-          selectedImage: null,
-          selectedDetection: null,
-          pageDetections: [],
-          selectedIndex: -1,
-        };
-
-      const fileName = parts[0];
-      const pageNum = parseInt(parts[1], 10);
-      const detIdx = parseInt(parts[2], 10);
-
-      const page = pages.find(
-        (p) => p.fileName === fileName && p.pageNumber === pageNum,
-      );
-      if (!page)
-        return {
-          selectedImage: null,
-          selectedDetection: null,
-          pageDetections: [],
-          selectedIndex: -1,
-        };
-
-      const detectionRaw = page.detections[detIdx];
-      const detection = detectionRaw
-        ? { ...detectionRaw, pageNumber: pageNum, fileName }
-        : null;
-
-      let effectiveId: string | null = null;
-      const filePages = pages
-        .filter((p) => p.fileName === fileName)
-        .sort((a, b) => a.pageNumber - b.pageNumber);
-      let found = false;
-      for (const p of filePages) {
-        for (let i = 0; i < p.detections.length; i++) {
-          const d = p.detections[i];
-          if (d.id !== "continuation") {
-            effectiveId = d.id;
-          }
-          if (p.pageNumber === pageNum && i === detIdx) {
-            found = true;
-            break;
-          }
-        }
-        if (found) break;
-      }
-
-      const image = effectiveId
-        ? questions.find(
-            (q) => q.fileName === fileName && q.id === effectiveId,
-          ) || null
-        : null;
-
+  const { selectedImage, selectedDetection, pageDetections, selectedIndex } = useMemo(() => {
+    if (!selectedKey)
       return {
-        selectedImage: image,
-        selectedDetection: detection,
-        pageDetections: page.detections,
-        selectedIndex: detIdx,
+        selectedImage: null,
+        selectedDetection: null,
+        pageDetections: [],
+        selectedIndex: -1,
       };
-    }, [selectedKey, pages, questions]);
+
+    const parts = selectedKey.split("||");
+    if (parts.length !== 3)
+      return {
+        selectedImage: null,
+        selectedDetection: null,
+        pageDetections: [],
+        selectedIndex: -1,
+      };
+
+    const fileName = parts[0];
+    const pageNum = parseInt(parts[1], 10);
+    const detIdx = parseInt(parts[2], 10);
+
+    const page = pages.find((p) => p.fileName === fileName && p.pageNumber === pageNum);
+    if (!page)
+      return {
+        selectedImage: null,
+        selectedDetection: null,
+        pageDetections: [],
+        selectedIndex: -1,
+      };
+
+    const detectionRaw = page.detections[detIdx];
+    const detection = detectionRaw ? { ...detectionRaw, pageNumber: pageNum, fileName } : null;
+
+    let effectiveId: string | null = null;
+    const filePages = pages.filter((p) => p.fileName === fileName).sort((a, b) => a.pageNumber - b.pageNumber);
+    let found = false;
+    for (const p of filePages) {
+      for (let i = 0; i < p.detections.length; i++) {
+        const d = p.detections[i];
+        if (d.id !== "continuation") {
+          effectiveId = d.id;
+        }
+        if (p.pageNumber === pageNum && i === detIdx) {
+          found = true;
+          break;
+        }
+      }
+      if (found) break;
+    }
+
+    const image = effectiveId ? questions.find((q) => q.fileName === fileName && q.id === effectiveId) || null : null;
+
+    return {
+      selectedImage: image,
+      selectedDetection: detection,
+      pageDetections: page.detections,
+      selectedIndex: detIdx,
+    };
+  }, [selectedKey, pages, questions]);
 
   // Jump to specific question in Debug Mode
   const handleQuestionClick = useCallback(
@@ -200,9 +178,7 @@ export const DebugRawView: React.FC<Props> = ({
       setViewMode("debug");
 
       // 2. Find the corresponding detection to highlight
-      const page = pages.find(
-        (p) => p.fileName === q.fileName && p.pageNumber === q.pageNumber,
-      );
+      const page = pages.find((p) => p.fileName === q.fileName && p.pageNumber === q.pageNumber);
       if (page) {
         // Try to match ID.
         // Note: q.id might be complex, but detections have an 'id' field.
@@ -221,9 +197,7 @@ export const DebugRawView: React.FC<Props> = ({
     if (!selectedDetection || !pageDetections.length) return null;
 
     const boxes = (
-      Array.isArray(selectedDetection.boxes_2d[0])
-        ? selectedDetection.boxes_2d[0]
-        : selectedDetection.boxes_2d
+      Array.isArray(selectedDetection.boxes_2d[0]) ? selectedDetection.boxes_2d[0] : selectedDetection.boxes_2d
     ) as [number, number, number, number];
     const targetXMin = boxes[1];
     const targetXMax = boxes[3];
@@ -234,16 +208,11 @@ export const DebugRawView: React.FC<Props> = ({
     let maxX = targetXMax;
 
     pageDetections.forEach((det, idx) => {
-      const b = (
-        Array.isArray(det.boxes_2d[0]) ? det.boxes_2d[0] : det.boxes_2d
-      ) as [number, number, number, number];
+      const b = (Array.isArray(det.boxes_2d[0]) ? det.boxes_2d[0] : det.boxes_2d) as [number, number, number, number];
       const detXMin = b[1];
       const detXMax = b[3];
 
-      if (
-        Math.abs(detXMin - targetXMin) < THRESHOLD &&
-        Math.abs(detXMax - targetXMax) < THRESHOLD
-      ) {
+      if (Math.abs(detXMin - targetXMin) < THRESHOLD && Math.abs(detXMax - targetXMax) < THRESHOLD) {
         columnIndices.push(idx);
       }
     });
@@ -255,9 +224,7 @@ export const DebugRawView: React.FC<Props> = ({
   const selectedBoxCoords = useMemo(() => {
     if (!selectedDetection) return null;
     const boxes = (
-      Array.isArray(selectedDetection.boxes_2d[0])
-        ? selectedDetection.boxes_2d[0]
-        : selectedDetection.boxes_2d
+      Array.isArray(selectedDetection.boxes_2d[0]) ? selectedDetection.boxes_2d[0] : selectedDetection.boxes_2d
     ) as [number, number, number, number];
     return {
       ymin: boxes[0],
@@ -271,9 +238,7 @@ export const DebugRawView: React.FC<Props> = ({
   const selectedPageData = useMemo(() => {
     if (!selectedDetection) return undefined;
     return pages.find(
-      (p) =>
-        p.fileName === selectedDetection.fileName &&
-        p.pageNumber === selectedDetection.pageNumber,
+      (p) => p.fileName === selectedDetection.fileName && p.pageNumber === selectedDetection.pageNumber,
     );
   }, [pages, selectedDetection]);
 
@@ -320,12 +285,7 @@ export const DebugRawView: React.FC<Props> = ({
 
   // Global Mouse Up to Commit Drag
   const handleGlobalMouseUp = useCallback(async () => {
-    if (
-      !draggingSide ||
-      dragValue === null ||
-      !selectedDetection ||
-      !onUpdateDetections
-    ) {
+    if (!draggingSide || dragValue === null || !selectedDetection || !onUpdateDetections) {
       setDraggingSide(null);
       setDragValue(null);
       return;
@@ -335,21 +295,17 @@ export const DebugRawView: React.FC<Props> = ({
     const fileName = parts[0];
     const pageNum = parseInt(parts[1], 10);
 
-    const newDetections = JSON.parse(
-      JSON.stringify(pageDetections),
-    ) as DetectedQuestion[];
+    const newDetections = JSON.parse(JSON.stringify(pageDetections)) as DetectedQuestion[];
 
     if (draggingSide === "left" || draggingSide === "right") {
       if (columnInfo) {
         columnInfo.indices.forEach((idx) => {
           const det = newDetections[idx];
           if (Array.isArray(det.boxes_2d[0])) {
-            if (draggingSide === "left")
-              (det.boxes_2d[0] as any)[1] = Math.round(dragValue);
+            if (draggingSide === "left") (det.boxes_2d[0] as any)[1] = Math.round(dragValue);
             else (det.boxes_2d[0] as any)[3] = Math.round(dragValue);
           } else {
-            if (draggingSide === "left")
-              (det.boxes_2d as any)[1] = Math.round(dragValue);
+            if (draggingSide === "left") (det.boxes_2d as any)[1] = Math.round(dragValue);
             else (det.boxes_2d as any)[3] = Math.round(dragValue);
           }
         });
@@ -358,12 +314,10 @@ export const DebugRawView: React.FC<Props> = ({
       const det = newDetections[selectedIndex];
       if (det) {
         if (Array.isArray(det.boxes_2d[0])) {
-          if (draggingSide === "top")
-            (det.boxes_2d[0] as any)[0] = Math.round(dragValue);
+          if (draggingSide === "top") (det.boxes_2d[0] as any)[0] = Math.round(dragValue);
           else (det.boxes_2d[0] as any)[2] = Math.round(dragValue);
         } else {
-          if (draggingSide === "top")
-            (det.boxes_2d as any)[0] = Math.round(dragValue);
+          if (draggingSide === "top") (det.boxes_2d as any)[0] = Math.round(dragValue);
           else (det.boxes_2d as any)[2] = Math.round(dragValue);
         }
       }
@@ -428,31 +382,11 @@ export const DebugRawView: React.FC<Props> = ({
         onNextFile={onNextFile}
         onJumpToIndex={onJumpToIndex}
         onClose={onClose}
-        onReanalyze={
-          !isCurrentFileProcessing && onReanalyzeFile && title
-            ? () => onReanalyzeFile(title)
-            : undefined
-        }
-        onDownloadZip={
-          !isCurrentFileProcessing && onDownloadZip && title
-            ? () => onDownloadZip(title)
-            : undefined
-        }
-        onRefine={
-          !isCurrentFileProcessing && onRefineFile && title
-            ? () => onRefineFile(title)
-            : undefined
-        }
-        onProcess={
-          !isCurrentFileProcessing && onProcessFile && title
-            ? () => onProcessFile(title)
-            : undefined
-        }
-        onAnalyze={
-          !isCurrentFileProcessing && onAnalyzeFile && title
-            ? () => onAnalyzeFile(title)
-            : undefined
-        }
+        onReanalyze={!isCurrentFileProcessing && onReanalyzeFile && title ? () => onReanalyzeFile(title) : undefined}
+        onDownloadZip={!isCurrentFileProcessing && onDownloadZip && title ? () => onDownloadZip(title) : undefined}
+        onRefine={!isCurrentFileProcessing && onRefineFile && title ? () => onRefineFile(title) : undefined}
+        onProcess={!isCurrentFileProcessing && onProcessFile && title ? () => onProcessFile(title) : undefined}
+        onAnalyze={!isCurrentFileProcessing && onAnalyzeFile && title ? () => onAnalyzeFile(title) : undefined}
         onStopAnalyze={onStopAnalyze}
         analyzingTotal={analyzingTotal}
         analyzingDone={analyzingDone}
@@ -462,6 +396,8 @@ export const DebugRawView: React.FC<Props> = ({
         hasPrevFile={hasPrevFile}
         isAutoAnalyze={isAutoAnalyze}
         setIsAutoAnalyze={setIsAutoAnalyze}
+        showExplanations={showExplanations}
+        onToggleExplanations={() => setShowExplanations(!showExplanations)}
       />
 
       <div className="flex-1 flex overflow-hidden relative" ref={containerRef}>
@@ -473,6 +409,7 @@ export const DebugRawView: React.FC<Props> = ({
             onDeleteAnalysis={onDeleteAnalysis}
             onCopyAnalysis={onCopyAnalysis}
             onEditAnalysis={onEditAnalysis}
+            showExplanations={showExplanations}
           />
         ) : (
           <>
@@ -515,6 +452,8 @@ export const DebugRawView: React.FC<Props> = ({
               dragValue={dragValue}
               columnInfo={columnInfo}
               cropSettings={cropSettings}
+              showExplanations={showExplanations}
+              onToggleExplanations={() => setShowExplanations(!showExplanations)}
             />
           </>
         )}
