@@ -140,7 +140,7 @@ export const DebugPreviewGrid: React.FC<Props> = ({
               </div>
 
               {/* Image - Click to debug */}
-              <div className="mb-4">
+              <div className="mb-4 flex justify-center">
                 <div
                   onClick={() => onQuestionClick(q)}
                   className="cursor-pointer group relative rounded-lg overflow-hidden border border-transparent hover:border-slate-200 transition-all inline-block"
