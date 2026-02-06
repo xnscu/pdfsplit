@@ -93,7 +93,9 @@ export const DebugPreviewGrid: React.FC<Props> = ({
          Centered content with white background.
       */}
       <div
-        className={`mx-auto min-h-full py-10 px-6 md:px-12 bg-white ${questions.some((q) => q.pro_analysis) ? "max-w-[95vw]" : "max-w-5xl"}`}
+        className={`mx-auto min-h-full py-10 px-6 md:px-12 bg-white ${
+          questions.some((q) => q.pro_analysis) && showExplanations ? "max-w-[95vw]" : "max-w-5xl"
+        }`}
       >
         <div className="flex flex-col items-start w-full">
           {sortedQuestions.map((q) => (
@@ -140,7 +142,7 @@ export const DebugPreviewGrid: React.FC<Props> = ({
               </div>
 
               {/* Image - Click to debug */}
-              <div className="mb-4 flex justify-center">
+              <div className="mb-4 flex justify-start">
                 <div
                   onClick={() => onQuestionClick(q)}
                   className="cursor-pointer group relative rounded-lg overflow-hidden border border-transparent hover:border-slate-200 transition-all inline-block"
