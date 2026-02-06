@@ -380,16 +380,19 @@ export const DebugToolbar: React.FC<Props> = ({
             </svg>
           </button>
 
-          <div className="flex items-center gap-1.5 px-3">
+          <div
+            className="flex items-center gap-0.5 px-2 cursor-text"
+            onClick={() => document.getElementById("file-index-input")?.focus()}
+          >
             <input
-              type="number"
+              id="file-index-input"
+              type="text"
               value={fileIndexInput}
               onChange={(e) => setFileIndexInput(e.target.value)}
               onKeyDown={handleIndexKeyDown}
               onBlur={handleIndexSubmit}
-              className="w-10 bg-transparent text-white font-bold text-center border-b border-slate-500 focus:border-blue-500 outline-none text-sm appearance-none p-0"
-              min={1}
-              max={totalFiles}
+              className="bg-transparent text-slate-500 font-bold text-center border-none outline-none focus:ring-0 p-0 text-xs appearance-none caret-white w-[3ch] hover:text-slate-400 focus:text-slate-300 transition-colors"
+              style={{ MozAppearance: "textfield" }}
             />
             <span className="text-slate-500 text-xs font-bold">/ {totalFiles}</span>
           </div>

@@ -1019,6 +1019,19 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
               cropSettings={defaultCropSettings}
               showExplanations={showExplanations}
               onToggleExplanations={() => setShowExplanations(!showExplanations)}
+              totalPages={pages.length}
+              onJumpToPage={(pageNum) => {
+                if (!selectedDetection) return;
+                const targetPage = pages.find(
+                  (p) => p.fileName === selectedDetection.fileName && p.pageNumber === pageNum,
+                );
+                if (targetPage && targetPage.detections.length > 0) {
+                  const key = `${targetPage.fileName}||${targetPage.pageNumber}||0`;
+                  setSelectedKey(key);
+                } else {
+                  addNotification(null, "error", targetPage ? "No questions on that page" : "Page not found");
+                }
+              }}
             />
           </>
         )}

@@ -21,6 +21,8 @@ interface Props {
   cropSettings: CropSettings;
   showExplanations?: boolean;
   onToggleExplanations?: () => void;
+  totalPages?: number;
+  onJumpToPage?: (page: number) => void;
 }
 
 export const DebugInspectorPanel: React.FC<Props> = ({
@@ -35,7 +37,29 @@ export const DebugInspectorPanel: React.FC<Props> = ({
   cropSettings,
   showExplanations = true,
   onToggleExplanations,
+  totalPages,
+  onJumpToPage,
 }) => {
+  const [pageInput, setPageInput] = useState<string>("");
+  const [isEditingPage, setIsEditingPage] = useState(false);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (selectedDetection) {
+      setPageInput(selectedDetection.pageNumber.toString());
+    }
+  }, [selectedDetection?.pageNumber]);
+
+  const handlePageSubmit = () => {
+    setIsEditingPage(false);
+    if (!onJumpToPage) return;
+    const num = parseInt(pageInput);
+    if (!isNaN(num) && num > 0) {
+      onJumpToPage(num);
+    } else if (selectedDetection) {
+      setPageInput(selectedDetection.pageNumber.toString());
+    }
+  };
   const [stages, setStages] = useState<{
     stage1: string;
     stage2: string;
@@ -165,9 +189,36 @@ export const DebugInspectorPanel: React.FC<Props> = ({
                     </span>
                   )}
                 </div>
-                <span className="bg-slate-800 text-slate-400 px-3 py-1 rounded-full text-[10px] font-bold border border-slate-700">
-                  P{selectedDetection.pageNumber}
-                </span>
+                <div
+                  className="bg-slate-800 text-slate-400 px-3 py-1 rounded-full text-[10px] font-bold border border-slate-700 flex items-center gap-1 cursor-text"
+                  onClick={() => {
+                    setIsEditingPage(true);
+                    setTimeout(() => inputRef.current?.focus(), 0);
+                  }}
+                >
+                  <span>P</span>
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={pageInput}
+                    onChange={(e) => setPageInput(e.target.value)}
+                    onBlur={handlePageSubmit}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        handlePageSubmit();
+                        inputRef.current?.blur();
+                      }
+                    }}
+                    className="bg-transparent border-none outline-none p-0 text-center focus:ring-0 text-slate-400 focus:text-slate-200 caret-blue-500 placeholder-transparent appearance-none [&::-webkit-inner-spin-button]:appearance-none transition-all"
+                    style={{
+                      appearance: "textfield",
+                      MozAppearance: "textfield",
+                      width: `${Math.max(1, pageInput.length)}ch`,
+                      minWidth: "1ch",
+                    }}
+                  />
+                  {totalPages && <span className="text-slate-600">/ {totalPages}</span>}
+                </div>
               </div>
               {columnInfo && (
                 <p className="mt-1 text-blue-400 text-[10px] font-bold uppercase tracking-wide">Column Mode Active</p>
