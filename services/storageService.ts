@@ -1,10 +1,4 @@
-import {
-  DebugPageData,
-  HistoryMetadata,
-  DetectedQuestion,
-  QuestionImage,
-  ExamRecord,
-} from "../types";
+import { DebugPageData, HistoryMetadata, DetectedQuestion, QuestionImage, ExamRecord } from "../types";
 
 const DB_NAME = "MathSplitterDB";
 const STORE_NAME = "exams";
@@ -45,10 +39,8 @@ const openDB = (): Promise<IDBDatabase> => {
           }
         };
 
-        upgradeRequest.onsuccess = (e) =>
-          resolve((e.target as IDBOpenDBRequest).result);
-        upgradeRequest.onerror = (e) =>
-          reject((e.target as IDBOpenDBRequest).error);
+        upgradeRequest.onsuccess = (e) => resolve((e.target as IDBOpenDBRequest).result);
+        upgradeRequest.onerror = (e) => reject((e.target as IDBOpenDBRequest).error);
         return;
       }
 
@@ -99,9 +91,7 @@ export const saveExamResult = async (
   const timestamp = preserveTimestamp !== undefined ? preserveTimestamp : Date.now();
 
   // Safety: Deduplicate pages by pageNumber before saving to prevent DB corruption
-  const uniquePages = Array.from(
-    new Map(rawPages.map((item) => [item.pageNumber, item])).values(),
-  );
+  const uniquePages = Array.from(new Map(rawPages.map((item) => [item.pageNumber, item])).values());
   uniquePages.sort((a, b) => a.pageNumber - b.pageNumber);
 
   const record: ExamRecord = {
@@ -150,9 +140,7 @@ export const reSaveExamResult = async (
       const record = getReq.result as ExamRecord;
       if (record) {
         // Dedup pages
-        const uniquePages = Array.from(
-          new Map(rawPages.map((item) => [item.pageNumber, item])).values(),
-        );
+        const uniquePages = Array.from(new Map(rawPages.map((item) => [item.pageNumber, item])).values());
         uniquePages.sort((a, b) => a.pageNumber - b.pageNumber);
 
         record.rawPages = uniquePages;
@@ -211,15 +199,16 @@ export const updatePageDetectionsAndQuestions = async (
       }
 
       // 1. Update the specific page detections
-      const pageIndex = record.rawPages.findIndex(
-        (p: DebugPageData) => p.pageNumber === pageNumber,
-      );
+      const pageIndex = record.rawPages.findIndex((p: DebugPageData) => p.pageNumber === pageNumber);
       if (pageIndex !== -1) {
         record.rawPages[pageIndex].detections = newDetections;
       }
 
       // 2. Update the stored questions for this file (Replacing old ones for this file)
       record.questions = newFileQuestions;
+
+      // 3. Update timestamp so sync detects "modified since last sync" and pushes
+      record.timestamp = Date.now();
 
       // Save back
       const putReq = store.put(record);
@@ -235,10 +224,7 @@ export const updatePageDetectionsAndQuestions = async (
  * Used for real-time analysis saving (e.g. AI Solve).
  * IMPORTANT: Updates timestamp so fullSync detects "modified since last sync" and pushes.
  */
-export const updateQuestionsForFile = async (
-  fileName: string,
-  questions: QuestionImage[],
-): Promise<void> => {
+export const updateQuestionsForFile = async (fileName: string, questions: QuestionImage[]): Promise<void> => {
   const list = await getHistoryList();
   const targetItem = list.find((h) => h.name === fileName);
 
@@ -270,26 +256,20 @@ export const updateQuestionsForFile = async (
 };
 
 // Legacy support alias
-export const updatePageDetections = async (
-  fileName: string,
-  pageNumber: number,
-  newDetections: DetectedQuestion[],
-) => {
-  return updatePageDetectionsAndQuestions(
-    fileName,
-    pageNumber,
-    newDetections,
-    [],
-  );
+export const updatePageDetections = async (fileName: string, pageNumber: number, newDetections: DetectedQuestion[]) => {
+  return updatePageDetectionsAndQuestions(fileName, pageNumber, newDetections, []);
 };
 
 /**
  * Update ONLY questions for a specific exam ID.
  * Used for the "Sync Legacy" feature.
+ * @param updateTimestamp - If true, update the timestamp (for local modifications).
+ *                          If false, preserve existing timestamp (for pulling from remote).
  */
 export const updateExamQuestionsOnly = async (
   id: string,
   questions: QuestionImage[],
+  updateTimestamp: boolean = false,
 ): Promise<void> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -301,6 +281,10 @@ export const updateExamQuestionsOnly = async (
       const record = getReq.result as ExamRecord;
       if (record) {
         record.questions = questions;
+        // Only update timestamp for local modifications, not when pulling from remote
+        if (updateTimestamp) {
+          record.timestamp = Date.now();
+        }
         const putReq = store.put(record);
         putReq.onsuccess = () => resolve();
         putReq.onerror = () => reject(putReq.error);
@@ -358,9 +342,7 @@ export const findExamsWithPictureOkFalse = async (): Promise<string[]> => {
         const record = cursor.value as ExamRecord;
         // Check if any question has picture_ok === false
         if (record.questions && record.questions.length > 0) {
-          const hasPictureOkFalse = record.questions.some(
-            (q: QuestionImage) => q.analysis?.picture_ok === false
-          );
+          const hasPictureOkFalse = record.questions.some((q: QuestionImage) => q.analysis?.picture_ok === false);
           if (hasPictureOkFalse) {
             examIds.push(record.id);
           }
@@ -377,9 +359,7 @@ export const findExamsWithPictureOkFalse = async (): Promise<string[]> => {
 /**
  * Load full data for a specific history item
  */
-export const loadExamResult = async (
-  id: string,
-): Promise<ExamRecord | null> => {
+export const loadExamResult = async (id: string): Promise<ExamRecord | null> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], "readonly");
@@ -474,6 +454,7 @@ export const cleanupHistoryItem = async (id: string): Promise<number> => {
   // 3. Update the record
   record.rawPages = uniquePages;
   record.pageCount = uniquePages.length;
+  record.timestamp = Date.now(); // Update timestamp so sync detects changes
 
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], "readwrite");

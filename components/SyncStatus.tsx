@@ -103,8 +103,16 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated, selectedH
       }
     } catch (e) {
       console.error("Sync diff check failed:", e);
-      // Fallback to direct sync
-      await executeSync();
+      setConfirmState({
+        isOpen: true,
+        title: "检查失败",
+        message: "无法预览变更内容，是否强行同步？",
+        action: async () => {
+          setConfirmState((prev) => ({ ...prev, isOpen: false }));
+          await executeSync();
+        },
+        isDestructive: false,
+      });
     } finally {
       setIsCheckingDiff(false);
     }
