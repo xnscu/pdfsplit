@@ -38,6 +38,10 @@ interface Props {
   cropSettings: CropSettings;
   isAutoAnalyze?: boolean;
   setIsAutoAnalyze?: (val: boolean) => void;
+  onPush?: () => void;
+  onPull?: () => void;
+  recommendPush?: boolean;
+  recommendPull?: boolean;
 }
 
 export const DebugRawView: React.FC<Props> = ({
@@ -72,6 +76,10 @@ export const DebugRawView: React.FC<Props> = ({
   cropSettings,
   isAutoAnalyze,
   setIsAutoAnalyze,
+  onPush,
+  onPull,
+  recommendPush,
+  recommendPull,
 }) => {
   // Key format: "fileName||pageNumber||detIndex"
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -398,6 +406,10 @@ export const DebugRawView: React.FC<Props> = ({
         setIsAutoAnalyze={setIsAutoAnalyze}
         showExplanations={showExplanations}
         onToggleExplanations={() => setShowExplanations(!showExplanations)}
+        onPush={onPush}
+        onPull={onPull}
+        recommendPush={recommendPush}
+        recommendPull={recommendPull}
       />
 
       <div className="flex-1 flex overflow-hidden relative" ref={containerRef}>

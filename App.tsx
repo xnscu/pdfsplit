@@ -869,6 +869,20 @@ const App: React.FC = () => {
                     cropSettings={state.cropSettings}
                     isAutoAnalyze={isAutoAnalyze}
                     setIsAutoAnalyze={setIsAutoAnalyze}
+                    onPush={() => {
+                      const item = state.historyList.find((h) => h.name === state.debugFile);
+                      if (item) {
+                        actions.addNotification(null, "success", `Pushing ${state.debugFile}...`);
+                        syncHook.forceUploadSelected([item.id]);
+                      }
+                    }}
+                    onPull={() => {
+                      const item = state.historyList.find((h) => h.name === state.debugFile);
+                      if (item) {
+                        actions.addNotification(null, "success", `Pulling ${state.debugFile}...`);
+                        syncHook.forceDownloadSelected([item.id]).then(() => refreshHistoryList());
+                      }
+                    }}
                   />
                 ) : (
                   !isGlobalProcessing &&
