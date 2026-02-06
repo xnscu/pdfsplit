@@ -651,14 +651,14 @@ export const fullSync = async (): Promise<SyncResult> => {
     }
 
     // Capture IDs processed by standard pull
-    const processedIds = new Set(pullResult.exams.map(e => e.id));
+    const processedIds = new Set(pullResult.exams.map((e) => e.id));
 
     // Step 6: Force pull exams that are newer on remote but missed by /sync/pull
     // (This happens when local files are reverted to old versions older than lastSyncTime)
     for (const id of examsToForcePull) {
       if (processedIds.has(id)) continue;
       if (pullResult.deleted.includes(id)) continue;
-      
+
       try {
         const exam = await getRemoteExam(id);
         if (exam) {
@@ -686,7 +686,7 @@ export const fullSync = async (): Promise<SyncResult> => {
         "push",
         result.pushedNames,
         result.success,
-        result.errors.length > 0 ? result.errors.join("; ") : undefined
+        result.errors.length > 0 ? result.errors.join("; ") : undefined,
       );
     }
 
@@ -695,7 +695,7 @@ export const fullSync = async (): Promise<SyncResult> => {
         "pull",
         result.pulledNames,
         result.success,
-        result.errors.length > 0 ? result.errors.join("; ") : undefined
+        result.errors.length > 0 ? result.errors.join("; ") : undefined,
       );
     }
   } catch (e) {
@@ -706,6 +706,114 @@ export const fullSync = async (): Promise<SyncResult> => {
   }
 
   result.success = result.errors.length === 0;
+  return result;
+};
+
+export interface SyncDiffResult {
+  hasChanges: boolean;
+  toPush: number;
+  toPull: number;
+  conflicts: number;
+  toPushNames: string[];
+  toPullNames: string[];
+  conflictNames: string[];
+}
+
+/**
+ * Check for differences between local and remote without syncing
+ * Used for confirmation dialogs
+ */
+export const checkSyncDiff = async (): Promise<SyncDiffResult> => {
+  const result: SyncDiffResult = {
+    hasChanges: false,
+    toPush: 0,
+    toPull: 0,
+    conflicts: 0,
+    toPushNames: [],
+    toPullNames: [],
+    conflictNames: [],
+  };
+
+  if (!syncState.isOnline) return result;
+
+  try {
+    const localList = await storageService.getHistoryList();
+    const localMap = new Map(localList.map((l) => [l.id, l]));
+
+    const remoteList = await getRemoteExamList();
+    const remoteMap = new Map(remoteList.map((r) => [r.id, r]));
+
+    const examsToPush = new Set<string>();
+    const examsToPull = new Set<string>();
+
+    // Check locals
+    for (const local of localList) {
+      const remote = remoteMap.get(local.id);
+      if (!remote) {
+        // Local only -> Push
+        examsToPush.add(local.id);
+        result.toPushNames.push(local.name);
+      } else {
+        // Exists on both
+        const localModified = local.timestamp > syncState.lastSyncTime;
+        const remoteModified = remote.timestamp > syncState.lastSyncTime;
+
+        if (localModified) {
+          if (remoteModified) {
+            // Conflict
+            result.conflicts++;
+            result.conflictNames.push(local.name);
+
+            // Resolution strategy: Last write wins
+            if (local.timestamp > remote.timestamp) {
+              examsToPush.add(local.id);
+              result.toPushNames.push(local.name);
+            } else {
+              examsToPull.add(local.id);
+              result.toPullNames.push(remote.name);
+            }
+          } else {
+            // Only local modified -> Push
+            examsToPush.add(local.id);
+            result.toPushNames.push(local.name);
+          }
+        } else if (remote.timestamp > local.timestamp) {
+          // Local stale (remote newer, but local wasn't "modified" since last sync) -> Force Pull
+          examsToPull.add(local.id);
+          result.toPullNames.push(remote.name);
+        }
+      }
+    }
+
+    // Check remotes (new items or items updated remotely)
+    for (const remote of remoteList) {
+      if (!localMap.has(remote.id)) {
+        // Remote only -> Pull
+        examsToPull.add(remote.id);
+        result.toPullNames.push(remote.name);
+      } else {
+        // Exists on both - check if we missed it above
+        if (remote.timestamp > syncState.lastSyncTime) {
+          const local = localMap.get(remote.id)!;
+          // If local modified, we handled it in the conflict check above
+          if (local.timestamp <= syncState.lastSyncTime) {
+            // Only remote modified -> Pull
+            if (!examsToPull.has(remote.id)) {
+              examsToPull.add(remote.id);
+              result.toPullNames.push(remote.name);
+            }
+          }
+        }
+      }
+    }
+
+    result.toPush = examsToPush.size;
+    result.toPull = examsToPull.size;
+    result.hasChanges = result.toPush > 0 || result.toPull > 0;
+  } catch (e) {
+    console.warn("Check sync diff failed:", e);
+  }
+
   return result;
 };
 
@@ -828,7 +936,7 @@ export const forceUploadAll = async (onProgress?: SyncProgressCallback): Promise
           chunkSize: syncSettings.batchCheckChunkSize,
           concurrency: syncSettings.batchCheckConcurrency,
         },
-      }
+      },
     );
 
     result.imagesSkipped = existingHashes.size;
@@ -924,7 +1032,7 @@ export const forceUploadAll = async (onProgress?: SyncProgressCallback): Promise
           examWithHashes.rawPages,
           examWithHashes.questions,
           exam.id,
-          serverTimestamp
+          serverTimestamp,
         );
         result.pushed++;
         result.pushedNames!.push(examWithHashes.name);
@@ -952,7 +1060,7 @@ export const forceUploadAll = async (onProgress?: SyncProgressCallback): Promise
       "push",
       pushedNames,
       result.success,
-      result.errors.length > 0 ? result.errors.join("; ") : undefined
+      result.errors.length > 0 ? result.errors.join("; ") : undefined,
     );
 
     const finalMessage = result.success
@@ -998,7 +1106,7 @@ export const forceUploadAll = async (onProgress?: SyncProgressCallback): Promise
  */
 export const forceUploadSelected = async (
   selectedExamIds: string[],
-  onProgress?: SyncProgressCallback
+  onProgress?: SyncProgressCallback,
 ): Promise<SyncResult> => {
   const result: SyncResult = {
     success: true,
@@ -1120,7 +1228,7 @@ export const forceUploadSelected = async (
           chunkSize: syncSettings.batchCheckChunkSize,
           concurrency: syncSettings.batchCheckConcurrency,
         },
-      }
+      },
     );
 
     result.imagesSkipped = existingHashes.size;
@@ -1216,7 +1324,7 @@ export const forceUploadSelected = async (
           examWithHashes.rawPages,
           examWithHashes.questions,
           exam.id,
-          serverTimestamp
+          serverTimestamp,
         );
         result.pushed++;
       } else {
@@ -1243,7 +1351,7 @@ export const forceUploadSelected = async (
       "push",
       pushedNames,
       result.success,
-      result.errors.length > 0 ? result.errors.join("; ") : undefined
+      result.errors.length > 0 ? result.errors.join("; ") : undefined,
     );
 
     const finalMessage = result.success
@@ -1382,7 +1490,7 @@ export const forceDownloadAll = async (onProgress?: SyncProgressCallback): Promi
       "pull",
       pulledNames,
       result.success,
-      result.errors.length > 0 ? result.errors.join("; ") : undefined
+      result.errors.length > 0 ? result.errors.join("; ") : undefined,
     );
 
     handleProgress({
@@ -1417,7 +1525,7 @@ export const forceDownloadAll = async (onProgress?: SyncProgressCallback): Promi
  */
 export const forceDownloadSelected = async (
   selectedExamIds: string[],
-  onProgress?: SyncProgressCallback
+  onProgress?: SyncProgressCallback,
 ): Promise<SyncResult> => {
   const result: SyncResult = {
     success: true,
@@ -1463,19 +1571,19 @@ export const forceDownloadSelected = async (
           await saveExamToLocal(exam);
           result.pulled++;
           result.pulledNames!.push(exam.name);
-          
+
           handleProgress({
-             phase: "downloading",
-             message: `正在下载: ${exam.name}`,
-             current: i + 1,
-             total,
-             percentage: Math.round(((i + 1) / total) * 100),
-           });
+            phase: "downloading",
+            message: `正在下载: ${exam.name}`,
+            current: i + 1,
+            total,
+            percentage: Math.round(((i + 1) / total) * 100),
+          });
         } else {
           result.errors.push(`Failed to download exam ID: ${id} (Not found on remote)`);
         }
       } catch (err) {
-         result.errors.push(`Failed to download exam ID: ${id} - ${err}`);
+        result.errors.push(`Failed to download exam ID: ${id} - ${err}`);
       }
     }
 
@@ -1488,7 +1596,7 @@ export const forceDownloadSelected = async (
       "pull",
       pulledNames,
       result.success,
-      result.errors.length > 0 ? result.errors.join("; ") : undefined
+      result.errors.length > 0 ? result.errors.join("; ") : undefined,
     );
 
     handleProgress({
@@ -1587,7 +1695,7 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
         examWithHashes.rawPages,
         examWithHashes.questions,
         exam.id,
-        serverTimestamp
+        serverTimestamp,
       );
       return result;
     }
@@ -1615,7 +1723,7 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
     // Upload missing images
     const hashesToUpload = uniqueHashes.filter((h) => !existsMap[h]);
     console.log(
-      `[Sync] ${hashesToUpload.length} images need upload, ${uniqueHashes.length - hashesToUpload.length} already exist`
+      `[Sync] ${hashesToUpload.length} images need upload, ${uniqueHashes.length - hashesToUpload.length} already exist`,
     );
 
     result.imagesSkipped = uniqueHashes.length - hashesToUpload.length;
@@ -1677,10 +1785,10 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
       examWithHashes.rawPages,
       examWithHashes.questions,
       exam.id,
-      serverTimestamp
+      serverTimestamp,
     );
     console.log(
-      `[Sync] Successfully synced ${exam.name}: ${result.imagesUploaded} uploaded, ${result.imagesSkipped} skipped`
+      `[Sync] Successfully synced ${exam.name}: ${result.imagesUploaded} uploaded, ${result.imagesSkipped} skipped`,
     );
   } catch (e) {
     result.success = false;
@@ -1698,7 +1806,7 @@ async function uploadExamImagesToR2AndSync(exam: ExamRecord): Promise<{
 export const saveExamWithSync = async (
   fileName: string,
   rawPages: ExamRecord["rawPages"],
-  questions: ExamRecord["questions"] = []
+  questions: ExamRecord["questions"] = [],
 ): Promise<string> => {
   // Save locally first
   const id = await storageService.saveExamResult(fileName, rawPages, questions);
@@ -1832,7 +1940,7 @@ export const updateQuestionsWithSync = async (fileName: string, questions: ExamR
 export const reSaveExamResultWithSync = async (
   fileName: string,
   rawPages: ExamRecord["rawPages"],
-  questions?: ExamRecord["questions"]
+  questions?: ExamRecord["questions"],
 ): Promise<void> => {
   console.log("[Sync] reSaveExamResultWithSync called for:", fileName);
 
@@ -1860,7 +1968,7 @@ export const reSaveExamResultWithSync = async (
         });
       } else {
         console.log(
-          `[Sync] Synced ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`
+          `[Sync] Synced ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`,
         );
       }
     }
@@ -1893,7 +2001,7 @@ export const updatePageDetectionsAndQuestionsWithSync = async (
   fileName: string,
   pageNumber: number,
   newDetections: any[],
-  newFileQuestions: ExamRecord["questions"]
+  newFileQuestions: ExamRecord["questions"],
 ): Promise<void> => {
   console.log("[Sync] updatePageDetectionsAndQuestionsWithSync called for:", fileName, "page:", pageNumber);
 
@@ -1922,7 +2030,7 @@ export const updatePageDetectionsAndQuestionsWithSync = async (
         });
       } else {
         console.log(
-          `[Sync] Fine-grained sync completed for ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`
+          `[Sync] Fine-grained sync completed for ${fileName}: ${result.imagesUploaded} images uploaded, ${result.imagesSkipped} skipped`,
         );
       }
     }

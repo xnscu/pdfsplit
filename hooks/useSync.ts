@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as syncService from "../services/syncService";
-import { SyncProgress } from "../services/syncService";
+import { SyncProgress, SyncDiffResult } from "../services/syncService";
 
 export interface SyncStatus {
   isOnline: boolean;
@@ -29,6 +29,7 @@ export interface SyncStatus {
 
 export interface UseSyncResult {
   status: SyncStatus;
+  checkDiff: () => Promise<SyncDiffResult>;
   sync: () => Promise<void>;
   forceUpload: () => Promise<void>;
   forceUploadSelected: (selectedExamIds: string[]) => Promise<void>;
@@ -143,6 +144,10 @@ export function useSync(): UseSyncResult {
     return () => clearInterval(interval);
   }, []);
 
+  const checkDiff = useCallback(async () => {
+    return await syncService.checkSyncDiff();
+  }, []);
+
   const sync = useCallback(async () => {
     // Prevent concurrent sync calls
     if (isSyncingRef.current) {
@@ -248,39 +253,42 @@ export function useSync(): UseSyncResult {
     }
   }, [handleProgress]);
 
-  const forceUploadSelected = useCallback(async (selectedExamIds: string[]) => {
-    setStatus((prev) => ({
-      ...prev,
-      isSyncing: true,
-      isPaused: false,
-      error: null,
-      progress: null,
-    }));
-    isPausedRef.current = false;
-
-    try {
-      const result = await syncService.forceUploadSelected(selectedExamIds, handleProgress);
-      const state = syncService.getSyncState();
-
+  const forceUploadSelected = useCallback(
+    async (selectedExamIds: string[]) => {
       setStatus((prev) => ({
         ...prev,
-        isSyncing: false,
+        isSyncing: true,
         isPaused: false,
-        pendingCount: state.pendingActions.length,
-        lastSyncTime: state.lastSyncTime,
-        error: result.errors.length > 0 ? result.errors.join(", ") : null,
+        error: null,
         progress: null,
       }));
-    } catch (e) {
-      setStatus((prev) => ({
-        ...prev,
-        isSyncing: false,
-        isPaused: false,
-        error: e instanceof Error ? e.message : "Upload failed",
-        progress: null,
-      }));
-    }
-  }, [handleProgress]);
+      isPausedRef.current = false;
+
+      try {
+        const result = await syncService.forceUploadSelected(selectedExamIds, handleProgress);
+        const state = syncService.getSyncState();
+
+        setStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          isPaused: false,
+          pendingCount: state.pendingActions.length,
+          lastSyncTime: state.lastSyncTime,
+          error: result.errors.length > 0 ? result.errors.join(", ") : null,
+          progress: null,
+        }));
+      } catch (e) {
+        setStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          isPaused: false,
+          error: e instanceof Error ? e.message : "Upload failed",
+          progress: null,
+        }));
+      }
+    },
+    [handleProgress],
+  );
 
   const forceDownload = useCallback(async () => {
     setStatus((prev) => ({
@@ -316,39 +324,42 @@ export function useSync(): UseSyncResult {
     }
   }, [handleProgress]);
 
-  const forceDownloadSelected = useCallback(async (selectedExamIds: string[]) => {
-    setStatus((prev) => ({
-      ...prev,
-      isSyncing: true,
-      isPaused: false,
-      error: null,
-      progress: null,
-    }));
-    isPausedRef.current = false;
-
-    try {
-      const result = await syncService.forceDownloadSelected(selectedExamIds, handleProgress);
-      const state = syncService.getSyncState();
-
+  const forceDownloadSelected = useCallback(
+    async (selectedExamIds: string[]) => {
       setStatus((prev) => ({
         ...prev,
-        isSyncing: false,
+        isSyncing: true,
         isPaused: false,
-        pendingCount: state.pendingActions.length,
-        lastSyncTime: state.lastSyncTime,
-        error: result.errors.length > 0 ? result.errors.join(", ") : null,
+        error: null,
         progress: null,
       }));
-    } catch (e) {
-      setStatus((prev) => ({
-        ...prev,
-        isSyncing: false,
-        isPaused: false,
-        error: e instanceof Error ? e.message : "Download failed",
-        progress: null,
-      }));
-    }
-  }, [handleProgress]);
+      isPausedRef.current = false;
+
+      try {
+        const result = await syncService.forceDownloadSelected(selectedExamIds, handleProgress);
+        const state = syncService.getSyncState();
+
+        setStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          isPaused: false,
+          pendingCount: state.pendingActions.length,
+          lastSyncTime: state.lastSyncTime,
+          error: result.errors.length > 0 ? result.errors.join(", ") : null,
+          progress: null,
+        }));
+      } catch (e) {
+        setStatus((prev) => ({
+          ...prev,
+          isSyncing: false,
+          isPaused: false,
+          error: e instanceof Error ? e.message : "Download failed",
+          progress: null,
+        }));
+      }
+    },
+    [handleProgress],
+  );
 
   const pauseSync = useCallback(() => {
     syncService.pauseSync();
@@ -405,6 +416,7 @@ export function useSync(): UseSyncResult {
 
   return {
     status,
+    checkDiff,
     sync,
     forceUpload,
     forceUploadSelected,

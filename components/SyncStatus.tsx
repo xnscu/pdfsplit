@@ -4,8 +4,9 @@
  * Supports progress display, pause/resume functionality
  */
 
-import React, { useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useSync } from "../hooks/useSync";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 interface Props {
   onSyncComplete?: () => void;
@@ -16,6 +17,7 @@ interface Props {
 const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated, selectedHistoryIds }) => {
   const {
     status,
+    checkDiff,
     sync,
     forceUpload,
     forceUploadSelected,
@@ -25,6 +27,22 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated, selectedH
     resumeSync,
     cancelSync,
   } = useSync();
+
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    action: () => Promise<void> | void;
+    isDestructive: boolean;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    action: () => {},
+    isDestructive: false,
+  });
+
+  const [isCheckingDiff, setIsCheckingDiff] = useState(false);
 
   // Track previous syncing state to detect when sync completes
   const wasSyncingRef = useRef(false);
@@ -40,9 +58,56 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated, selectedH
     wasSyncingRef.current = status.isSyncing;
   }, [status.isSyncing, status.lastSyncResult, onFilesUpdated]);
 
-  const handleSync = async () => {
+  /* Confirmed sync action */
+  const executeSync = async () => {
     await sync();
     onSyncComplete?.();
+  };
+
+  const handleSync = async () => {
+    if (isCheckingDiff) return;
+
+    setIsCheckingDiff(true);
+    try {
+      if (!status.isOnline) {
+        // Offline just tries to sync (will probably fail or queue)
+        await executeSync();
+        return;
+      }
+
+      const diff = await checkDiff();
+
+      if (diff.hasChanges) {
+        const parts = [];
+        if (diff.toPush > 0) parts.push(`推送 ${diff.toPush} 个试卷`);
+        if (diff.toPull > 0) parts.push(`拉取 ${diff.toPull} 个试卷`);
+
+        let conflictMsg = "";
+        if (diff.conflicts > 0) {
+          conflictMsg = `\n\n注意：检测到 ${diff.conflicts} 个冲突，将自动合并（以最近修改为准）。`;
+        }
+
+        setConfirmState({
+          isOpen: true,
+          title: "确认同步",
+          message: `检测到以下变更：\n${parts.join("，")}${conflictMsg}\n\n是否立即开始同步？`,
+          action: async () => {
+            setConfirmState((prev) => ({ ...prev, isOpen: false }));
+            await executeSync();
+          },
+          isDestructive: false,
+        });
+      } else {
+        // No obvious changes detected, but run sync anyway to be safe or update timestamps
+        await executeSync();
+      }
+    } catch (e) {
+      console.error("Sync diff check failed:", e);
+      // Fallback to direct sync
+      await executeSync();
+    } finally {
+      setIsCheckingDiff(false);
+    }
   };
 
   const handleForceUpload = async () => {
@@ -138,11 +203,87 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated, selectedH
       )}
 
       {/* Sync Result Details */}
-      {status.lastSyncResult && !status.isSyncing && (status.lastSyncResult.pushed > 0 || status.lastSyncResult.pulled > 0) && (
-        <div className="sync-result">
-          <div className="sync-result-header">
+      {status.lastSyncResult &&
+        !status.isSyncing &&
+        (status.lastSyncResult.pushed > 0 || status.lastSyncResult.pulled > 0) && (
+          <div className="sync-result">
+            <div className="sync-result-header">
+              <svg
+                className="success-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+              <span className="sync-result-title">同步完成</span>
+            </div>
+
+            {status.lastSyncResult.pushed > 0 && (
+              <div className="sync-result-section">
+                <div className="sync-result-label">
+                  <svg
+                    className="arrow-icon upload"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  推送 ({status.lastSyncResult.pushed})
+                </div>
+                <div className="sync-result-names">
+                  {status.lastSyncResult.pushedNames.map((name, i) => (
+                    <span key={i} className="sync-name-tag pushed">
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {status.lastSyncResult.pulled > 0 && (
+              <div className="sync-result-section">
+                <div className="sync-result-label">
+                  <svg
+                    className="arrow-icon download"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  拉取 ({status.lastSyncResult.pulled})
+                </div>
+                <div className="sync-result-names">
+                  {status.lastSyncResult.pulledNames.map((name, i) => (
+                    <span key={i} className="sync-name-tag pulled">
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+      {/* No changes message */}
+      {status.lastSyncResult &&
+        !status.isSyncing &&
+        status.lastSyncResult.pushed === 0 &&
+        status.lastSyncResult.pulled === 0 &&
+        !status.error && (
+          <div className="sync-no-changes">
             <svg
-              className="success-icon"
+              className="check-icon"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -150,75 +291,18 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated, selectedH
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-              <polyline points="22 4 12 14.01 9 11.01" />
+              <polyline points="20 6 9 17 4 12" />
             </svg>
-            <span className="sync-result-title">同步完成</span>
+            <span>已是最新，无需同步</span>
           </div>
-
-          {status.lastSyncResult.pushed > 0 && (
-            <div className="sync-result-section">
-              <div className="sync-result-label">
-                <svg className="arrow-icon upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-                推送 ({status.lastSyncResult.pushed})
-              </div>
-              <div className="sync-result-names">
-                {status.lastSyncResult.pushedNames.map((name, i) => (
-                  <span key={i} className="sync-name-tag pushed">{name}</span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {status.lastSyncResult.pulled > 0 && (
-            <div className="sync-result-section">
-              <div className="sync-result-label">
-                <svg className="arrow-icon download" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                拉取 ({status.lastSyncResult.pulled})
-              </div>
-              <div className="sync-result-names">
-                {status.lastSyncResult.pulledNames.map((name, i) => (
-                  <span key={i} className="sync-name-tag pulled">{name}</span>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* No changes message */}
-      {status.lastSyncResult && !status.isSyncing && status.lastSyncResult.pushed === 0 && status.lastSyncResult.pulled === 0 && !status.error && (
-        <div className="sync-no-changes">
-          <svg
-            className="check-icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-          <span>已是最新，无需同步</span>
-        </div>
-      )}
+        )}
 
       {/* Sync controls */}
       <div className="sync-controls">
         {status.isSyncing ? (
           <>
             {/* Pause/Resume button */}
-            <button
-              className={`sync-button ${status.isPaused ? "primary" : "warning"}`}
-              onClick={handlePauseResume}
-            >
+            <button className={`sync-button ${status.isPaused ? "primary" : "warning"}`} onClick={handlePauseResume}>
               {status.isPaused ? (
                 <>
                   <svg
@@ -272,29 +356,40 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated, selectedH
           </>
         ) : (
           <>
-            <button className="sync-button primary" onClick={handleSync} disabled={!status.isOnline}>
-              <svg
-                className="icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M21 2v6h-6" />
-                <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
-                <path d="M3 22v-6h6" />
-                <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-              </svg>
-              同步
+            <button className="sync-button primary" onClick={handleSync} disabled={!status.isOnline || isCheckingDiff}>
+              {isCheckingDiff ? (
+                <>
+                  <div className="spinner" />
+                  检查中...
+                </>
+              ) : (
+                <>
+                  <svg
+                    className="icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M21 2v6h-6" />
+                    <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+                    <path d="M3 22v-6h6" />
+                    <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+                  </svg>
+                  同步
+                </>
+              )}
             </button>
 
             <button
               className="sync-button"
               onClick={handleForceUpload}
               disabled={!status.isOnline}
-              title={selectedHistoryIds && selectedHistoryIds.size > 0 ? "上传选中的文件到云端" : "上传所有本地数据到云端"}
+              title={
+                selectedHistoryIds && selectedHistoryIds.size > 0 ? "上传选中的文件到云端" : "上传所有本地数据到云端"
+              }
             >
               <svg
                 className="icon"
@@ -357,6 +452,17 @@ const SyncStatus: React.FC<Props> = ({ onSyncComplete, onFilesUpdated, selectedH
           </>
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmState.isOpen}
+        title={confirmState.title}
+        message={confirmState.message}
+        onConfirm={() => {
+          confirmState.action();
+        }}
+        onCancel={() => setConfirmState((prev) => ({ ...prev, isOpen: false }))}
+        isDestructive={confirmState.isDestructive}
+      />
 
       <style>{`
         .sync-status-container {
