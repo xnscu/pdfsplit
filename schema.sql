@@ -92,3 +92,14 @@ CREATE TABLE IF NOT EXISTS api_key_stats (
 CREATE INDEX IF NOT EXISTS idx_api_key_stats_call_time ON api_key_stats(call_time DESC);
 CREATE INDEX IF NOT EXISTS idx_api_key_stats_success ON api_key_stats(success);
 CREATE INDEX IF NOT EXISTS idx_api_key_stats_key_prefix ON api_key_stats(api_key_prefix);
+
+-- Task Status Table for background jobs
+CREATE TABLE IF NOT EXISTS task_status (
+    id TEXT PRIMARY KEY,
+    task_type TEXT NOT NULL,
+    total INTEGER NOT NULL DEFAULT 0,
+    processed INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL, -- 'running', 'completed', 'failed', 'paused'
+    updated_at TEXT DEFAULT (datetime('now', 'utc')),
+    metadata TEXT -- JSON for extra info
+);

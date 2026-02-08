@@ -298,4 +298,36 @@ examRoutes.put('/:id/questions', async (c) => {
   return c.json({ success: true });
 });
 
+// PATCH /:examId/questions/:questionId/image - Update question image (data_url)
+examRoutes.patch('/:examId/questions/:questionId/image', async (c) => {
+  const db = c.env.DB;
+  const examId = c.req.param('examId');
+  const questionId = c.req.param('questionId');
+  const body = await c.req.json();
+
+  if (!body || !body.dataUrl) {
+    return c.json({ error: 'Missing dataUrl' }, 400);
+  }
+
+  try {
+    const result = await db.prepare(`
+      UPDATE questions
+      SET data_url = ?
+      WHERE exam_id = ? AND id = ?
+    `).bind(body.dataUrl, examId, questionId).run();
+
+    if (result.meta && result.meta.changes === 0) {
+       return c.json({ error: 'Question not found or not updated' }, 404);
+    }
+
+    // Also update exam timestamp to trigger sync if needed
+    await db.prepare('UPDATE exams SET updated_at = ? WHERE id = ?')
+      .bind(new Date().toISOString().replace('T', ' ').slice(0, 19), examId).run();
+
+    return c.json({ success: true });
+  } catch (e) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
 export default examRoutes;

@@ -2,7 +2,7 @@
  * Cloudflare Worker for GKSX Exam Storage API
  * Provides REST API for D1 database operations and sync with frontend IndexedDB
  * Static assets are served by the Cloudflare Vite plugin / ASSETS binding
- * 
+ *
  * Modularized using Hono framework
  */
 
@@ -16,6 +16,7 @@ import syncRoutes from './routes/sync.mjs';
 import proAnalysisRoutes from './routes/pro-analysis.mjs';
 import keyStatsRoutes from './routes/key-stats.mjs';
 import geminiRoutes from './routes/gemini.mjs';
+import tasksRoutes from './routes/tasks.mjs';
 
 // Create main Hono app
 const app = new Hono();
@@ -41,6 +42,9 @@ app.route('/api/sync', syncRoutes);
 
 // Pro Analysis Routes
 app.route('/api/pro-analysis', proAnalysisRoutes);
+
+// Tasks Routes
+app.route('/api/tasks', tasksRoutes);
 
 // API Key Stats Routes
 app.route('/api/key-stats', keyStatsRoutes);

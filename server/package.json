@@ -15,11 +15,18 @@
     "pm2:stop:gemini-2.5": "pm2 stop gksx-pro-analysis-2.5",
     "pm2:restart:gemini-2.5": "pm2 restart gksx-pro-analysis-2.5",
     "pm2:logs:gemini-2.5": "pm2 logs gksx-pro-analysis-2.5",
-    "pm2:delete:gemini-2.5": "pm2 delete gksx-pro-analysis-2.5"
+    "pm2:delete:gemini-2.5": "pm2 delete gksx-pro-analysis-2.5",
+    "normalize": "node image-normalization-server.mjs",
+    "pm2:start:normalize": "pm2 start image-normalization-server.mjs --name gksx-image-normalization --time -- --concurrency 10",
+    "pm2:stop:normalize": "pm2 stop gksx-image-normalization",
+    "pm2:restart:normalize": "pm2 restart gksx-image-normalization",
+    "pm2:logs:normalize": "pm2 logs gksx-image-normalization",
+    "pm2:delete:normalize": "pm2 delete gksx-image-normalization"
   },
   "dependencies": {
     "@google/genai": "^0.7.0",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "sharp": "^0.33.3"
   },
   "engines": {
     "node": ">=18"
