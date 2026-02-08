@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
+import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 
 // Helper to clean Gemini markdown output
@@ -121,7 +122,7 @@ export const AnalysisContent: React.FC<ToolProps> = ({
             </div>
           </div>
         ) : (
-          <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+          <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
             {cleanMd(content)}
           </ReactMarkdown>
         )}

@@ -1,6 +1,6 @@
 {
   "name": "math-exam-splitter",
-  "version": "1.84.0",
+  "version": "1.85.0",
   "private": true,
   "type": "module",
   "dependencies": {
@@ -16,6 +16,7 @@
     "react-virtualized-auto-sizer": "^1.0.24",
     "react-window": "^1.8.10",
     "rehype-katex": "^7.0.0",
+    "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0"
   },
   "scripts": {
