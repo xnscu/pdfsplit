@@ -42,6 +42,7 @@ const CONFIG = {
   API_BASE_URL: args.API_BASE_URL || process.env.API_BASE_URL || 'https://gksx.xnscu.com',
   CDN_URL: args.CDN_URL || process.env.CDN_URL || 'https://r2-gksx.xnscu.com',
   CONCURRENCY: parseInt(args.CONCURRENCY || 10),
+  TARGET_WIDTH: parseInt(args.TARGET_WIDTH || 0),
   TASK_ID: 'image-normalization'
 };
 
@@ -128,7 +129,7 @@ class ImageProcessor {
   }
 
   async run() {
-    console.log(`Starting Image Normalization (Concurrency: ${CONFIG.CONCURRENCY})`);
+    console.log(`Starting Image Normalization (Concurrency: ${CONFIG.CONCURRENCY}, Target Width: ${CONFIG.TARGET_WIDTH || 'Auto'})`);
 
     // reset status
     await this.client.updateTaskStatus('running', 0, 0, { message: 'Fetching exams...' });
@@ -137,7 +138,12 @@ class ImageProcessor {
     this.totalExams = exams.length;
     console.log(`Found ${exams.length} exams.`);
 
-    await this.client.updateTaskStatus('running', this.totalExams, 0, { message: 'Starting processing...' });
+    if (!CONFIG.TARGET_WIDTH) {
+       console.error("Error: --target-width is required.");
+       process.exit(1);
+    }
+
+    await this.client.updateTaskStatus('running', this.totalExams, 0, { message: `Processing (Target: ${CONFIG.TARGET_WIDTH}px)...` });
 
     for (const examMeta of exams) {
       this.processedExams++;
@@ -168,9 +174,8 @@ class ImageProcessor {
       return;
     }
 
-    // 1. Download all images to find dimensions
-    console.log(`  Fetching ${questions.length} images...`);
-    const images = []; // { id, buffer, width, height, hash, isBase64 }
+    // 1. Download images to check dimensions
+    const images = []; // { id, buffer, width, height, hash }
 
     // Use concurrency for downloading
     const chunks = [];
@@ -182,16 +187,13 @@ class ImageProcessor {
 
     if (images.length === 0) return;
 
-    // 2. Find max width
-    const maxWidth = Math.max(...images.map(img => img.width));
-    console.log(`  Max width: ${maxWidth}px`);
-
-    // 3. Process images that need padding
+    // 2. Process images that need padding
     let updatedCount = 0;
     const processBatch = [];
+    const targetWidth = CONFIG.TARGET_WIDTH;
 
     for (const img of images) {
-      if (img.width < maxWidth) {
+      if (img.width < targetWidth) {
         processBatch.push(async () => {
           try {
             // Pad image
@@ -200,7 +202,7 @@ class ImageProcessor {
                 top: 0,
                 bottom: 0,
                 left: 0,
-                right: maxWidth - img.width, // Pad right
+                right: targetWidth - img.width, // Pad right
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
               })
               .png()
@@ -228,14 +230,14 @@ class ImageProcessor {
 
     // Run updates in concurrent batches
     if (processBatch.length > 0) {
-      console.log(`  Padding ${processBatch.length} images...`);
+      console.log(`  Padding ${processBatch.length} images to ${targetWidth}px...`);
       for (let i = 0; i < processBatch.length; i += CONFIG.CONCURRENCY) {
         const batch = processBatch.slice(i, i + CONFIG.CONCURRENCY);
         await Promise.all(batch.map(fn => fn()));
       }
       console.log(`\n  Updated ${updatedCount} images.`);
     } else {
-      console.log(`  All images already match max width.`);
+      console.log(`  All images already match or exceed target width.`);
     }
   }
 
