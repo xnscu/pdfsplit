@@ -68,7 +68,7 @@ class CloudApiClient {
   }
 
   async getExams() {
-    const res = await this.fetch('/api/exams/');
+    const res = await this.fetch('/api/exams');
     return res.json();
   }
 

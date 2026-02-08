@@ -68,7 +68,7 @@ class CloudApiClient {
   }
 
   async getExams() {
-    const res = await this.fetch('/api/exams/');
+    const res = await this.fetch('/api/exams');
     return res.json();
   }
 
@@ -106,105 +106,173 @@ class CloudApiClient {
 class WidthScanner {
   constructor() {
     this.client = new CloudApiClient(CONFIG.API_BASE_URL);
-    this.questions = [];
-    this.results = [];
+    this.resultsMap = new Map();
     this.maxWidth = 0;
     this.maxImage = null;
+    this.outputFile = 'image-widths.json';
+  }
+
+  async loadExistingResults() {
+    try {
+      const data = await fs.readFile(this.outputFile, 'utf8');
+      const json = JSON.parse(data);
+      if (json.images && Array.isArray(json.images)) {
+        for (const img of json.images) {
+          this.resultsMap.set(img.hash, img);
+          if (img.width > this.maxWidth) {
+            this.maxWidth = img.width;
+            this.maxImage = img;
+          }
+        }
+      }
+      console.log(`Loaded ${this.resultsMap.size} existing results from ${this.outputFile}.`);
+    } catch (e) {
+      console.log('No existing image-widths.json found or invalid, starting fresh.');
+    }
+  }
+
+  async saveResults() {
+    const images = Array.from(this.resultsMap.values());
+    await fs.writeFile(this.outputFile, JSON.stringify({
+      maxWidth: this.maxWidth,
+      maxImage: this.maxImage,
+      timestamp: new Date().toISOString(),
+      images: images
+    }, null, 2));
+  }
+
+  async processImageWithRetry(q, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const buffer = await this.client.getImage(q.dataUrl);
+        const meta = await sharp(buffer).metadata();
+        return meta;
+      } catch (e) {
+        if (i === retries - 1) throw e;
+        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+      }
+    }
   }
 
   async run() {
     console.log(`Starting Width Scan (Concurrency: ${CONFIG.CONCURRENCY})`);
-    await this.client.updateTaskStatus('running', 0, 0, { message: 'Fetching exam list...' });
 
-    // 1. Fetch all exams and build question list
+    // Load existing results first
+    await this.loadExistingResults();
+
+    await this.client.updateTaskStatus('running', 0, this.resultsMap.size, { message: 'Fetching exam list...' });
+
+    // 1. Fetch all exams and build question map
     const exams = await this.client.getExams();
     console.log(`Found ${exams.length} exams.`);
 
-    let qCount = 0;
-    for (const examMeta of exams) {
-      // Optimization: We could parallelize fetching exams if there are many
-      const exam = await this.client.getExam(examMeta.id);
-      if (exam.questions && exam.questions.length > 0) {
-        for (const q of exam.questions) {
-          if (this.isHash(q.data_url)) {
-            this.questions.push({
-              examName: exam.name,
-              ...q
-            });
-          }
-        }
-      }
-      qCount = this.questions.length;
-      process.stdout.write(`\rFetching questions... ${qCount}`);
-    }
-    console.log(`\nTotal questions with hash images: ${this.questions.length}`);
-
-    await this.client.updateTaskStatus('running', this.questions.length, 0, { message: 'Scanning image widths...' });
-
-    // 2. Scan images
-    const batches = [];
-    for (let i = 0; i < this.questions.length; i += CONFIG.CONCURRENCY) {
-      batches.push(this.questions.slice(i, i + CONFIG.CONCURRENCY));
+    const questionMap = new Map();
+    const examBatches = [];
+    for (let i = 0; i < exams.length; i += CONFIG.CONCURRENCY) {
+      examBatches.push(exams.slice(i, i + CONFIG.CONCURRENCY));
     }
 
-    let processed = 0;
+    let fetchedCount = 0;
+    process.stdout.write(`Fetching questions details...`);
 
-    for (const batch of batches) {
-      await Promise.all(batch.map(async (q) => {
+    for (const batch of examBatches) {
+      await Promise.all(batch.map(async (examMeta) => {
         try {
-          const buffer = await this.client.getImage(q.data_url);
-          const meta = await sharp(buffer).metadata();
-
-          const info = {
-            exam_id: q.exam_id,
-            question_id: q.id,
-            hash: q.data_url,
-            width: meta.width,
-            height: meta.height
-          };
-
-          this.results.push(info);
-
-          if (meta.width > this.maxWidth) {
-            this.maxWidth = meta.width;
-            this.maxImage = info;
+          const exam = await this.client.getExam(examMeta.id);
+          if (exam.questions) {
+            for (const q of exam.questions) {
+              if (this.isHash(q.dataUrl) && !questionMap.has(q.dataUrl)) {
+                 questionMap.set(q.dataUrl, {
+                   examName: exam.name,
+                   examId: exam.id,
+                   ...q
+                 });
+              }
+            }
           }
-
-        } catch (e) {
-          console.error(`Error processing Q ${q.id}:`, e.message);
+        } catch (error) {
+          console.error(`Error fetching exam ${examMeta.id}:`, error.message);
         }
       }));
+      fetchedCount += batch.length;
+      process.stdout.write(`\rFetching questions details... ${Math.round(fetchedCount/exams.length*100)}%`);
+    }
+    console.log(`\nTotal unique hash images found: ${questionMap.size}`);
 
-      processed += batch.length;
-      const progress = Math.round((processed / this.questions.length) * 100);
-      process.stdout.write(`\rScanning: ${processed}/${this.questions.length} (${progress}%) - Current Max: ${this.maxWidth}px`);
+    // 2. Queue Setup
+    let queue = [];
+    for (const [hash, q] of questionMap.entries()) {
+      if (!this.resultsMap.has(hash)) {
+        queue.push(q);
+      }
+    }
 
-      // Update task status periodically
-      if (processed % 50 === 0) {
-        await this.client.updateTaskStatus('running', this.questions.length, processed, {
-          message: `Scanning images... Max: ${this.maxWidth}px`,
-          maxWidth: this.maxWidth
-        });
+    console.log(`Already processed: ${this.resultsMap.size}`);
+    console.log(`Remaining to process: ${queue.length}`);
+
+    await this.client.updateTaskStatus('running', questionMap.size, this.resultsMap.size, { message: 'Scanning image widths...' });
+
+    // 3. Scan Loop
+    let round = 1;
+    while (queue.length > 0) {
+      console.log(`\n=== Round ${round}: Processing ${queue.length} images ===`);
+      const nextQueue = [];
+      const batches = [];
+      for (let i = 0; i < queue.length; i += CONFIG.CONCURRENCY) {
+        batches.push(queue.slice(i, i + CONFIG.CONCURRENCY));
+      }
+
+      let processedInRound = 0;
+      for (const batch of batches) {
+        await Promise.all(batch.map(async (q) => {
+          try {
+            const meta = await this.processImageWithRetry(q, 3);
+            const info = {
+              exam_id: q.examId,
+              question_id: q.id,
+              hash: q.dataUrl,
+              width: meta.width,
+              height: meta.height
+            };
+            this.resultsMap.set(q.dataUrl, info);
+
+            if (meta.width > this.maxWidth) {
+              this.maxWidth = meta.width;
+              this.maxImage = info;
+            }
+          } catch (e) {
+            console.error(`Failed Q ${q.id}: ${e.message}`);
+            nextQueue.push(q);
+          }
+        }));
+
+        processedInRound += batch.length;
+        if (processedInRound % 20 === 0) {
+            await this.saveResults();
+            await this.client.updateTaskStatus('running', questionMap.size, this.resultsMap.size, {
+                message: `Scanning Round ${round}... Max: ${this.maxWidth}px`,
+                maxWidth: this.maxWidth
+            });
+        }
+        process.stdout.write(`\rRound ${round}: ${processedInRound}/${queue.length} processed.`);
+      }
+
+      await this.saveResults();
+
+      if (nextQueue.length > 0) {
+        console.log(`\nRound ${round} complete. ${nextQueue.length} failed. Retrying in 5s...`);
+        queue = nextQueue;
+        round++;
+        await new Promise(r => setTimeout(r, 5000));
+      } else {
+        queue = [];
       }
     }
 
     console.log(`\n\nScan Complete.`);
     console.log(`Max Width: ${this.maxWidth}px`);
-    if (this.maxImage) {
-      console.log(`Widest Image: ${JSON.stringify(this.maxImage, null, 2)}`);
-    }
 
-    // Save results
-    await fs.writeFile('image-widths.json', JSON.stringify({
-      maxWidth: this.maxWidth,
-      maxImage: this.maxImage,
-      timestamp: new Date().toISOString(),
-      images: this.results
-    }, null, 2));
-
-    console.log('Results saved to image-widths.json');
-
-    await this.client.updateTaskStatus('completed', this.questions.length, processed, {
+    await this.client.updateTaskStatus('completed', questionMap.size, this.resultsMap.size, {
       message: 'Scan complete',
       maxWidth: this.maxWidth,
       maxImage: this.maxImage
