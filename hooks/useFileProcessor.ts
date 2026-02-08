@@ -107,7 +107,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
 
           // Find all analysis_data.json files to identify folders
           const analysisFileKeys = Object.keys(loadedZip.files).filter((key) =>
-            key.match(/(^|\/)analysis_data\.json$/i)
+            key.match(/(^|\/)analysis_data\.json$/i),
           );
 
           // Track folders we've already processed
@@ -145,7 +145,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                 k.startsWith(dirPrefix) &&
                 !loadedZip.files[k].dir &&
                 /\.(jpg|jpeg|png)$/i.test(k) &&
-                !k.includes("full_pages/")
+                !k.includes("full_pages/"),
             );
 
             folderWorks.push({
@@ -166,7 +166,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                 !loadedZip.files[k].dir &&
                 /\.(jpg|jpeg|png)$/i.test(k) &&
                 !k.includes("full_pages/") &&
-                !k.includes("/") // Only root level
+                !k.includes("/"), // Only root level
             );
             if (rootImageKeys.length > 0) {
               folderWorks.push({
@@ -239,7 +239,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
               (k) =>
                 k.startsWith(work.dirPrefix) &&
                 !work.zip.files[k].dir &&
-                k.match(new RegExp(`full_pages/.*Page_${page.pageNumber}\\.(jpg|jpeg|png)$`, "i"))
+                k.match(new RegExp(`full_pages/.*Page_${page.pageNumber}\\.(jpg|jpeg|png)$`, "i")),
             );
           }
 
@@ -304,7 +304,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                 }
 
                 folderQuestions.push(question);
-              })
+              }),
             );
             await new Promise((r) => setTimeout(r, 0));
           }
@@ -356,7 +356,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             {
               onProgress: () => setCroppingDone((prev: number) => prev + 1),
             },
-            batchSize || 10
+            batchSize || 10,
           );
 
           setQuestions(qs);
@@ -460,7 +460,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
       if (cachedRawPages.length > 0) {
         setDetailedStatus("Restoring cache...");
         const uniqueCached = Array.from(
-          new Map(cachedRawPages.map((p) => [`${p.fileName}-${p.pageNumber}`, p])).values()
+          new Map(cachedRawPages.map((p) => [`${p.fileName}-${p.pageNumber}`, p])).values(),
         );
         setRawPages((prev: any) => [...prev, ...uniqueCached]);
 
@@ -485,7 +485,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             cropSettings,
             signal,
             undefined,
-            batchSize || 10
+            batchSize || 10,
           );
           questionsFromCache = [...questionsFromCache, ...generated];
         }
@@ -512,7 +512,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
             a.localeCompare(b, undefined, {
               numeric: true,
               sensitivity: "base",
-            })
+            }),
           );
           setters.setDebugFile(cachedFiles[0]);
           setters.setLastViewedFile(cachedFiles[0]);
@@ -581,7 +581,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                   selectedModel,
                   undefined,
                   apiKey,
-                  signal
+                  signal,
                 );
 
                 // 请求完成后，检查停止标志，如果已停止则不更新状态
@@ -604,6 +604,20 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                   if (dMeta.processedPages === dMeta.totalPages) {
                     setRawPages((currentRaw: any) => {
                       const filePages = currentRaw.filter((p: any) => p.fileName === pageData.fileName);
+
+                      // Calculate max width for this file to align questions
+                      let fileMaxWidth = 0;
+                      for (const p of filePages) {
+                        for (const d of p.detections) {
+                          const boxes = Array.isArray(d.boxes_2d[0]) ? d.boxes_2d : [d.boxes_2d];
+                          for (const b of boxes) {
+                            const w = (((b as number[])[3] - (b as number[])[1]) / 1000) * p.width;
+                            if (w > fileMaxWidth) fileMaxWidth = w;
+                          }
+                        }
+                      }
+                      fileMaxWidth = Math.ceil(fileMaxWidth);
+
                       filePages.sort((a: any, b: any) => a.pageNumber - b.pageNumber);
                       const logicalQs = createLogicalQuestions(filePages);
                       fileCropMetaRef.current[pageData.fileName] = {
@@ -621,7 +635,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
                           if (stopRequestedRef.current || signal.aborted) return;
 
                           // 发起处理请求（即使之后停止标志被设置，这个请求也会继续完成）
-                          const result = await processLogicalQuestion(lq, cropSettings);
+                          const result = await processLogicalQuestion(lq, cropSettings, fileMaxWidth);
 
                           // 请求完成后，再次检查停止标志
                           if (stopRequestedRef.current || signal.aborted) return;
@@ -689,7 +703,7 @@ export const useFileProcessor = ({ state, setters, refs, actions, refreshHistory
         allNewPages.forEach((p) => allProcessedFiles.add(p.fileName));
 
         const sortedFiles = Array.from(allProcessedFiles).sort((a, b) =>
-          a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+          a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
         );
 
         if (sortedFiles.length > 0) {

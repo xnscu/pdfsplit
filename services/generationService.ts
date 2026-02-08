@@ -2,9 +2,7 @@ import { DebugPageData, QuestionImage, DetectedQuestion } from "../types";
 import { CropSettings } from "./pdfService";
 import { WORKER_BLOB_URL } from "./workerScript";
 
-export const normalizeBoxes = (
-  boxes2d: any,
-): [number, number, number, number][] => {
+export const normalizeBoxes = (boxes2d: any): [number, number, number, number][] => {
   if (Array.isArray(boxes2d[0])) {
     return boxes2d as [number, number, number, number][];
   }
@@ -24,9 +22,7 @@ export interface LogicalQuestion {
 /**
  * Group pages into Logical Questions (handling continuations)
  */
-export const createLogicalQuestions = (
-  pages: DebugPageData[],
-): LogicalQuestion[] => {
+export const createLogicalQuestions = (pages: DebugPageData[]): LogicalQuestion[] => {
   const files = new Map<string, DebugPageData[]>();
   pages.forEach((p) => {
     if (!files.has(p.fileName)) files.set(p.fileName, []);
@@ -120,10 +116,7 @@ class WorkerPool {
     return null;
   }
 
-  exec(
-    type: "PROCESS_QUESTION" | "GENERATE_DEBUG",
-    payload: any,
-  ): Promise<any> {
+  exec(type: "PROCESS_QUESTION" | "GENERATE_DEBUG", payload: any): Promise<any> {
     return new Promise((resolve, reject) => {
       this.queue.push({ type, payload, resolve, reject });
       this.processQueue();
@@ -198,8 +191,7 @@ class WorkerPool {
   }
 
   onIdle(): Promise<void> {
-    if (this.queue.length === 0 && this.activeCount === 0)
-      return Promise.resolve();
+    if (this.queue.length === 0 && this.activeCount === 0) return Promise.resolve();
     return new Promise((resolve) => {
       const check = setInterval(() => {
         if (this.queue.length === 0 && this.activeCount === 0) {
@@ -327,37 +319,22 @@ export const generateQuestionsFromRawPages = async (
 ): Promise<QuestionImage[]> => {
   globalWorkerPool.concurrency = concurrency;
 
-  // 1. Calculate Max Width per Page (for column alignment)
-  // We want to force all questions on the same page to have the same width (aligned right with whitespace)
-  const pageMaxWidths = new Map<number, number>(); // pageNumber -> pxWidth
+  // 1. Calculate Global Max Width (for column alignment)
+  // We want to force all questions to have the same width (aligned right with whitespace)
+  let globalMaxWidth = 0;
 
   for (const page of pages) {
-    // Only process if we haven't already calculated this page's max width
-    // (or if we are processing multiple files, handle overlaps carefully,
-    // but usually pageNumber is unique per batch unless multiple files are involved.
-    // Better to key by fileName + pageNumber, but here we assume pages are from one context or handled safely)
-    // Actually, let's use a compound key map in memory just in case, but pass simple number to worker?
-    // The worker only processes one task.
-
-    // Let's iterate all detections on this page
-    let maxW = 0;
     for (const det of page.detections) {
-      const boxes = Array.isArray(det.boxes_2d[0])
-        ? det.boxes_2d
-        : [det.boxes_2d];
+      const boxes = Array.isArray(det.boxes_2d[0]) ? det.boxes_2d : [det.boxes_2d];
       for (const box of boxes) {
         // box is [ymin, xmin, ymax, xmax] (0-1000)
         // Width in px
-        const w =
-          (((box as number[])[3] - (box as number[])[1]) / 1000) * page.width;
-        if (w > maxW) maxW = w;
+        const w = (((box as number[])[3] - (box as number[])[1]) / 1000) * page.width;
+        if (w > globalMaxWidth) globalMaxWidth = w;
       }
     }
-    // Use compound key for lookup
-    const key = `${page.fileName}#${page.pageNumber}`;
-    // @ts-ignore
-    pageMaxWidths.set(key, Math.ceil(maxW));
   }
+  globalMaxWidth = Math.ceil(globalMaxWidth);
 
   const logicalQuestions = createLogicalQuestions(pages);
   if (logicalQuestions.length === 0) return [];
@@ -367,11 +344,8 @@ export const generateQuestionsFromRawPages = async (
   const promises = logicalQuestions.map(async (task) => {
     if (signal.aborted) return null;
 
-    // Lookup target width
-    const pObj = task.parts[0].pageObj;
-    const key = `${pObj.fileName}#${pObj.pageNumber}`;
-    // @ts-ignore
-    const targetWidth = pageMaxWidths.get(key) || 0;
+    // Use global max width as target width for alignment
+    const targetWidth = globalMaxWidth;
 
     const res = await processLogicalQuestion(task, settings, targetWidth);
 
