@@ -122,7 +122,27 @@ export const AnalysisContent: React.FC<ToolProps> = ({
             </div>
           </div>
         ) : (
-          <ReactMarkdown remarkPlugins={[remarkMath, remarkGfm]} rehypePlugins={[rehypeKatex]}>
+          <ReactMarkdown
+            remarkPlugins={[remarkMath, remarkGfm]}
+            rehypePlugins={[rehypeKatex]}
+            components={{
+              table: ({ node, ...props }) => (
+                <div className="overflow-x-auto my-4 border border-slate-200 rounded-lg">
+                  <table className="min-w-full divide-y divide-slate-200" {...props} />
+                </div>
+              ),
+              thead: ({ node, ...props }) => <thead className="bg-slate-50" {...props} />,
+              tbody: ({ node, ...props }) => <tbody className="divide-y divide-slate-200 bg-white" {...props} />,
+              tr: ({ node, ...props }) => <tr className="divide-x divide-slate-200" {...props} />,
+              th: ({ node, ...props }) => (
+                <th
+                  className="px-4 py-2 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider"
+                  {...props}
+                />
+              ),
+              td: ({ node, ...props }) => <td className="px-4 py-2 text-sm text-slate-700" {...props} />,
+            }}
+          >
             {cleanMd(content)}
           </ReactMarkdown>
         )}
