@@ -500,6 +500,14 @@ export const fullSync = async (): Promise<SyncResult> => {
     return result;
   }
 
+  notifyProgress({
+    phase: "syncing",
+    message: "正在检查同步需变更项...",
+    current: 0,
+    total: 0,
+    percentage: 0,
+  });
+
   try {
     // Step 1: Get local exam list
     const localList = await storageService.getHistoryList();
@@ -564,11 +572,32 @@ export const fullSync = async (): Promise<SyncResult> => {
       }
     }
 
+    const totalToPush = examsToPush.length;
+    if (totalToPush > 0) {
+      notifyProgress({
+        phase: "uploading",
+        message: `准备推送 ${totalToPush} 个本地变更...`,
+        current: 0,
+        total: totalToPush,
+        percentage: 0,
+      });
+    }
+
     // Step 4: Push local changes
+    let pushedCount = 0;
     for (const examId of examsToPush) {
+      pushedCount++;
       try {
         const exam = await storageService.loadExamResult(examId);
         if (!exam) continue;
+
+        notifyProgress({
+          phase: "uploading",
+          message: `正在推送: ${exam.name} (${pushedCount}/${totalToPush})`,
+          current: pushedCount,
+          total: totalToPush,
+          percentage: Math.round((pushedCount / totalToPush) * 100),
+        });
 
         // Upload images and sync to remote
         const uploadResult = await uploadExamImagesToR2AndSync(exam);
@@ -613,6 +642,14 @@ export const fullSync = async (): Promise<SyncResult> => {
 
     // Step 5: Pull remote changes
     // Get changes since last sync time
+    notifyProgress({
+      phase: "downloading",
+      message: "正在检查远程变更...",
+      current: 0,
+      total: 0,
+      percentage: 0,
+    });
+
     const pullResult = await apiRequest<{
       exams: ExamRecord[];
       deleted: string[];
@@ -622,8 +659,21 @@ export const fullSync = async (): Promise<SyncResult> => {
       body: JSON.stringify({ since: syncState.lastSyncTime }),
     });
 
+    const totalToPull = pullResult.exams.length;
+    if (totalToPull > 0) {
+      notifyProgress({
+        phase: "downloading",
+        message: `准备拉取 ${totalToPull} 个远程变更...`,
+        current: 0,
+        total: totalToPull,
+        percentage: 0,
+      });
+    }
+
     // Process remote exam updates
+    let pulledCount = 0;
     for (const remoteExam of pullResult.exams) {
+      pulledCount++;
       // Skip if we just pushed this exam (we have the latest version)
       if (examsToPush.includes(remoteExam.id)) {
         continue;
@@ -635,6 +685,14 @@ export const fullSync = async (): Promise<SyncResult> => {
         // We chose local version, skip remote
         continue;
       }
+
+      notifyProgress({
+        phase: "downloading",
+        message: `正在拉取: ${remoteExam.name} (${pulledCount}/${totalToPull})`,
+        current: pulledCount,
+        total: totalToPull,
+        percentage: Math.round((pulledCount / totalToPull) * 100),
+      });
 
       // Save remote version locally
       await saveExamToLocal(remoteExam);
@@ -655,7 +713,22 @@ export const fullSync = async (): Promise<SyncResult> => {
 
     // Step 6: Force pull exams that are newer on remote but missed by /sync/pull
     // (This happens when local files are reverted to old versions older than lastSyncTime)
+    const totalForcePull = examsToForcePull.length;
+    let forcePulledCount = 0;
+
+    if (totalForcePull > 0) {
+      notifyProgress({
+        phase: "downloading",
+        message: `准备补充拉取 ${totalForcePull} 个试卷...`,
+        current: 0,
+        total: totalForcePull,
+        percentage: 0,
+      });
+    }
+
     for (const id of examsToForcePull) {
+      forcePulledCount++;
+
       if (processedIds.has(id)) continue;
       if (pullResult.deleted.includes(id)) continue;
 
@@ -670,6 +743,14 @@ export const fullSync = async (): Promise<SyncResult> => {
           result.pulled++;
           result.pulledNames!.push(exam.name);
           processedIds.add(id);
+
+          notifyProgress({
+            phase: "downloading",
+            message: `正在拉取: ${exam.name} (${forcePulledCount}/${totalForcePull})`,
+            current: forcePulledCount,
+            total: totalForcePull,
+            percentage: Math.round((forcePulledCount / totalForcePull) * 100),
+          });
         }
       } catch (e) {
         result.errors.push(`补充拉取失败: ${id} - ${e}`);
@@ -706,6 +787,19 @@ export const fullSync = async (): Promise<SyncResult> => {
   }
 
   result.success = result.errors.length === 0;
+
+  const finalMessage = result.success
+    ? `同步完成: ${result.pushed} 个推送, ${result.pulled} 个拉取`
+    : `同步部分完成，但有错误: ${result.errors.join("; ")}`;
+
+  notifyProgress({
+    phase: "completed",
+    message: finalMessage,
+    current: 100,
+    total: 100,
+    percentage: 100,
+  });
+
   return result;
 };
 

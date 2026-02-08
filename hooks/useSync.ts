@@ -156,7 +156,13 @@ export function useSync(): UseSyncResult {
     }
 
     isSyncingRef.current = true;
-    setStatus((prev) => ({ ...prev, isSyncing: true, error: null, lastSyncResult: null }));
+    setStatus((prev) => ({
+      ...prev,
+      isSyncing: true,
+      error: null,
+      lastSyncResult: null,
+      progress: null, // Clear previous progress
+    }));
 
     try {
       const result = await syncService.fullSync();
