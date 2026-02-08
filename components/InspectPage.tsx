@@ -492,7 +492,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
     setConfirmState({
       isOpen: true,
       title: "Re-analyze File?",
-      message: `Are you sure you want to re-analyze "${fileName}"?\n\nThis will consume AI quota and overwrite any manual edits for this file.`,
+      message: `Are you sure you want to re-analyze "${fileName}"?\n\nThis will re-detect question boxes using AI. Existing question analysis/solutions will be preserved where IDs match.`,
       action: async () => {
         setProcessingFile(fileName);
         stopRequestedRef.current = false;
@@ -515,6 +515,20 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
           const newQuestions = await generateQuestionsFromRawPages(newPages, currentCropSettings, signal, undefined, 4);
 
           if (!signal.aborted) {
+            // Restore existing analysis
+            const existingMap = new Map();
+            questions.forEach((q) => {
+              if (q.fileName === fileName) {
+                if (q.analysis) existingMap.set(q.id + "_A", q.analysis);
+                if (q.pro_analysis) existingMap.set(q.id + "_P", q.pro_analysis);
+              }
+            });
+
+            newQuestions.forEach((q) => {
+              if (existingMap.has(q.id + "_A")) q.analysis = existingMap.get(q.id + "_A");
+              if (existingMap.has(q.id + "_P")) q.pro_analysis = existingMap.get(q.id + "_P");
+            });
+
             setPages(newPages);
             setQuestions(newQuestions);
             await reSaveExamResultWithSync(title, newPages, newQuestions);
@@ -532,7 +546,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
       isDestructive: true,
       confirmLabel: "Re-analyze",
     });
-  }, [examId, pages, title, selectedModel, apiKey, currentCropSettings, addNotification]);
+  }, [examId, pages, title, selectedModel, apiKey, currentCropSettings, addNotification, questions]);
 
   const handleRecropFile = useCallback(
     async (fileName: string, settings: CropSettings) => {
