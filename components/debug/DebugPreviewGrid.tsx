@@ -92,11 +92,7 @@ export const DebugPreviewGrid: React.FC<Props> = ({
          Simulate final paper width (e.g. A4 constrained or responsive max-width).
          Centered content with white background.
       */}
-      <div
-        className={`mx-auto min-h-full py-10 px-6 md:px-12 bg-white ${
-          questions.some((q) => q.pro_analysis) && showExplanations ? "max-w-[95vw]" : "max-w-5xl"
-        }`}
-      >
+      <div className="mx-auto min-h-full py-10 px-6 md:px-12 bg-white max-w-5xl">
         <div className="flex flex-col items-start w-full">
           {sortedQuestions.map((q) => (
             <div
@@ -151,7 +147,7 @@ export const DebugPreviewGrid: React.FC<Props> = ({
                   <img
                     src={resolveImageUrl(q.dataUrl)}
                     alt=""
-                    className="max-w-full h-auto object-contain block select-none max-h-[400px]"
+                    className="max-w-full h-auto object-contain block select-none"
                     loading="lazy"
                   />
                 </div>
@@ -161,42 +157,17 @@ export const DebugPreviewGrid: React.FC<Props> = ({
               {(q.analysis || q.pro_analysis) && showExplanations && (
                 <div className="mt-4 animate-[fade-in_0.3s_ease-out]">
                   {q.pro_analysis ? (
-                    // Grid View for Comparison
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      <div>
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 pl-1">
-                          Standard Analysis
-                        </div>
-                        <AnalysisContent
-                          analysis={q.analysis}
-                          title="Flash/Standard"
-                          isResolving={resolvingId === `${q.fileName}-${q.id}-flash`}
-                          onReSolve={onReSolveQuestion ? () => handleReSolve(q, "flash") : undefined}
-                          onDelete={onDeleteAnalysis ? () => onDeleteAnalysis(q, "standard") : undefined}
-                          onCopy={onCopyAnalysis ? () => onCopyAnalysis(q, "standard") : undefined}
-                          onEdit={
-                            onEditAnalysis ? (field, value) => onEditAnalysis(q, "standard", field, value) : undefined
-                          }
-                        />
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-purple-400 uppercase tracking-widest mb-2 pl-1">
-                          Pro Analysis
-                        </div>
-                        <AnalysisContent
-                          analysis={q.pro_analysis}
-                          title="Gemini Pro"
-                          isPro
-                          isResolving={resolvingId === `${q.fileName}-${q.id}-pro`}
-                          onReSolve={onReSolveQuestion ? () => handleReSolve(q, "pro") : undefined}
-                          onDelete={onDeleteAnalysis ? () => onDeleteAnalysis(q, "pro") : undefined}
-                          onCopy={onCopyAnalysis ? () => onCopyAnalysis(q, "pro") : undefined}
-                          onEdit={onEditAnalysis ? (field, value) => onEditAnalysis(q, "pro", field, value) : undefined}
-                        />
-                      </div>
-                    </div>
+                    <AnalysisContent
+                      analysis={q.pro_analysis}
+                      title="Gemini Pro"
+                      isPro
+                      isResolving={resolvingId === `${q.fileName}-${q.id}-pro`}
+                      onReSolve={onReSolveQuestion ? () => handleReSolve(q, "pro") : undefined}
+                      onDelete={onDeleteAnalysis ? () => onDeleteAnalysis(q, "pro") : undefined}
+                      onCopy={onCopyAnalysis ? () => onCopyAnalysis(q, "pro") : undefined}
+                      onEdit={onEditAnalysis ? (field, value) => onEditAnalysis(q, "pro", field, value) : undefined}
+                    />
                   ) : (
-                    // Single View
                     <AnalysisContent
                       analysis={q.analysis}
                       isResolving={resolvingId === `${q.fileName}-${q.id}-flash`}
