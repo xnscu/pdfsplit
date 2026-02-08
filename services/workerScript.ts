@@ -4,16 +4,14 @@
 // Keep in sync with services/r2Service.ts (Vite env injection)
 const getApiUrl = (): string => {
   // @ts-ignore - Vite injects import.meta.env
-  const envUrl =
-    typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_URL;
+  const envUrl = typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_URL;
   return envUrl || "/api";
 };
 
 // Get CDN URL from environment for production image serving
 const getCdnUrl = (): string | undefined => {
   // @ts-ignore - Vite injects import.meta.env
-  const cdnUrl =
-    typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_CDN_URL;
+  const cdnUrl = typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_CDN_URL;
   return cdnUrl || undefined;
 };
 
@@ -23,10 +21,7 @@ const CDN_URL = getCdnUrl();
 const isDev = typeof import.meta !== "undefined" && (import.meta as any).env?.DEV;
 // In development, don't use CDN URL even if configured
 const USE_CDN_URL = !isDev && CDN_URL;
-const ORIGIN =
-  typeof window !== "undefined" && window.location?.origin
-    ? window.location.origin
-    : "";
+const ORIGIN = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "";
 
 const WORKER_CODE = `
 /**
@@ -175,7 +170,7 @@ const getTrimmedBounds = (ctx, width, height) => {
  *                If whitespace < limit, we remove all of it.
  *                This preserves RELATIVE indentation if the common margin > limit.
  */
-const trimWhitespace = (ctx, width, height, limit = 0) => {
+const trimWhitespace = (ctx, width, height, limitX = 0, limitY = 0) => {
   const w = Math.floor(width);
   const h = Math.floor(height);
   if (w <= 0 || h <= 0) return { x: 0, y: 0, w: 0, h: 0 };
@@ -211,20 +206,20 @@ const trimWhitespace = (ctx, width, height, limit = 0) => {
 
   // Trim Top
   while (top < h && !rowHasInk(top)) { top++; }
-  if (limit > 0 && top > limit) top = limit; // Stop trimming if we exceeded limit
+  if (limitY > 0 && top > limitY) top = limitY; // Stop trimming if we exceeded limit
 
   // Trim Bottom
   while (bottom > top && !rowHasInk(bottom - 1)) { bottom--; }
   // bottom is the y-coord (exclusive). So (h - bottom) is the whitespace height.
-  if (limit > 0 && (h - bottom) > limit) bottom = h - limit;
+  if (limitY > 0 && (h - bottom) > limitY) bottom = h - limitY;
 
   // Trim Left
   while (left < w && !colHasInk(left)) { left++; }
-  if (limit > 0 && left > limit) left = limit;
+  if (limitX > 0 && left > limitX) left = limitX;
 
   // Trim Right
   while (right > left && !colHasInk(right - 1)) { right--; }
-  if (limit > 0 && (w - right) > limit) right = w - limit;
+  if (limitX > 0 && (w - right) > limitX) right = w - limitX;
 
   return {
     x: left,
@@ -394,11 +389,11 @@ const processLogicalQuestion = async (task, settings, targetWidth = 0) => {
          );
          if (!rawRes) continue;
 
-         // [STEP 2] Trim Whitespace (with Threshold):
-         // Removes excess whitespace but STOPS if limit (50px) is reached.
-         // This preserves relative alignment if margins are large.
+         // [STEP 2] Trim Whitespace (with Threshold for only X):
+         // Removes excess whitespace but STOPS if limit (50px) is reached for X.
+         // Y is aggressively trimmed (limit=0).
          const TRIM_LIMIT = 50;
-         const trim = trimWhitespace(rawRes.canvas.getContext('2d'), rawRes.canvas.width, rawRes.canvas.height, TRIM_LIMIT);
+         const trim = trimWhitespace(rawRes.canvas.getContext('2d'), rawRes.canvas.width, rawRes.canvas.height, TRIM_LIMIT, 0);
 
          // [STEP 3] Inner Padding: Add consistent aesthetic padding (canvasPadding)
          const padding = settings.canvasPadding;
@@ -557,8 +552,8 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
     const result3 = await processPartsRaw(sourceDataUrl, boxes, originalWidth, originalHeight, settings);
     let stage3 = '';
     if (result3 && result3.canvas) {
-         // Apply trim with limit (50px)
-         const t = trimWhitespace(result3.canvas.getContext('2d'), result3.canvas.width, result3.canvas.height, 50);
+         // Apply trim with limit (50px for X, 0 for Y)
+         const t = trimWhitespace(result3.canvas.getContext('2d'), result3.canvas.width, result3.canvas.height, 50, 0);
          if (t.w > 0 && t.h > 0) {
             const { canvas: s3C, context: s3Ctx } = createSmartCanvas(t.w, t.h);
             s3Ctx.drawImage(result3.canvas, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
@@ -572,7 +567,7 @@ const generateDebugPreviews = async (sourceDataUrl, boxes, originalWidth, origin
     // To show true final output, we should run the full processLogicalQuestion logic for this part
     let stage4 = '';
     if (result3 && result3.canvas) {
-         const t = trimWhitespace(result3.canvas.getContext('2d'), result3.canvas.width, result3.canvas.height, 50);
+         const t = trimWhitespace(result3.canvas.getContext('2d'), result3.canvas.width, result3.canvas.height, 50, 0);
          const padding = settings.canvasPadding;
          const finalContentWidth = Math.max(t.w, Math.floor(targetWidth));
          const finalWidth = finalContentWidth + (padding * 2);
