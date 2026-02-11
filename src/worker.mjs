@@ -17,6 +17,7 @@ import proAnalysisRoutes from './routes/pro-analysis.mjs';
 import keyStatsRoutes from './routes/key-stats.mjs';
 import geminiRoutes from './routes/gemini.mjs';
 import tasksRoutes from './routes/tasks.mjs';
+import questionsRoutes from './routes/questions.mjs';
 
 // Create main Hono app
 const app = new Hono();
@@ -51,6 +52,9 @@ app.route('/api/key-stats', keyStatsRoutes);
 
 // Gemini Proxy Routes
 app.route('/api/gemini', geminiRoutes);
+
+// Questions Routes
+app.route('/api/questions', questionsRoutes);
 
 // === Static Assets Handler ===
 app.all('*', async (c) => {

@@ -279,6 +279,35 @@ export const getRemoteExamList = async (): Promise<HistoryMetadata[]> => {
   return apiRequest<HistoryMetadata[]>("/exams");
 };
 
+export interface QuestionSearchResult {
+  data: any[]; // QuestionImage[] but with extra fields possibly
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/**
+ * Search questions from remote D1 database
+ */
+export const searchQuestions = async (params: {
+  level0?: string;
+  level1?: string;
+  level2?: string;
+  level3?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<QuestionSearchResult> => {
+  const queryParams = new URLSearchParams();
+  if (params.level0) queryParams.append("level0", params.level0);
+  if (params.level1) queryParams.append("level1", params.level1);
+  if (params.level2) queryParams.append("level2", params.level2);
+  if (params.level3) queryParams.append("level3", params.level3);
+  if (params.limit) queryParams.append("limit", params.limit.toString());
+  if (params.offset) queryParams.append("offset", params.offset.toString());
+
+  return apiRequest<QuestionSearchResult>(`/questions?${queryParams.toString()}`);
+};
+
 /**
  * Get full exam from remote
  */

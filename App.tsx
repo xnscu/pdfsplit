@@ -19,6 +19,7 @@ import { ApiKeyDetailsPage } from "./components/ApiKeyDetailsPage";
 import { ApiCallLogsPage } from "./components/ApiCallLogsPage";
 import { InspectPage } from "./components/InspectPage";
 import { ImageNormalizationPage } from "./components/ImageNormalizationPage";
+import { DirectoryPage } from "./components/DirectoryPage";
 import packageJson from "./package.json";
 import SyncStatus from "./components/SyncStatus";
 import { SyncControls } from "./components/SyncControls";
@@ -653,12 +654,27 @@ const App: React.FC = () => {
           path="/inspect/:examId"
           element={<InspectPage selectedModel={state.selectedModel} apiKey={state.apiKey} />}
         />
+        <Route path="/directory" element={<DirectoryPage />} />
         <Route path="/tasks/image-normalization" element={<ImageNormalizationPage />} />
         <Route
           path="*"
           element={
             <>
               <div className="fixed top-6 right-6 z-[100] flex items-center gap-2">
+                <Link
+                  to="/directory"
+                  className="w-12 h-12 bg-white text-slate-700 rounded-2xl shadow-xl shadow-slate-200 border border-slate-200 hover:text-indigo-600 hover:scale-105 transition-all flex items-center justify-center group"
+                  title="Directory"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+                    />
+                  </svg>
+                </Link>
                 <button
                   onClick={handleLoadExamsWithPictureOkFalse}
                   className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl shadow-xl shadow-amber-200/50 border border-amber-200 hover:bg-amber-100 hover:scale-105 transition-all flex items-center justify-center group"

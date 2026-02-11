@@ -490,3 +490,28 @@ export const cleanupAllHistory = async (): Promise<number> => {
   }
   return totalRemoved;
 };
+
+/**
+ * Retrieve ALL questions from ALL exams.
+ * This is used for the global directory search.
+ * Warning: This can be expensive if there are many heavy exams.
+ */
+export const getAllQuestions = async (): Promise<QuestionImage[]> => {
+  const list = await getHistoryList();
+  const allQuestions: QuestionImage[] = [];
+
+  // Parallel loading might crash browser if too many, so we do it in chunks or sequentially
+  // Sequential for safety
+  for (const item of list) {
+    try {
+      const exam = await loadExamResult(item.id);
+      if (exam && exam.questions) {
+        allQuestions.push(...exam.questions);
+      }
+    } catch (e) {
+      console.warn(`Failed to load questions for exam ${item.name}`, e);
+    }
+  }
+
+  return allQuestions;
+};
