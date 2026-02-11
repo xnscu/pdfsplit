@@ -84,28 +84,28 @@ questionsRoutes.get('/', async (c) => {
       countSql += ` AND (
         json_extract(q.pro_analysis, '$.tags[0].level0') = ?
       )`;
-      countparams.push(level0);
+      countParams.push(level0);
     }
 
     if (level1) {
       countSql += ` AND (
         json_extract(q.pro_analysis, '$.tags[0].level1') = ?
       )`;
-      countparams.push(level1);
+      countParams.push(level1);
     }
 
     if (level2) {
       countSql += ` AND (
         json_extract(q.pro_analysis, '$.tags[0].level2') = ?
       )`;
-      countparams.push(level2);
+      countParams.push(level2);
     }
 
     if (level3) {
       countSql += ` AND (
         json_extract(q.pro_analysis, '$.tags[0].level3') = ?
       )`;
-      countparams.push(level3);
+      countParams.push(level3);
     }
 
     const countResult = await db.prepare(countSql).bind(...countParams).first();
