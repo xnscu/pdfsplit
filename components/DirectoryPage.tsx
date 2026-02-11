@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { DirectoryNode, directoryTree } from "../services/directoryService";
+import React, { useState, useEffect, useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { DirectoryNode, directoryTree, getAllNodes } from "../services/directoryService";
 import { searchQuestions } from "../services/syncService";
 import { QuestionImage } from "../types";
 import { QuestionDisplayCard } from "./QuestionDisplayCard";
@@ -13,6 +13,40 @@ export const DirectoryPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const QUESTIONS_PER_PAGE = 20;
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const allNodes = useMemo(() => getAllNodes(nodes), [nodes]);
+
+  // Sync state from URL
+  useEffect(() => {
+    const nodeId = searchParams.get("nodeId");
+    const pageParam = searchParams.get("page");
+    const newPage = pageParam ? parseInt(pageParam, 10) : 1;
+
+    if (nodeId) {
+      const node = allNodes.find((n) => n.id === nodeId);
+      if (node) {
+        if (selectedNode?.id !== node.id) {
+          setSelectedNode(node);
+        }
+      } else {
+        // Node ID in URL invalid or not found
+        setSelectedNode(null);
+      }
+    } else {
+      setSelectedNode(null);
+    }
+
+    if (!isNaN(newPage) && newPage > 0) {
+      if (currentPage !== newPage) {
+        setCurrentPage(newPage);
+      }
+    } else {
+      if (currentPage !== 1) {
+        setCurrentPage(1);
+      }
+    }
+  }, [searchParams, allNodes]);
 
   // Helper to extract levels for API query
   const getLevelsFromNode = (node: DirectoryNode) => {
@@ -59,10 +93,7 @@ export const DirectoryPage: React.FC = () => {
   }, [selectedNode, currentPage]);
 
   const handleNodeClick = (node: DirectoryNode) => {
-    if (selectedNode?.id !== node.id) {
-      setSelectedNode(node);
-      setCurrentPage(1); // Reset to first page on new node
-    }
+    setSearchParams({ nodeId: node.id, page: "1" });
   };
 
   const renderNode = (node: DirectoryNode) => {
@@ -165,7 +196,11 @@ export const DirectoryPage: React.FC = () => {
                   {totalPages > 1 && (
                     <div className="flex justify-center mt-12 mb-8 gap-2">
                       <button
-                        onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                        onClick={() => {
+                          if (selectedNode) {
+                            setSearchParams({ nodeId: selectedNode.id, page: String(Math.max(1, currentPage - 1)) });
+                          }
+                        }}
                         disabled={currentPage === 1}
                         className="p-2 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
@@ -177,7 +212,14 @@ export const DirectoryPage: React.FC = () => {
                         Page {currentPage} of {totalPages}
                       </span>
                       <button
-                        onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                        onClick={() => {
+                          if (selectedNode) {
+                            setSearchParams({
+                              nodeId: selectedNode.id,
+                              page: String(Math.min(totalPages, currentPage + 1)),
+                            });
+                          }
+                        }}
                         disabled={currentPage === totalPages}
                         className="p-2 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
