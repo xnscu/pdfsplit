@@ -12,6 +12,7 @@ interface QuestionDisplayCardProps {
   onDeleteAnalysis?: (q: QuestionImage, type: "standard" | "pro") => void;
   onCopyAnalysis?: (q: QuestionImage, fromType: "standard" | "pro") => void;
   onEditAnalysis?: (q: QuestionImage, type: "standard" | "pro", field: string, value: string) => Promise<void>;
+  showExamName?: boolean; // Whether to show the exam name
 }
 
 export const QuestionDisplayCard: React.FC<QuestionDisplayCardProps> = ({
@@ -23,6 +24,7 @@ export const QuestionDisplayCard: React.FC<QuestionDisplayCardProps> = ({
   onDeleteAnalysis,
   onCopyAnalysis,
   onEditAnalysis,
+  showExamName = false,
 }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [resolvingType, setResolvingType] = useState<"flash" | "pro" | null>(null);
@@ -54,6 +56,11 @@ export const QuestionDisplayCard: React.FC<QuestionDisplayCardProps> = ({
     >
       {/* Question Header with Anchor */}
       <div className="flex items-center gap-3 mb-4">
+        {showExamName && question.exam_name && (
+          <span className="text-sm font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+            {question.exam_name}
+          </span>
+        )}
         <span className="text-lg font-black text-slate-800">Q{question.id}</span>
         {enableAnchors && (
           <button

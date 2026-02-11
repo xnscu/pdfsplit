@@ -34,6 +34,8 @@ export interface QuestionImage {
   dataUrl: string;
   analysis?: QuestionAnalysis; // New optional field
   pro_analysis?: QuestionAnalysis; // Storage for Gemini Pro results
+  exam_name?: string; // Name of the exam this question belongs to
+  exam_id?: string; // ID of the exam this question belongs to
 }
 
 export interface DebugPageData {

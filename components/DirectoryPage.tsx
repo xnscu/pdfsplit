@@ -184,9 +184,10 @@ export const DirectoryPage: React.FC = () => {
                         question={q}
                         enableAnchors={false}
                         showExplanations={true}
+                        showExamName={true}
                         onQuestionClick={() => {
                           // Navigate to inspect page on click
-                          window.location.hash = `/inspect/${(q as any).exam_id || ""}#question-${q.id}`;
+                          window.location.hash = `/inspect/${q.exam_id || ""}#question-${q.id}`;
                         }}
                       />
                     ))}
