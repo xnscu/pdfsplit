@@ -12,6 +12,7 @@ export const DirectoryPage: React.FC = () => {
   const [selectedNode, setSelectedNode] = useState<DirectoryNode | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const QUESTIONS_PER_PAGE = 20;
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -94,6 +95,7 @@ export const DirectoryPage: React.FC = () => {
 
   const handleNodeClick = (node: DirectoryNode) => {
     setSearchParams({ nodeId: node.id, page: "1" });
+    setIsMobileMenuOpen(false);
   };
 
   const renderNode = (node: DirectoryNode) => {
@@ -127,6 +129,14 @@ export const DirectoryPage: React.FC = () => {
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm z-10">
         <div className="flex items-center gap-4">
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="md:hidden text-slate-500 hover:text-slate-700 transition-colors"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
           <Link to="/" className="text-slate-500 hover:text-slate-700 transition-colors">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -141,8 +151,31 @@ export const DirectoryPage: React.FC = () => {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-1/4 min-w-[300px] max-w-md bg-white border-r border-slate-200 overflow-y-auto p-4 custom-scrollbar">
-          <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Table of Contents</h2>
+        {/* Mobile Sidebar Overlay */}
+        {isMobileMenuOpen && (
+          <div className="fixed inset-0 bg-black/50 z-30 md:hidden" onClick={() => setIsMobileMenuOpen(false)} />
+        )}
+
+        {/* Sidebar */}
+        <aside
+          className={`
+            fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-slate-200 overflow-y-auto p-4 custom-scrollbar
+            transform transition-transform duration-300 ease-in-out
+            md:static md:w-1/4 md:min-w-[300px] md:max-w-md md:transform-none md:z-auto
+            ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+          `}
+        >
+          <div className="flex justify-between items-center mb-4 md:hidden">
+            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Table of Contents</h2>
+            <button onClick={() => setIsMobileMenuOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 hidden md:block">
+            Table of Contents
+          </h2>
           <div className="space-y-1 text-sm">{nodes.map(renderNode)}</div>
         </aside>
 
