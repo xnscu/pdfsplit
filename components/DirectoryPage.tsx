@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { DirectoryNode, directoryTree } from "../services/directoryService";
 import { searchQuestions } from "../services/syncService";
 import { QuestionImage } from "../types";
+import { QuestionDisplayCard } from "./QuestionDisplayCard";
 
 export const DirectoryPage: React.FC = () => {
   const [nodes] = useState<DirectoryNode[]>(directoryTree);
@@ -145,55 +146,18 @@ export const DirectoryPage: React.FC = () => {
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-1 gap-8">
+                  <div className="flex flex-col items-start w-full">
                     {questions.map((q) => (
-                      <div
+                      <QuestionDisplayCard
                         key={`${q.fileName}-${q.id}`}
-                        className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow"
-                      >
-                        <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                          <span className="font-mono text-xs text-slate-500 bg-slate-200/50 px-2 py-1 rounded">
-                            {q.fileName} / Q{q.id}
-                          </span>
-                          <Link
-                            to={`/inspect/${(q as any).exam_id || ""}#question-${q.id}`}
-                            // Note: q.exam_id might be needed if inspect page needs it.
-                            // The questions API returns q.* and e.name.
-                            // But InspectPage uses examId to load.
-                            // The response from questions route includes q.* and exam_name.
-                            // It also includes exam_id column because q.* has it.
-                            className="text-blue-600 text-sm hover:underline flex items-center gap-1"
-                          >
-                            Inspect
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                              />
-                            </svg>
-                          </Link>
-                        </div>
-                        <div className="p-6">
-                          <div className="relative mb-6">
-                            <img
-                              src={q.dataUrl}
-                              alt={`Question ${q.id}`}
-                              className="max-w-full h-auto rounded-lg border border-slate-100"
-                            />
-                          </div>
-
-                          {(q.analysis || q.pro_analysis) && (
-                            <div className="mt-4 pt-4 border-t border-slate-100 text-sm text-slate-600">
-                              <div className="font-semibold mb-2 text-slate-800">Analysis Preview:</div>
-                              <div className="line-clamp-3">
-                                {(q.pro_analysis || q.analysis)?.analysis_md || "No analysis content."}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                        question={q}
+                        enableAnchors={false}
+                        showExplanations={true}
+                        onQuestionClick={() => {
+                          // Navigate to inspect page on click
+                          window.location.hash = `/inspect/${(q as any).exam_id || ""}#question-${q.id}`;
+                        }}
+                      />
                     ))}
                   </div>
 
