@@ -31,28 +31,28 @@ questionsRoutes.get('/', async (c) => {
     sql += ` AND (
       json_extract(q.pro_analysis, '$.tags[0].level0') = ?
     )`;
-    params.push(level0, level0);
+    params.push(level0);
   }
 
   if (level1) {
     sql += ` AND (
       json_extract(q.pro_analysis, '$.tags[0].level1') = ?
     )`;
-    params.push(level1, level1);
+    params.push(level1);
   }
 
   if (level2) {
     sql += ` AND (
       json_extract(q.pro_analysis, '$.tags[0].level2') = ?
     )`;
-    params.push(level2, level2);
+    params.push(level2);
   }
 
   if (level3) {
     sql += ` AND (
       json_extract(q.pro_analysis, '$.tags[0].level3') = ?
     )`;
-    params.push(level3, level3);
+    params.push(level3);
   }
 
   // Add order and limit
@@ -82,34 +82,30 @@ questionsRoutes.get('/', async (c) => {
 
     if (level0) {
       countSql += ` AND (
-        json_extract(q.analysis, '$.tags[0].level0') = ? OR
         json_extract(q.pro_analysis, '$.tags[0].level0') = ?
       )`;
-      countParams.push(level0, level0);
+      countparams.push(level0);
     }
 
     if (level1) {
       countSql += ` AND (
-        json_extract(q.analysis, '$.tags[0].level1') = ? OR
         json_extract(q.pro_analysis, '$.tags[0].level1') = ?
       )`;
-      countParams.push(level1, level1);
+      countparams.push(level1);
     }
 
     if (level2) {
       countSql += ` AND (
-        json_extract(q.analysis, '$.tags[0].level2') = ? OR
         json_extract(q.pro_analysis, '$.tags[0].level2') = ?
       )`;
-      countParams.push(level2, level2);
+      countparams.push(level2);
     }
 
     if (level3) {
       countSql += ` AND (
-        json_extract(q.analysis, '$.tags[0].level3') = ? OR
         json_extract(q.pro_analysis, '$.tags[0].level3') = ?
       )`;
-      countParams.push(level3, level3);
+      countparams.push(level3);
     }
 
     const countResult = await db.prepare(countSql).bind(...countParams).first();
