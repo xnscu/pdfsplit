@@ -29,7 +29,8 @@
     "commit": "git add . ; git commit -m 'chore: update package version' ; git push",
     "db": "wrangler d1 execute gksx --yes --file=migrations/tmp.sql",
     "db:init:remote": "wrangler d1 execute gksx --file=schema.sql --remote",
-    "db:init": "wrangler d1 execute gksx --local --file=schema.sql"
+    "db:init": "wrangler d1 execute gksx --local --file=schema.sql",
+    "db:sync": "bash scripts/sync-db.sh"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.21.2",

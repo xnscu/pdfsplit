@@ -29,7 +29,6 @@ questionsRoutes.get('/', async (c) => {
 
   if (level0) {
     sql += ` AND (
-      json_extract(q.analysis, '$.tags[0].level0') = ? OR
       json_extract(q.pro_analysis, '$.tags[0].level0') = ?
     )`;
     params.push(level0, level0);
@@ -37,7 +36,6 @@ questionsRoutes.get('/', async (c) => {
 
   if (level1) {
     sql += ` AND (
-      json_extract(q.analysis, '$.tags[0].level1') = ? OR
       json_extract(q.pro_analysis, '$.tags[0].level1') = ?
     )`;
     params.push(level1, level1);
@@ -45,7 +43,6 @@ questionsRoutes.get('/', async (c) => {
 
   if (level2) {
     sql += ` AND (
-      json_extract(q.analysis, '$.tags[0].level2') = ? OR
       json_extract(q.pro_analysis, '$.tags[0].level2') = ?
     )`;
     params.push(level2, level2);
@@ -53,7 +50,6 @@ questionsRoutes.get('/', async (c) => {
 
   if (level3) {
     sql += ` AND (
-      json_extract(q.analysis, '$.tags[0].level3') = ? OR
       json_extract(q.pro_analysis, '$.tags[0].level3') = ?
     )`;
     params.push(level3, level3);
