@@ -62,9 +62,12 @@ questionsRoutes.get('/', async (c) => {
   try {
     const result = await db.prepare(sql).bind(...params).all();
 
-    // Parse JSON fields
+    // Parse JSON fields and map snake_case to camelCase
     const questions = result.results.map(row => ({
       ...row,
+      fileName: row.file_name,
+      dataUrl: row.data_url,
+      pageNumber: row.page_number,
       analysis: row.analysis ? JSON.parse(row.analysis) : null,
       pro_analysis: row.pro_analysis ? JSON.parse(row.pro_analysis) : null,
     }));
