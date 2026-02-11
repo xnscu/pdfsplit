@@ -88,6 +88,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
 
   // Sync hook
   const syncHook = useSync();
+  const { forceDownloadSelected } = syncHook;
 
   // Confirm Dialog State
   const [confirmState, setConfirmState] = useState<{
@@ -175,7 +176,19 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
       setError(null);
 
       try {
-        const exam = await loadExamResult(examId);
+        let exam = await loadExamResult(examId);
+
+        // If not found locally, try to pull from remote
+        if (!exam) {
+          const remoteExam = await getRemoteExam(examId);
+          if (remoteExam) {
+            addNotification(null, "success", "Found on remote, downloading...");
+            await forceDownloadSelected([examId]);
+            // Refresh local load
+            exam = await loadExamResult(examId);
+          }
+        }
+
         if (!exam) {
           setError(`Exam not found: ${examId}`);
           setIsLoading(false);
@@ -193,8 +206,7 @@ export const InspectPage: React.FC<Props> = ({ selectedModel, apiKey }) => {
     };
 
     loadExam();
-    loadExam();
-  }, [examId]);
+  }, [examId, forceDownloadSelected, addNotification]);
 
   // Sync Handlers
   const handlePush = useCallback(async () => {
