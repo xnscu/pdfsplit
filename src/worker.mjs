@@ -14,6 +14,7 @@ import r2Routes from './routes/r2.mjs';
 import examRoutes from './routes/exams.mjs';
 import syncRoutes from './routes/sync.mjs';
 import proAnalysisRoutes from './routes/pro-analysis.mjs';
+import claudeReviewRoutes from './routes/claude-review.mjs';
 import keyStatsRoutes from './routes/key-stats.mjs';
 import geminiRoutes from './routes/gemini.mjs';
 import tasksRoutes from './routes/tasks.mjs';
@@ -43,6 +44,9 @@ app.route('/api/sync', syncRoutes);
 
 // Pro Analysis Routes
 app.route('/api/pro-analysis', proAnalysisRoutes);
+
+// Claude Review Routes
+app.route('/api/claude-review', claudeReviewRoutes);
 
 // Tasks Routes
 app.route('/api/tasks', tasksRoutes);

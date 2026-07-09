@@ -27,6 +27,33 @@ export interface QuestionAnalysis {
   breakthrough_md?: string;
 }
 
+export type ReviewVerdict =
+  | "correct" // Claude and Gemini reached the same conclusion
+  | "minor_issue" // Same answer, but Gemini's reasoning has a flaw
+  | "incorrect" // Gemini's final answer is wrong
+  | "unverifiable"; // Image unreadable, or the question is ill-posed
+
+export interface ReviewIssue {
+  severity: "typo" | "calculation" | "logic" | "answer";
+  location: string; // Where in Gemini's solution, e.g. "(2) 第三步"
+  description: string;
+}
+
+export interface ClaudeReview {
+  verdict: ReviewVerdict;
+  confidence: number; // 0-1
+  claude_answer: string; // Claude's final answer, normalized for comparison
+  gemini_answer: string; // Gemini's final answer, normalized for comparison
+  issues: ReviewIssue[];
+  corrected_solution_md?: string; // Only when verdict is 'incorrect'
+  model_id: string; // e.g. 'claude-opus-4-8'
+  // Self-reported reasoning depth. Cloud routines cannot select a thinking
+  // effort, so a routine-produced review reports 'ultrathink' rather than one
+  // of the CLI effort levels.
+  effort: "high" | "xhigh" | "max" | "ultrathink" | "triage";
+  reviewed_at: string; // UTC ISO timestamp
+}
+
 export interface QuestionImage {
   id: string;
   pageNumber: number;
@@ -34,6 +61,8 @@ export interface QuestionImage {
   dataUrl: string;
   analysis?: QuestionAnalysis; // New optional field
   pro_analysis?: QuestionAnalysis; // Storage for Gemini Pro results
+  claude_analysis?: QuestionAnalysis; // Claude solving independently of pro_analysis
+  claude_review?: ClaudeReview; // Verdict on pro_analysis, from comparing the two
   exam_name?: string; // Name of the exam this question belongs to
   exam_id?: string; // ID of the exam this question belongs to
 }

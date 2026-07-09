@@ -42,11 +42,22 @@ CREATE TABLE IF NOT EXISTS questions (
     original_data_url TEXT,  -- Optional, for before/after comparison
     analysis TEXT,           -- JSON object of QuestionAnalysis
     pro_analysis TEXT,       -- JSON object of QuestionAnalysis from Gemini Pro
+    claude_analysis TEXT,    -- JSON object of QuestionAnalysis from Claude, solved independently
+    claude_review TEXT,      -- JSON object of ClaudeReview, verdict on pro_analysis
     PRIMARY KEY (exam_id, id),
     FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_questions_exam_id ON questions(exam_id);
+
+CREATE INDEX IF NOT EXISTS idx_questions_claude_analysis_pending
+    ON questions(exam_id) WHERE claude_analysis IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_questions_claude_review_pending
+    ON questions(exam_id) WHERE claude_review IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_questions_claude_verdict
+    ON questions(json_extract(claude_review, '$.verdict'));
 
 -- Sync tracking table - for bidirectional sync between IndexedDB and D1
 CREATE TABLE IF NOT EXISTS sync_log (
