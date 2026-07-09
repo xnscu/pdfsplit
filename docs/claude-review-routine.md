@@ -35,7 +35,8 @@ GET  /stats
 
 ## Routine A — 解答 + 分诊
 
-模型 Sonnet，每天 `5 0 * * *`（00:05）。
+模型 Sonnet。cron `5 16 * * *`（UTC）= 每天北京时间 00:05。
+Routine 的 cron 一律按 UTC 解释，本地时间要减 8 小时。
 
 ```
 你是一个自动化任务，运行在 Claude Code 云端 session 中，没有人会回答你的提问。
@@ -46,10 +47,13 @@ GET  /stats
 第一步 —— 取题
 curl -s -X POST https://gksx.xnscu.com/api/claude-review/pending \
   -H 'Content-Type: application/json' \
-  -d '{"limit": 15, "stage": "solve", "min_difficulty": 3}'
+  -d '{"limit": 15, "stage": "solve", "min_difficulty": 4, "question_type": "解答"}'
 
+question_type 按前缀匹配，"解答" 同时命中库里的 "解答" 和 "解答题" 两种写法。
 响应中每题含 exam_id、question_id、data_url（图片的 SHA-256 hash）、difficulty。
 响应刻意不包含 Gemini 的解答，这是设计的一部分。
+
+若 count 为 0，说明该难度档已核查完，直接输出报告并结束，不要放宽筛选条件。
 
 第二步 —— 逐题独立解答
 对每一道题：
@@ -97,7 +101,7 @@ key 用第三步响应里的 key 字段（形如 "exam_id:question_id"）。
 
 ## Routine B — 仲裁
 
-模型 Opus，每天 `5 5 * * *`（05:05，在 A 之后）。
+模型 Opus。cron `5 21 * * *`（UTC）= 每天北京时间 05:05，在 A 之后 5 小时。
 
 ```
 ultrathink
@@ -162,8 +166,11 @@ curl -s https://gksx.xnscu.com/api/claude-review/stats
 云环境默认只放行常见包管理器和云厂商域名。`gksx.xnscu.com` 与 `r2-gksx.xnscu.com`
 都不在其中，不改的话 routine 里每一个 curl 都会返回 `403 x-deny-reason: host_not_allowed`。
 
-routine 详情页 → 铅笔图标 Edit → Instructions 下方的环境云图标 → 悬停环境点设置图标 →
-Network access 改 **Custom** → Allowed domains 填入这两个域名 →
+白名单挂在**环境**上，不在 routine 上 —— 创建 routine 的 API 只接受一个 `environment_id`。
+所以要么改默认环境（影响所有用它的 routine），要么另建一个环境。CLI 的 `/schedule`
+两件事都做不了，得在 claude.ai 的环境设置里改。
+
+入口：Network access 改 **Custom** → Allowed domains 填入这两个域名 →
 勾选 "Also include default list of common package managers"。
 
 ### 其他约束

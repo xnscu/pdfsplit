@@ -92,6 +92,10 @@ claudeReviewRoutes.post('/pending', async (c) => {
   const minDifficulty = Number.isInteger(body?.min_difficulty) ? body.min_difficulty : 1;
 
   if (stage === 'solve') {
+    // Matched as a prefix: the column holds both '解答' and '解答题' for the same
+    // kind of question, likewise 选择/选择题 and 填空/填空题.
+    const typePrefix = typeof body?.question_type === 'string' ? body.question_type : null;
+
     // pro_analysis must exist -- there is nothing to cross-check otherwise.
     // data_url only: withholding pro_analysis is what keeps the solve independent.
     const result = await db.prepare(`
@@ -107,9 +111,10 @@ claudeReviewRoutes.post('/pending', async (c) => {
       WHERE q.pro_analysis IS NOT NULL
         AND q.claude_analysis IS NULL
         AND COALESCE(json_extract(q.pro_analysis, '$.difficulty'), 1) >= ?
+        AND (? IS NULL OR json_extract(q.pro_analysis, '$.question_type') LIKE ? || '%')
       ORDER BY json_extract(q.pro_analysis, '$.difficulty') DESC, e.timestamp DESC, q.page_number
       LIMIT ?
-    `).bind(minDifficulty, limit).all();
+    `).bind(minDifficulty, typePrefix, typePrefix, limit).all();
 
     return c.json({ stage, questions: result.results, count: result.results.length });
   }
