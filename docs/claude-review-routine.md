@@ -155,11 +155,22 @@ curl -s https://gksx.xnscu.com/api/claude-review/stats
 输出各 verdict 的分布，并逐条列出本次判定为 incorrect 的题目及错因。
 ```
 
+## 已创建的 routine
+
+| routine | id | cron (UTC) | 本地 | 模型 |
+| --- | --- | --- | --- | --- |
+| gksx-claude-solve-triage | `trig_01XQtNpyUBiEPBTsesmYAUps` | `5 16 * * *` | 00:05 | claude-sonnet-5 |
+| gksx-claude-arbitrate | `trig_01HCN4gaD1q2e2Zv8NEwBaNs` | `5 21 * * *` | 05:05 | claude-opus-4-8 |
+
+两者都用 `env_01Y41RBodAaXN1E9nPGVSAjb`，工具只开 `Bash` + `Read`，不挂业务 connector。
+管理入口 [claude.ai/code/routines](https://claude.ai/code/routines)，或 CLI 的
+`/schedule list` / `/schedule update` / `/schedule run`。删除只能在 web 上做。
+
 ## 部署
 
-在 Desktop 侧边栏点 **Routines → New routine → Remote**（选 Local 会变成需要开着电脑的
-本地任务）。也可以在 [claude.ai/code/routines](https://claude.ai/code/routines) 或 CLI 里
-用 `/schedule` 创建，三个入口写的是同一个云端账户。
+Remote routine 在 [claude.ai/code/routines](https://claude.ai/code/routines)、Desktop、
+CLI `/schedule` 三个入口都能建，写的是同一个云端账户。Desktop 里若选 Local，
+建出来的是需要开着电脑的本地任务，不是 routine。
 
 ### 必须改网络白名单
 

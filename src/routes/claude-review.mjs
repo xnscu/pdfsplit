@@ -315,6 +315,14 @@ claudeReviewRoutes.put('/review', async (c) => {
   return c.json({ success: true });
 });
 
+// The slice of the bank the routines actually work through. Progress is only
+// meaningful against this set, not against all 11k questions.
+const TARGET_SET = `
+  pro_analysis IS NOT NULL
+  AND json_extract(pro_analysis, '$.question_type') LIKE '解答%'
+  AND COALESCE(json_extract(pro_analysis, '$.difficulty'), 1) >= 4
+`;
+
 // GET /stats - Verdict breakdown, for a dashboard or a routine's summary line.
 claudeReviewRoutes.get('/stats', async (c) => {
   const db = c.env.DB;
@@ -332,7 +340,117 @@ claudeReviewRoutes.get('/stats', async (c) => {
     SELECT COUNT(*) AS n FROM questions WHERE claude_analysis IS NOT NULL
   `).first();
 
-  return c.json({ by_verdict: result.results, claude_solved: solved.n });
+  const target = await db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN claude_analysis IS NOT NULL THEN 1 ELSE 0 END) AS solved,
+      SUM(CASE WHEN claude_review IS NOT NULL THEN 1 ELSE 0 END) AS reviewed
+    FROM questions
+    WHERE ${TARGET_SET}
+  `).first();
+
+  return c.json({
+    by_verdict: result.results,
+    claude_solved: solved.n,
+    target: {
+      total: target.total,
+      solved: target.solved,
+      reviewed: target.reviewed,
+    },
+  });
+});
+
+// GET /questions - Paged list of everything Claude has solved.
+// query: verdict (a verdict, or 'unreviewed'), limit, offset
+claudeReviewRoutes.get('/questions', async (c) => {
+  const db = c.env.DB;
+
+  const verdict = c.req.query('verdict') || null;
+  const limit = Math.min(parseInt(c.req.query('limit') || '24', 10) || 24, 100);
+  const offset = Math.max(parseInt(c.req.query('offset') || '0', 10) || 0, 0);
+
+  // 'unreviewed' means solved but triage has not settled it yet.
+  let filter = '';
+  const params = [];
+  if (verdict === 'unreviewed') {
+    filter = 'AND q.claude_review IS NULL';
+  } else if (verdict) {
+    filter = `AND json_extract(q.claude_review, '$.verdict') = ?`;
+    params.push(verdict);
+  }
+
+  const rows = await db.prepare(`
+    SELECT
+      q.id AS question_id,
+      q.exam_id,
+      q.data_url,
+      q.page_number,
+      e.name AS exam_name,
+      json_extract(q.pro_analysis, '$.difficulty') AS difficulty,
+      json_extract(q.pro_analysis, '$.question_type') AS question_type,
+      json_extract(q.claude_review, '$.verdict') AS verdict,
+      json_extract(q.claude_review, '$.confidence') AS confidence,
+      json_extract(q.claude_review, '$.effort') AS effort,
+      json_extract(q.claude_review, '$.claude_answer') AS claude_answer,
+      json_extract(q.claude_review, '$.gemini_answer') AS gemini_answer,
+      json_extract(q.claude_analysis, '$.final_answers') AS claude_final_answers
+    FROM questions q
+    JOIN exams e ON e.id = q.exam_id
+    WHERE q.claude_analysis IS NOT NULL ${filter}
+    ORDER BY e.timestamp DESC, q.page_number, q.id
+    LIMIT ? OFFSET ?
+  `).bind(...params, limit, offset).all();
+
+  const totalRow = await db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM questions q
+    WHERE q.claude_analysis IS NOT NULL ${filter}
+  `).bind(...params).first();
+
+  return c.json({
+    questions: rows.results.map(q => ({
+      ...q,
+      claude_final_answers: q.claude_final_answers ? JSON.parse(q.claude_final_answers) : [],
+    })),
+    total: totalRow.n,
+    limit,
+    offset,
+  });
+});
+
+// GET /questions/:examId/:questionId - Everything about one question, for the detail view.
+claudeReviewRoutes.get('/questions/:examId/:questionId', async (c) => {
+  const db = c.env.DB;
+
+  const row = await db.prepare(`
+    SELECT
+      q.id AS question_id,
+      q.exam_id,
+      q.data_url,
+      q.page_number,
+      q.analysis,
+      q.pro_analysis,
+      q.claude_analysis,
+      q.claude_review,
+      e.name AS exam_name
+    FROM questions q
+    JOIN exams e ON e.id = q.exam_id
+    WHERE q.exam_id = ? AND q.id = ?
+  `).bind(c.req.param('examId'), c.req.param('questionId')).first();
+
+  if (!row) {
+    return c.json({ error: 'Question not found' }, 404);
+  }
+
+  const parse = (v) => (v ? JSON.parse(v) : null);
+
+  return c.json({
+    ...row,
+    analysis: parse(row.analysis),
+    pro_analysis: parse(row.pro_analysis),
+    claude_analysis: parse(row.claude_analysis),
+    claude_review: parse(row.claude_review),
+  });
 });
 
 export default claudeReviewRoutes;

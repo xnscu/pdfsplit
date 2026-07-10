@@ -49,8 +49,10 @@ export interface ClaudeReview {
   model_id: string; // e.g. 'claude-opus-4-8'
   // Self-reported reasoning depth. Cloud routines cannot select a thinking
   // effort, so a routine-produced review reports 'ultrathink' rather than one
-  // of the CLI effort levels.
-  effort: "high" | "xhigh" | "max" | "ultrathink" | "triage";
+  // of the CLI effort levels. 'triage' is the free string comparison;
+  // 'semantic-check' is the cheap "are these the same object" pass that catches
+  // what string comparison cannot (interval vs inequality, set vs disjunction).
+  effort: "high" | "xhigh" | "max" | "ultrathink" | "triage" | "semantic-check";
   reviewed_at: string; // UTC ISO timestamp
 }
 
