@@ -16,8 +16,25 @@
  * call, whereas a false match would silently bless a wrong answer.
  */
 import { Hono } from 'hono';
+import { analysisPrompt } from '../../shared/analysis-prompt.js';
 
 const claudeReviewRoutes = new Hono();
+
+// The same knowledge-point taxonomy Gemini selects its tags from, pulled out of
+// Gemini's own prompt so there is a single source of truth. Serving it to the
+// solve routine lets Claude choose tags from the identical vocabulary, which is
+// what makes the two sides' tags comparable. Extracting rather than duplicating
+// keeps Gemini's prompt untouched.
+const KNOWLEDGE_DIRECTORY =
+  analysisPrompt.match(/<knowledge_directory>\n([\s\S]*?)<\/knowledge_directory>/)?.[1] ?? '';
+
+// exam_position selects questions by their rank within their own exam. The two
+// closing questions of a paper are its 压轴 (hardest) problems; a caller can ask
+// for just those, or for everything but those, to route them to different models.
+const EXAM_POSITION_SQL = {
+  final: 'r.rn <= 2',
+  non_final: 'r.rn > 2',
+};
 
 /**
  * Reduce a mathematical answer to a form that survives cosmetic differences:
@@ -96,25 +113,63 @@ claudeReviewRoutes.post('/pending', async (c) => {
     // kind of question, likewise 选择/选择题 and 填空/填空题.
     const typePrefix = typeof body?.question_type === 'string' ? body.question_type : null;
 
+    const examPosition = body?.exam_position ?? null;
+    if (examPosition !== null && !(examPosition in EXAM_POSITION_SQL)) {
+      return c.json({ error: `exam_position must be one of ${Object.keys(EXAM_POSITION_SQL).join(', ')}` }, 400);
+    }
+
     // pro_analysis must exist -- there is nothing to cross-check otherwise.
     // data_url only: withholding pro_analysis is what keeps the solve independent.
-    const result = await db.prepare(`
-      SELECT
-        q.id AS question_id,
-        q.exam_id,
-        q.data_url,
-        json_extract(q.pro_analysis, '$.difficulty') AS difficulty,
-        json_extract(q.pro_analysis, '$.question_type') AS question_type,
-        e.name AS exam_name
-      FROM questions q
-      JOIN exams e ON e.id = q.exam_id
-      WHERE q.pro_analysis IS NOT NULL
-        AND q.claude_analysis IS NULL
-        AND COALESCE(json_extract(q.pro_analysis, '$.difficulty'), 1) >= ?
-        AND (? IS NULL OR json_extract(q.pro_analysis, '$.question_type') LIKE ? || '%')
-      ORDER BY json_extract(q.pro_analysis, '$.difficulty') DESC, e.timestamp DESC, q.page_number
-      LIMIT ?
-    `).bind(minDifficulty, typePrefix, typePrefix, limit).all();
+    let result;
+    if (examPosition) {
+      // 压轴 selection needs each question's rank within its exam. The rank is
+      // computed over the whole solution set (not just unsolved rows), so
+      // already-solved questions don't shift what counts as the final two.
+      // exam_position implies a question type; default to 解答 since 压轴 is a
+      // solution-question concept.
+      const rankType = typePrefix ?? '解答';
+      result = await db.prepare(`
+        WITH ranked AS (
+          SELECT
+            q.id, q.exam_id, q.data_url, q.claude_analysis, q.page_number,
+            json_extract(q.pro_analysis, '$.difficulty') AS difficulty,
+            json_extract(q.pro_analysis, '$.question_type') AS question_type,
+            ROW_NUMBER() OVER (
+              PARTITION BY q.exam_id ORDER BY CAST(q.id AS INTEGER) DESC
+            ) AS rn
+          FROM questions q
+          WHERE q.pro_analysis IS NOT NULL
+            AND json_extract(q.pro_analysis, '$.question_type') LIKE ? || '%'
+        )
+        SELECT r.id AS question_id, r.exam_id, r.data_url, r.difficulty,
+               r.question_type, e.name AS exam_name
+        FROM ranked r
+        JOIN exams e ON e.id = r.exam_id
+        WHERE r.claude_analysis IS NULL
+          AND COALESCE(r.difficulty, 1) >= ?
+          AND ${EXAM_POSITION_SQL[examPosition]}
+        ORDER BY r.difficulty DESC, e.timestamp DESC, r.page_number
+        LIMIT ?
+      `).bind(rankType, minDifficulty, limit).all();
+    } else {
+      result = await db.prepare(`
+        SELECT
+          q.id AS question_id,
+          q.exam_id,
+          q.data_url,
+          json_extract(q.pro_analysis, '$.difficulty') AS difficulty,
+          json_extract(q.pro_analysis, '$.question_type') AS question_type,
+          e.name AS exam_name
+        FROM questions q
+        JOIN exams e ON e.id = q.exam_id
+        WHERE q.pro_analysis IS NOT NULL
+          AND q.claude_analysis IS NULL
+          AND COALESCE(json_extract(q.pro_analysis, '$.difficulty'), 1) >= ?
+          AND (? IS NULL OR json_extract(q.pro_analysis, '$.question_type') LIKE ? || '%')
+        ORDER BY json_extract(q.pro_analysis, '$.difficulty') DESC, e.timestamp DESC, q.page_number
+        LIMIT ?
+      `).bind(minDifficulty, typePrefix, typePrefix, limit).all();
+    }
 
     return c.json({ stage, questions: result.results, count: result.results.length });
   }
@@ -322,6 +377,13 @@ const TARGET_SET = `
   AND json_extract(pro_analysis, '$.question_type') LIKE '解答%'
   AND COALESCE(json_extract(pro_analysis, '$.difficulty'), 1) >= 4
 `;
+
+// GET /knowledge - The knowledge-point taxonomy, as plain text. The solve
+// routine fetches this so Claude tags questions from the same vocabulary Gemini
+// uses, making the two sides' tags comparable.
+claudeReviewRoutes.get('/knowledge', (c) => {
+  return c.text(KNOWLEDGE_DIRECTORY);
+});
 
 // GET /stats - Verdict breakdown, for a dashboard or a routine's summary line.
 claudeReviewRoutes.get('/stats', async (c) => {
